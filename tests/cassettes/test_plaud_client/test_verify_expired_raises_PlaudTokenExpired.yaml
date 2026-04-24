@@ -1,0 +1,26 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Authorization:
+      - <redacted>
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.32.3
+    method: GET
+    uri: https://api.plaud.ai/me
+  response:
+    body:
+      string: '{"error": "unauthorized"}'
+    headers:
+      Content-Type:
+      - application/json
+    status:
+      code: 401
+      message: Unauthorized
+version: 1
