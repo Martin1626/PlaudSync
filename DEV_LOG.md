@@ -4,6 +4,43 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-24 — Auth layer implemented (plan 2026-04-24)
+
+Plán `docs/superpowers/plans/2026-04-24-plaud-auth.md` dokončen. 12 testů zelených (`pytest tests/`), bandit clean (61 LoC auth modulů), log a Sentry scrub hygiene gates prošly (smoke token `unique-smoke-token-xyzzy-9876` neunikl).
+
+### Odchylky od plánu (zaznamenané rozhodnutí během implementace)
+
+- **Task 1 přeskočen.** Plán počítal s hand-crafted VCR cassettami. User v novém zadání vyžádal `@pytest.mark.vcr` **s reálnou Plaud API call** — cassetty jsou nyní recorded proti skutečnému API (scrubnuté authorization + Set-Cookie).
+- **Verify endpoint změněn z `/me` na `/file/simple/web`.** Plaud nemá dedikovaný auth-check endpoint (ověřeno v `arbuzmell/plaud-api` zdroji: `session.py` jen reactive-auth, žádný verify call). `/me` vrátil 404. Použili jsme `FILE_SIMPLE = "https://api.plaud.ai/file/simple/web"` — nejlehčí file-listing endpoint, který je authenticated.
+- **VCR conftest upgrade.** Přidán `VCR_RECORD_MODE` env var pro one-off re-recording bez trvalého loosening `conftest.py` (default zůstává `"none"` = replay-only).
+- **Sentry SDK 2.x API.** Původní plán používal `sentry_sdk.Hub.current.client` a `push_scope()` — oba deprecated. Implementace používá `is_initialized()` a `new_scope()`.
+- **Test exit-code regressions.** Testy volající `main()` musí monkeypatchnout `sys.argv` (kvůli argparse) i `load_dotenv` (kvůli vyplněnému `.env`).
+
+### Region mismatch — tech debt pro sync-engine
+
+Plaud API na `api.plaud.ai/file/simple/web` vrátil HTTP 200 **s body** `{"status":-302,"msg":"user region mismatch","data":{"domains":{"api":"https://api-euc1.plaud.ai"}}}`. Účet je EU region → měl by používat `api-euc1.plaud.ai`. Auth verify stačí HTTP 200 (token valid), ale **sync-engine feature MUSÍ parsovat region redirect** a používat regional endpoint pro listing/download recordings. Zaznamenáno jako sync-engine prerequisite.
+
+### Co je hotové
+
+- `src/plaudsync/auth.py` — `load_token()` + `PlaudTokenMissing` + `PlaudTokenExpired`
+- `src/plaudsync/plaud_client.py` — `PlaudClient(token)` + `verify()` + context manager
+- `src/plaudsync/__main__.py` — argparse s `verify` subcommand, exit codes 2/3, `_capture_sentry()` helper s fingerprint+tag
+- `src/plaudsync/observability.py` — extended `_scrub_string` s Bearer + PLAUD_API_TOKEN value redaction
+- 10 auth testů (4 `test_auth.py`, 2 `test_plaud_client.py` vč. scrubbed cassetty, 4 `test_main_exit_codes.py`)
+- `tests/conftest.py` — VCR_RECORD_MODE env var support
+
+### Další krok
+
+Viz user rozhodnutí — Claude Design UI prototyp → per-screen brainstorm, nebo sync-engine brainstorm (musí zahrnout region redirect handling).
+
+### Process notes
+
+- TDD cyklus držel disciplínu: failing-test commit **samostatně** od impl commitu, každý TDD cycle jeden red → green pár.
+- Subagent dispatch (Task 1 scaffolding) byl zrušen userem a implementováno přímo — odlišný dynamikou proti skill flow, ale výsledek funguje.
+- Branch `feat/plaud-auth` obsahuje ~14 commitů (plán adjust, 2 commity per task ~ 8 tasks, post-flight TBD). Před mergem do master: `/security-review` + manual review diff.
+
+---
+
 ## 2026-04-24 — SPEC pivot: UI z out-of-scope do core scope
 
 Paralelně s auth brainstormem vyšlo najevo, že user má širší představu o produktu, než zachycoval v0 draft. SPEC.md explicitně říkal "UI / web dashboard = out of scope". Pivot tento řádek smazal a přidal UI vrstvu do core v0.
