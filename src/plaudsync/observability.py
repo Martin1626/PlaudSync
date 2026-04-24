@@ -16,6 +16,7 @@ the patterns here rather than loosening privacy config in ``__main__._configure_
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -56,6 +57,10 @@ _INLINE_LABEL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Bearer-token pattern — redact anywhere it appears in strings (Authorization
+# headers, log lines, exception messages). Added for the auth feature.
+_BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE)
+
 
 def _scrub_string(value: str) -> str:
     value = _WIN_PATH_RE.sub("<path>", value)
@@ -64,6 +69,11 @@ def _scrub_string(value: str) -> str:
     value = _INLINE_LABEL_RE.sub(
         lambda m: f"{m.group(1)}{m.group(2)}<redacted-label>", value
     )
+    value = _BEARER_RE.sub("Bearer [REDACTED]", value)
+    # Exact-value redaction — catches the token in URLs, query strings, log lines.
+    plaud_token = os.getenv("PLAUD_API_TOKEN", "").strip()
+    if plaud_token:
+        value = value.replace(plaud_token, "[REDACTED]")
     return value
 
 
