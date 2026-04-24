@@ -9,6 +9,7 @@ Bootstrap order matters:
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -78,6 +79,14 @@ def run_sync() -> int:
     return 0
 
 
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="plaudsync")
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser("verify", help="Verify PLAUD_API_TOKEN is valid; exit 0/2/3.")
+    # No-argument invocation defaults to sync.
+    return parser.parse_args(argv)
+
+
 def _capture_sentry(exc: BaseException, *, fingerprint: str, kind: str) -> None:
     """Structured Sentry capture with stable fingerprint + tag.
 
@@ -109,9 +118,13 @@ def main() -> int:
     from plaudsync.plaud_client import PlaudClient
 
     try:
+        args = _parse_args(sys.argv[1:])
         token = load_token()
         with PlaudClient(token) as client:
             client.verify()
+            if args.command == "verify":
+                logger.info("Verify-only subcommand: token OK, exiting.")
+                raise SystemExit(0)
             return run_sync()
     except PlaudTokenExpired as e:
         logger.error("Plaud token rejected: {msg}", msg=str(e))

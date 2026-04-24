@@ -11,6 +11,7 @@ from plaudsync.plaud_client import PlaudClient
 def test_main_exits_2_on_token_expired(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PLAUD_API_TOKEN", "whatever")
     monkeypatch.setenv("SENTRY_DSN", "")  # disable Sentry for the test
+    monkeypatch.setattr("sys.argv", ["plaudsync"])  # default sync invocation
 
     def _raise_expired(self: PlaudClient) -> None:  # type: ignore[unused-argument]
         raise PlaudTokenExpired(
@@ -27,6 +28,9 @@ def test_main_exits_2_on_token_expired(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_main_exits_3_on_token_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PLAUD_API_TOKEN", raising=False)
     monkeypatch.setenv("SENTRY_DSN", "")
+    monkeypatch.setattr("sys.argv", ["plaudsync"])
+    # Prevent main() from re-populating PLAUD_API_TOKEN via .env during the test.
+    monkeypatch.setattr("plaudsync.__main__.load_dotenv", lambda: None)
 
     with pytest.raises(SystemExit) as exc_info:
         entrypoint.main()
