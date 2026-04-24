@@ -4,7 +4,128 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
-## 2026-04-24 — Harness bootstrap
+## 2026-04-24 — SPEC pivot: UI z out-of-scope do core scope
+
+Paralelně s auth brainstormem vyšlo najevo, že user má širší představu o produktu, než zachycoval v0 draft. SPEC.md explicitně říkal "UI / web dashboard = out of scope". Pivot tento řádek smazal a přidal UI vrstvu do core v0.
+
+### Brainstorm session — kontext metodiky
+
+Brainstorm byl veden podle [Superpowers `brainstorming` skill SKILL.md](../../Users/ai_martint/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills/brainstorming/SKILL.md). V té konkrétní session, kde pivot proběhl, byl Skill tool call `superpowers:brainstorming` ještě odmítnutý s "Unknown skill" (session začala před `Developer: Reload Window`, viz samostatný záznam o verifikaci níže). **Fallback:** SKILL.md byl přečten přes `Read` tool a postupováno ručně podle něj (explore → clarifying → options → present → write spec → self-review). Po Reload Window by měl skill fungovat normálně — budoucí session už může volat `Skill("superpowers:brainstorming", ...)` přímo.
+
+### Rozhodnutí z pivotu
+
+| # | Otázka | Volba | Důvod |
+|---|---|---|---|
+| 1 | MVP scope | **A** Minimalistic (Dashboard + Sync Now + Settings, bez heat mapy) | Rychlejší feedback loop, UI reálně použitelné dřív než guess work pro advanced features. Heat mapa → v1.1 po 2 týdnech reálných dat. |
+| 2 | Architektura | **C** GUI + CLI (SQLite + YAML = shared state) | Zachovává existing CLI invest, žádný daemon, žádný single point of failure, kill-criterion-friendly. |
+| 3 | UI stack | **B** FastAPI + React + PyWebView | Claude Design prototyp (= React) přímo použitelný, desktop UX vs browser UX, Win11 WebView2 native. |
+| 4 | UI lifecycle | **A** On-demand only | Menší scope pro MVP, žádný tray icon / autostart komplikace, clean separation (Task Scheduler = time-based, UI = user-triggered). |
+
+### Dopady
+
+- **`SPEC.md` updated** (v0 → v0.1): nová UI scope sekce, constraints (Node 20+, WebView2, sync idempotence), success criteria (UI cold start ≤ 3 s, Sync Now latence ≤ 2 s), architectural decisions (UI architektura rozepsaná), kill criteria (preambule k UI watch).
+- **Auth spec zapsán** do `docs/superpowers/specs/2026-04-24-plaud-auth-design.md` — kompletní design vč. UI API consumer use case (FastAPI endpoint `POST /api/auth/verify`).
+- **Následné brainstorm cykly:** každý UI subsystém dostane vlastní spec (Settings screen, Dashboard screen, Sync Now orchestrace, backend endpoints). SPEC.md je jen rámec.
+- **LoC budget upgrade:** Python 1500–3000 (beze změny) + React/TS 500–1000 (nově).
+
+### UI layer watch (kandidáti na budoucí kill criteria)
+
+Tyto "watch items" nejsou formální kill criteria (zatím). Pokud některý začne triggerovat opakovaně, formalizujeme ho a přidáme do trackeru níže:
+
+- **W-U1: WebView2 kompatibilita** — PyWebView na Win11 out-of-box spolehlivě? Pokud dev stanice ukáže crash rate > 1× týdně, re-evaluate (browser fallback).
+- **W-U2: React bundle size** — MVP A (2 screens) by měl vejít pod 500 KB gzipped. Nad 1 MB = signal scope creep nebo špatně rozdělený import.
+- **W-U3: Vite/Node dep churn** — npm ecosystem známý velkým dependency fan-outem. Pokud `npm audit` > 5 high-severity nevyřešitelných v průběhu 2 týdnů = re-evaluate frontend stack.
+- **W-U4: Frontend build čas** — cold Vite build > 30 s = investigate / kill criterion kandidát (spolu s existing T-8 CI slowdown).
+- **W-U5: Sync Now subprocess protocol** — progress streaming přes subprocess stdout je křehké na encoding / flushing. Pokud víc než 2 bugy v 1 měsíci, zvážit SQLite-based progress table místo stdout.
+
+### User actions z brainstormu
+
+- Připravit **prototyp v Claude Design** (2 screens: Settings, Dashboard) — předá jako podklad pro per-screen brainstorm.
+- Až bude prototyp, otevřít per-feature brainstorm cykly (postupně, ne naráz).
+- Ideation session pro "další užitečné nápady" — parkoviště nápadů po tom, co uvidíme prototyp.
+
+### Process note (counterarguments bias watch)
+
+Brainstorm šel striktně dle skill checklistu. User volil ze 4 options 4× recommendation — žádný pushback na zvolenou variantu. Co to může znamenat:
+- (a) recommendations byly solidní a user je skutečně přijal;
+- (b) formulace recommendations byla příliš persuasive a user neměl reálnou volbu;
+- (c) user vím, kam chce, takže se jen ujistil, že můj návrh tam vede.
+
+**Akce pro příští brainstorm sessions:** zvýšit důraz na **counterarguments** u vlastní recommendation (explicitně pojmenovat, kdy by uživatel měl zvolit jinou variantu). Watch: pokud i další brainstorm session skončí 100% alignment, formalizovat jako workflow bias (kill criterion #1 z memory: > 2 korekce per task = trigger; opak problému — žádná korekce = je to dobře nebo je to špatně?).
+
+---
+
+## 2026-04-24 — Superpowers verified (post Reload Window)
+
+Po `Developer: Reload Window` ve VSCode a fresh chat session jsou Superpowers skills správně exponovány přes Skill tool. `/context` ukazuje:
+
+**Skills přidané pluginem (17):** `using-superpowers` (meta), `brainstorming`, `test-driven-development`, `systematic-debugging`, `subagent-driven-development`, `verification-before-completion`, `requesting-code-review`, `receiving-code-review`, `dispatching-parallel-agents`, `executing-plans`, `writing-plans`, `writing-skills`, `using-git-worktrees`, `finishing-a-development-branch`, `superpowers:brainstorm`, `superpowers:write-plan`, `superpowers:execute-plan`.
+
+**Custom agent přidaný pluginem:** `superpowers:code-reviewer` (353 tokens) — explicit subagent pro code review.
+
+### Final baseline numbers
+
+| Kategorie | Tokens | Změna proti pre-Superpowers |
+|-----------|-------|------------------------------|
+| Skills | 1.8k | +700 (z 1.1k) |
+| Custom Agents | 353 | +353 (nová sekce) |
+| System prompt | 9.4k | beze změny |
+| **Project + plugin overhead celkem** | **~3.0k** | **+1.1k** |
+
+**Superpowers footprint je extrémně levný — ~1.1k tokens nad pre-install baseline.** Hluboko pod jakýmkoli rozumným kill criterion threshold. Hard enforcement TDD (auto-delete code-before-test) by mělo být aktivní.
+
+### Sekundární observace (od user)
+
+User upozornil na potenciální dual-user issue: directory `c:/GitHub/PlaudSync` je vlastněna Windows uživatelem `martint`, zatímco Claude Code proces běží pod `ai_martint`. Vyřešeno přes `git config --global --add safe.directory C:/GitHub/PlaudSync`. Zatím **žádné funkční selhání**, ale risk indicator pro budoucí permission edge cases (antivirus, Windows Defender, file lock kdyby martint user otevřel stejný file současně). Pokud nastane jakýkoli permission problem, prvním podezřelým je tato dual-user situace.
+
+## 2026-04-24 — Baseline /context measurement (post Superpowers install) [SUPERSEDED]
+
+> **Tento záznam byl nahrazen verifikací výše po Reload Window. Ponecháno pro historii rozhodnutí.**
+
+
+
+`/context` po (údajné) instalaci Superpowers. Celkový context 279.3k / 1M (28 %), z toho 245.7k jsou aktuální messages (nezapočítávají se do harness baseline).
+
+**Harness-only baseline** (vše kromě Messages + Autocompact buffer):
+
+| Kategorie | Tokens |
+|-----------|--------|
+| System prompt (Claude Code + CLAUDE.md + auto-memory) | 9.4k |
+| System tools (Read/Write/Edit/Bash/…) | 20.8k |
+| System tools (deferred) | 15.1k |
+| MCP tools (deferred) | 5.0k |
+| Memory files (MEMORY.md + CLAUDE.md) | 2.3k |
+| Skills (všechny Claude Code + User + Project) | 1.1k |
+| **CELKEM** | **~53.7k** |
+
+**Project-specific přírůstek** (to, co přidává PlaudSync harness):
+- `CLAUDE.md` v project root: 1.8k
+- `cassette-refresh` skill: 58 tokens
+- `sync-debug` skill: 54 tokens
+- **Celkem cca 1.9k tokens** — velmi štíhlé.
+
+### ⚠️ Pozorování: Superpowers skills nevidím v context outputu
+
+V `Skills` sekci výstupu jsou: `update-config`, `keybindings-help`, `simplify`, `fewer-permission-prompts`, `loop`, `schedule`, `claude-api`, `cassette-refresh`, `sync-debug`, `pruzkum`, `therapy`, `init`, `review`, `security-review`. **Žádná z typických Superpowers skills** (`brainstorming`, `test-driven-development`, `debugging-methodology`, `subagent-driven-development`, `creating-skills`) v listu není.
+
+Možná vysvětlení:
+1. Superpowers injektuje do **system promptu** (~9.4k) přes SessionStart hook, ne přes skills registry. Pak by footprint byl v system prompt číslu a my bychom to nepoznali z rozkladu. (Dle kola 2 průzkumu: *"The hook reads the using-superpowers meta-skill and injects it into Claude's system prompt wrapped in EXTREMELY_IMPORTANT tags."*)
+2. Instalace proběhla, ale v této session se neprojevuje (potřeba restart / fresh session).
+3. Plugin je instalovaný, ale skills se rozbalují on-demand a /context je ukazuje až po prvním použití.
+
+**Akce k ověření:** v následující session napsat "použij Superpowers brainstorming skill pro nějaký malý brainstorm" — pokud skill odpoví, je aktivní. Pokud ne, přeinstalovat / zkontrolovat `/plugins` UI.
+
+### Kill criterion H-9 — recalibrace
+
+Original threshold ("context baseline > 15k tokens na session start") **byl špatně kalibrovaný** — neuvažoval s base Claude Code infrastrukturou (~55k tokens i bez jakéhokoli pluginu). Rekalibrace:
+
+- **Claude Code infrastructure baseline** (bez projectu): ~50–55k — mimo kontrolu.
+- **Project overhead budget** (to, co přidává PlaudSync harness + Superpowers inject do system promptu): **budget < 10k**, trigger > 15k.
+- **Aktuální stav bez Superpowers**: project overhead ~1.9k (CLAUDE.md + 2 skills). Pokud Superpowers přidá do system prompt +5k, dostaneme se k ~7k — stále pod budget.
+
+Revised kill criterion: **project overhead (nad Claude Code baseline 55k) > 15k** @ 1 měsíc → redukovat.
+
+### 2026-04-24 — Harness bootstrap
 
 Založena struktura projektu po průzkumech kol 1–4. Soubory vytvořeny: `SPEC.md`, `CLAUDE.md`, `DEV_LOG.md`, `.gitignore`, `.env.example`, `pyproject.toml`, `.claude/settings.json` + `.claude/hooks/pytest_on_edit.py`, `.claude/skills/{cassette-refresh,sync-debug}/SKILL.md`, `src/plaudsync/{__init__,__main__,observability}.py`, `tests/{__init__,conftest}.py` + `tests/evals/golden_set.yaml` skeleton.
 
@@ -39,7 +160,7 @@ Založena struktura projektu po průzkumech kol 1–4. Soubory vytvořeny: `SPEC
 
 | # | Criterion | Last check | Status |
 |---|-----------|-----------|--------|
-| H-9 | Context baseline > 15k tokens na session start @ 1 měsíc | — | not started (pending install) |
+| H-9 | **Project overhead > 15k tokens** nad Claude Code ~55k baseline @ 1 měsíc (recalibrated 2026-04-24) | 2026-04-24 | OK (~3.0k project+Superpowers overhead, 20% budgetu) |
 | H-10 | PostToolUse hook > 10 s průměrně @ 2 týdny | — | not started |
 | H-11 | Superpowers TDD enforcement selhává (> 20 % commitů má testy po source) | — | not started |
 | H-12 | Harness blokuje cross-platform práci | — | not started |
@@ -65,11 +186,12 @@ Založena struktura projektu po průzkumech kol 1–4. Soubory vytvořeny: `SPEC
 
 ## Token/context baseline
 
-Zaznamenat po `/plugin install superpowers` + session restart:
-
-- **Před Superpowers:** — TBD
-- **Po Superpowers + CLAUDE.md + skills:** — TBD
-- **Target:** < 15k tokens (harness kill criterion #H-9)
+- **2026-04-24 pre-Superpowers-active (toggle off, skills nevidím):**
+  - Total harness baseline: ~53.7k (z toho project overhead ~1.9k)
+- **2026-04-24 post-Superpowers-active (Reload Window, skills exponovány):**
+  - Total harness baseline: ~54.8k (z toho project + Superpowers overhead ~3.0k)
+  - Superpowers contribution: **+1.1k tokens** (700 skills + 353 custom agent)
+- **Target (rekalibrovaný):** project overhead < 15k nad Claude Code ~55k base. **Aktuální využití: 3.0k / 15k = 20% budgetu** — pohoda.
 
 ---
 
