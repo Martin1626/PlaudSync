@@ -1,0 +1,48 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.33.1
+      authorization:
+      - <redacted>
+    method: GET
+    uri: https://api.plaud.ai/file/simple/web
+  response:
+    body:
+      string: '{"status":-302,"msg":"user region mismatch","data":{"domains":{"api":"https://api-euc1.plaud.ai"}}}'
+    headers:
+      CF-RAY:
+      - 9f1856dc9c97f97e-PRG
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Fri, 24 Apr 2026 21:53:11 GMT
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - <redacted>
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - DENY
+      X-XSS-Protection:
+      - 1; mode=block
+      cf-cache-status:
+      - DYNAMIC
+    status:
+      code: 200
+      message: OK
+version: 1
