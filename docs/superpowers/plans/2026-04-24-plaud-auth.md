@@ -413,9 +413,9 @@ Expected: FAIL with assertion error (Bearer pattern leaks through; raw value lea
 
 - [ ] **Step 3: Extend scrub_event**
 
-Modify `src/plaudsync/observability.py`. Two changes:
+Modify `src/plaudsync/observability.py`. Three changes — **add**, don't replace (the file already contains `_INLINE_LABEL_RE` from commit `40d762d` / L-18 hardening; preserve it).
 
-**3a.** Add `import os` to the top-level imports. The current top (lines 17-20) is:
+**3a.** Add `import os` to the top-level imports. The current top is:
 
 ```python
 from __future__ import annotations
@@ -434,20 +434,24 @@ import re
 from typing import Any
 ```
 
-**3b.** Just above the existing `_scrub_string` function (around line 50), add the `_BEARER_RE` constant:
+**3b.** Above `_scrub_string` (just after the `_INLINE_LABEL_RE` block), add the `_BEARER_RE` constant:
 
 ```python
-# Bearer-token pattern — redact anywhere it appears in strings.
+# Bearer-token pattern — redact anywhere it appears in strings (Authorization
+# headers, log lines, exception messages). Added for the auth feature.
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE)
 ```
 
-**3c.** Replace the existing `_scrub_string` function body:
+**3c.** Extend `_scrub_string` — **append two new `value = ...` lines at the end, just before `return value`**. Do NOT delete the existing `_INLINE_LABEL_RE.sub(...)` line. Final function must look like:
 
 ```python
 def _scrub_string(value: str) -> str:
     value = _WIN_PATH_RE.sub("<path>", value)
     value = _POSIX_PATH_RE.sub("<path>", value)
     value = _RECORDING_FILE_RE.sub("<recording>", value)
+    value = _INLINE_LABEL_RE.sub(
+        lambda m: f"{m.group(1)}{m.group(2)}<redacted-label>", value
+    )
     value = _BEARER_RE.sub("Bearer [REDACTED]", value)
     # Exact-value redaction — catches the token in URLs, query strings, log lines.
     plaud_token = os.getenv("PLAUD_API_TOKEN", "").strip()
