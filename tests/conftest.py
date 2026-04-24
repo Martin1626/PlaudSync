@@ -4,9 +4,12 @@
 - VCR default cassette library dir at ``tests/cassettes``.
 - Integration tests opt-in to the real network via ``@pytest.mark.vcr(...)``;
   everything else is blocked by ``addopts = --block-network`` in pyproject.toml.
+- Record mode defaults to ``none`` (replay-only). To re-record cassettes set
+  ``VCR_RECORD_MODE=once`` (or ``new_episodes``) in the env for one run.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pytest
@@ -23,7 +26,7 @@ def vcr_config() -> dict[str, Any]:
     """Global VCR defaults. Override per-test via @pytest.mark.vcr(**overrides)."""
     return {
         "cassette_library_dir": "tests/cassettes",
-        "record_mode": "none",  # default is replay; CLI --record-mode=new_episodes overrides
+        "record_mode": os.getenv("VCR_RECORD_MODE", "none"),  # replay-only by default
         "match_on": ("method", "scheme", "host", "path", "query"),
         "filter_headers": [
             ("authorization", "<redacted>"),

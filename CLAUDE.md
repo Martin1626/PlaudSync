@@ -56,6 +56,12 @@ Periodic sync of Plaud AI recordings → local disk, categorized via M365 → re
 - Paths from Claude tool inputs may contain `\\`; normalize with `Path(raw_path.replace("\\", "/"))` or `PureWindowsPath`.
 - Task Scheduler: use absolute paths in action definitions. Relative paths fail silently from Task Scheduler context.
 
+## Privacy / observability rules
+
+- **Never inline business labels in exception messages or log strings.** Bad: `raise RuntimeError(f"failure for project={name}")`. Good: `sentry_sdk.set_tag("project", name); raise RuntimeError("failure")` (or `logger.bind(project=name).error("failure")`).
+- Reason: scrubbing in `observability.py` reliably scrubs structured fields (tags/contexts) and known patterns (paths, recording filenames, `key=value`). Free-form text inside messages is best-effort regex — easy to miss novel formats.
+- Same applies to any business identifier: project name, category, meeting title, participant email, recording filename. Always pass via `set_tag`/`set_context`/`logger.bind`, never f-string into the message.
+
 ## Do not
 
 - Do not add features, abstractions, or error handling beyond what the task requires.

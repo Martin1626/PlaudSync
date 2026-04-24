@@ -16,6 +16,7 @@ the patterns here rather than loosening privacy config in ``__main__._configure_
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -46,11 +47,33 @@ _REDACTED_KEYS = frozenset(
     }
 )
 
+# Scrubs inline label patterns inside free-text strings (exception messages,
+# log lines). Matches `<key>=<value>` or `<key>: <value>` where <key> is one
+# of the known label keys. Necessary because exception messages built with
+# f-strings often inline business labels — see kill criterion L-18 partial
+# leak observed 2026-04-24 (smoke test event PLAUDSYNC-1).
+_INLINE_LABEL_RE = re.compile(
+    r"\b(" + "|".join(sorted(_REDACTED_KEYS)) + r")(\s*[=:]\s*)([^\s,;)\"'\]]+)",
+    re.IGNORECASE,
+)
+
+# Bearer-token pattern — redact anywhere it appears in strings (Authorization
+# headers, log lines, exception messages). Added for the auth feature.
+_BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE)
+
 
 def _scrub_string(value: str) -> str:
     value = _WIN_PATH_RE.sub("<path>", value)
     value = _POSIX_PATH_RE.sub("<path>", value)
     value = _RECORDING_FILE_RE.sub("<recording>", value)
+    value = _INLINE_LABEL_RE.sub(
+        lambda m: f"{m.group(1)}{m.group(2)}<redacted-label>", value
+    )
+    value = _BEARER_RE.sub("Bearer [REDACTED]", value)
+    # Exact-value redaction — catches the token in URLs, query strings, log lines.
+    plaud_token = os.getenv("PLAUD_API_TOKEN", "").strip()
+    if plaud_token:
+        value = value.replace(plaud_token, "[REDACTED]")
     return value
 
 

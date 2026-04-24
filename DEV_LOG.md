@@ -4,6 +4,43 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-24 — Auth layer implemented (plan 2026-04-24)
+
+Plán `docs/superpowers/plans/2026-04-24-plaud-auth.md` dokončen. 12 testů zelených (`pytest tests/`), bandit clean (61 LoC auth modulů), log a Sentry scrub hygiene gates prošly (smoke token `unique-smoke-token-xyzzy-9876` neunikl).
+
+### Odchylky od plánu (zaznamenané rozhodnutí během implementace)
+
+- **Task 1 přeskočen.** Plán počítal s hand-crafted VCR cassettami. User v novém zadání vyžádal `@pytest.mark.vcr` **s reálnou Plaud API call** — cassetty jsou nyní recorded proti skutečnému API (scrubnuté authorization + Set-Cookie).
+- **Verify endpoint změněn z `/me` na `/file/simple/web`.** Plaud nemá dedikovaný auth-check endpoint (ověřeno v `arbuzmell/plaud-api` zdroji: `session.py` jen reactive-auth, žádný verify call). `/me` vrátil 404. Použili jsme `FILE_SIMPLE = "https://api.plaud.ai/file/simple/web"` — nejlehčí file-listing endpoint, který je authenticated.
+- **VCR conftest upgrade.** Přidán `VCR_RECORD_MODE` env var pro one-off re-recording bez trvalého loosening `conftest.py` (default zůstává `"none"` = replay-only).
+- **Sentry SDK 2.x API.** Původní plán používal `sentry_sdk.Hub.current.client` a `push_scope()` — oba deprecated. Implementace používá `is_initialized()` a `new_scope()`.
+- **Test exit-code regressions.** Testy volající `main()` musí monkeypatchnout `sys.argv` (kvůli argparse) i `load_dotenv` (kvůli vyplněnému `.env`).
+
+### Region mismatch — tech debt pro sync-engine
+
+Plaud API na `api.plaud.ai/file/simple/web` vrátil HTTP 200 **s body** `{"status":-302,"msg":"user region mismatch","data":{"domains":{"api":"https://api-euc1.plaud.ai"}}}`. Účet je EU region → měl by používat `api-euc1.plaud.ai`. Auth verify stačí HTTP 200 (token valid), ale **sync-engine feature MUSÍ parsovat region redirect** a používat regional endpoint pro listing/download recordings. Zaznamenáno jako sync-engine prerequisite.
+
+### Co je hotové
+
+- `src/plaudsync/auth.py` — `load_token()` + `PlaudTokenMissing` + `PlaudTokenExpired`
+- `src/plaudsync/plaud_client.py` — `PlaudClient(token)` + `verify()` + context manager
+- `src/plaudsync/__main__.py` — argparse s `verify` subcommand, exit codes 2/3, `_capture_sentry()` helper s fingerprint+tag
+- `src/plaudsync/observability.py` — extended `_scrub_string` s Bearer + PLAUD_API_TOKEN value redaction
+- 10 auth testů (4 `test_auth.py`, 2 `test_plaud_client.py` vč. scrubbed cassetty, 4 `test_main_exit_codes.py`)
+- `tests/conftest.py` — VCR_RECORD_MODE env var support
+
+### Další krok
+
+Viz user rozhodnutí — Claude Design UI prototyp → per-screen brainstorm, nebo sync-engine brainstorm (musí zahrnout region redirect handling).
+
+### Process notes
+
+- TDD cyklus držel disciplínu: failing-test commit **samostatně** od impl commitu, každý TDD cycle jeden red → green pár.
+- Subagent dispatch (Task 1 scaffolding) byl zrušen userem a implementováno přímo — odlišný dynamikou proti skill flow, ale výsledek funguje.
+- Branch `feat/plaud-auth` obsahuje ~14 commitů (plán adjust, 2 commity per task ~ 8 tasks, post-flight TBD). Před mergem do master: `/security-review` + manual review diff.
+
+---
+
 ## 2026-04-24 — SPEC pivot: UI z out-of-scope do core scope
 
 Paralelně s auth brainstormem vyšlo najevo, že user má širší představu o produktu, než zachycoval v0 draft. SPEC.md explicitně říkal "UI / web dashboard = out of scope". Pivot tento řádek smazal a přidal UI vrstvu do core v0.
@@ -55,6 +92,52 @@ Brainstorm šel striktně dle skill checklistu. User volil ze 4 options 4× reco
 
 ---
 
+## 2026-04-24 — Hook smoke test: H-10 baseline measured
+
+`.claude/hooks/pytest_on_edit.py` ověřen empiricky:
+
+- **Manuální pytest baseline:** `pytest tests/ -x --lf -q` = 0.02 s test runtime, 3.9 s total wall clock (Python interpreter cold start + venv + pytest collection).
+- **Hook simulation** (`echo '{"tool_input":{"file_path":"tests/test_smoke.py"}}' | python .claude/hooks/pytest_on_edit.py`) → exit 0, pytest 2 passed.
+- **Hook automatický trigger po Claude Edit/Write**: empiricky neověřeno (Claude Code suppresí hook stdout/stderr v conversational view). Hook script sám funguje, takže pokud Claude Code hooks nefungují, je to platform issue, ne náš bug.
+
+Kill criterion **H-10** (hook > 10 s @ 2 týdny → disable hook): aktuální 3.9 s wall = **39 % budgetu**. Pohoda. Threshold se může zhoršit, až přibude víc testů (zvlášť VCR cassette replay nebo DeepEval), monitorovat.
+
+**Vytvořeno:** `tests/test_smoke.py` (2 trivial testy, jen aby pytest měl co collectovat — bez nich `pytest --lf` failuje s "no last failed" warningem v některých edge cases).
+
+## 2026-04-24 — Sentry smoke test: L-18 partial leak + fix
+
+První běh `scripts/sentry_smoke.py` proti Sentry produkčnímu DSN (free tier). PLAUDSYNC-1 event přišel, scrubbing částečně leakoval. Opraveno hned, druhý běh pending verifikace v UI.
+
+### Findings (první běh)
+
+| Co testováno | Status | Detail |
+|---|---|---|
+| `<path>` substituce v message | ✅ | `C:\PlaudRecordings\...mp3` → `<path>` |
+| Tag `category` | ✅ | `<redacted-label>` |
+| Tag `project_name` | ✅ | `<redacted-label>` |
+| Context "recording" header | ✅ | `<redacted-label>` |
+| **Inline `key=value` v message** | ❌ | `project=AcmeCorp-Internal`, `category=ProjectAlpha` prosvistly |
+| **Tag `server_name`** | ❌ | `TOMISM` (hostname) prosvistlo |
+| User Geography (IP-derived) | ⚠️ | `Ostrava, Czechia` — vyžaduje server-side "Prevent Storing of IP Addresses" v Sentry settings |
+
+### Fixes (commit pending)
+
+1. **observability.py** — přidán `_INLINE_LABEL_RE` pattern, který scrubuje `(category|project_name|...)\s*[=:]\s*<value>` v plain text stringech (exception messages, log lines).
+2. **__main__.py** — `sentry_sdk.init(server_name="<redacted>", ...)` natvrdo přepíše hostname.
+3. **CLAUDE.md** — nová sekce "Privacy / observability rules": **"Never inline business labels in exception messages or log strings."** Vždy přes `set_tag` / `set_context` / `logger.bind`. Důvod: scrubber regex je best-effort pro free-form text, easy miss.
+
+### Architectural insight
+
+Smoke test ukázal jemnou architekturní propast: **scrubber je defense-in-depth, ne primární obrana**. Primární obrana je **convention** — ne dávat business labels do free-form messages vůbec. Convention je v CLAUDE.md, scrubber je safety net pro slip-ups. Server-side Sentry rules (Sensitive Fields, IP scrubbing) jsou třetí vrstva.
+
+### User action — completed
+
+- ✅ Ověřeno v Sentry UI 23:25: druhý event (timestamp 23:23:45) má `project=<redacted-label>`, `category=<redacted-label>`, `server_name=<redacted>`. Message, tags i contexts všechny scrubnuté.
+- ✅ Sentry Settings → "Prevent Storing of IP Addresses" zapnuto. Geography leak skončí u příštích eventů.
+- ⏳ Resolve PLAUDSYNC-2 v Sentry UI (UnicodeEncodeError, můj bug v print, opraveno) — kosmetické, ne blokující.
+
+**L-18 verified clean.** Privacy posture pro recording-processing tool ready pro produkční nasazení.
+
 ## 2026-04-24 — Superpowers verified (post Reload Window)
 
 Po `Developer: Reload Window` ve VSCode a fresh chat session jsou Superpowers skills správně exponovány přes Skill tool. `/context` ukazuje:
@@ -76,7 +159,15 @@ Po `Developer: Reload Window` ve VSCode a fresh chat session jsou Superpowers sk
 
 ### Sekundární observace (od user)
 
-User upozornil na potenciální dual-user issue: directory `c:/GitHub/PlaudSync` je vlastněna Windows uživatelem `martint`, zatímco Claude Code proces běží pod `ai_martint`. Vyřešeno přes `git config --global --add safe.directory C:/GitHub/PlaudSync`. Zatím **žádné funkční selhání**, ale risk indicator pro budoucí permission edge cases (antivirus, Windows Defender, file lock kdyby martint user otevřel stejný file současně). Pokud nastane jakýkoli permission problem, prvním podezřelým je tato dual-user situace.
+User upozornil na potenciální dual-user issue: directory `c:/GitHub/PlaudSync` je vlastněna Windows uživatelem `martint`, zatímco Claude Code proces běží pod `ai_martint`. Vyřešeno přes `git config --global --add safe.directory C:/GitHub/PlaudSync`. Zatím **žádné funkční selhání**, ale risk indicator pro budoucí permission edge cases (antivirus, Windows Defender, file lock kdyby martint user otevřel stejný file současně).
+
+**Aktualizace ze Sentry smoke testu (2026-04-24 ~23:13):** Při běhu `scripts/sentry_smoke.py` traceback ukázal cestu `C:\Users\martint\AppData\Local\Programs\Python\Python312\Lib\encodings\cp1250.py`. To znamená, že **Python 3.12 interpreter v `.venv/` (a ten, ze kterého byl venv vytvořen) je instalován pod uživatelem `martint`, ne `ai_martint`**. Důsledky:
+
+- Per-user Python instalace (`%LOCALAPPDATA%\Programs\Python`) jiného uživatele je *čitelná* z `ai_martint` procesu (proto venv funguje), ale není *vlastněná* — Windows Defender / antivirus může intermittently blokovat.
+- Kdyby `martint` reinstaloval / odinstaloval Python 3.12, venv v PlaudSync by se rozbil.
+- Pokud bude potřeba upgrade Python (3.13+), instalace musí proběhnout pod správným uživatelem (ideálně `ai_martint` for full ownership, nebo system-wide install).
+
+**Mitigace pro teď:** žádná akce, jen poznamenat. Pokud se objeví venv permission errors při příští `pip install`, tohle je primární podezřelý.
 
 ## 2026-04-24 — Baseline /context measurement (post Superpowers install) [SUPERSEDED]
 
@@ -161,7 +252,7 @@ Založena struktura projektu po průzkumech kol 1–4. Soubory vytvořeny: `SPEC
 | # | Criterion | Last check | Status |
 |---|-----------|-----------|--------|
 | H-9 | **Project overhead > 15k tokens** nad Claude Code ~55k baseline @ 1 měsíc (recalibrated 2026-04-24) | 2026-04-24 | OK (~3.0k project+Superpowers overhead, 20% budgetu) |
-| H-10 | PostToolUse hook > 10 s průměrně @ 2 týdny | — | not started |
+| H-10 | PostToolUse hook > 10 s průměrně @ 2 týdny | 2026-04-24 | OK (baseline 3.9 s = 39 % budgetu, hook script funguje) |
 | H-11 | Superpowers TDD enforcement selhává (> 20 % commitů má testy po source) | — | not started |
 | H-12 | Harness blokuje cross-platform práci | — | not started |
 | H-13 | Task Scheduler miss rate > 5 %/měsíc OR sync potřeba mimo laptop uptime | — | not started |
@@ -174,7 +265,7 @@ Založena struktura projektu po průzkumech kol 1–4. Soubory vytvořeny: `SPEC
 | L-15 | /review > 80 % false positives @ 2 týdny | — | not started |
 | L-16 | Architecture drift — za 3 měsíce nerozumím SPEC.md | — | not started |
 | L-17 | Writer/Reviewer > 2× čas vs plain Plan Mode @ 1 měsíc | — | not started |
-| L-18 | **Sentry scrubbing selhává** (unscrubbed paths/labels v UI) @ 2 týdny | — | not started (pending install) |
+| L-18 | **Sentry scrubbing selhává** (unscrubbed paths/labels v UI) @ 2 týdny | 2026-04-24 23:25 | OK (verified po fix: message, tags, contexts všechny scrubnuté; geography fix přes "Prevent Storing of IP Addresses" zapnut user-side) |
 
 **Most likely first triggers** (dle retrospektivy):
 

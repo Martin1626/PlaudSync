@@ -9,6 +9,7 @@ Bootstrap order matters:
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -52,6 +53,8 @@ def _configure_sentry() -> None:
         # Privacy-critical: never send PII; never include local vars in stack frames.
         send_default_pii=False,
         include_local_variables=False,
+        # Hostname leaks user identity (e.g. "TOMISM"); pin to constant. See L-18.
+        server_name="<redacted>",
         # We do not need perf tracing for a periodic sync job.
         traces_sample_rate=0.0,
         profiles_sample_rate=0.0,
@@ -76,18 +79,63 @@ def run_sync() -> int:
     return 0
 
 
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="plaudsync")
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser("verify", help="Verify PLAUD_API_TOKEN is valid; exit 0/2/3.")
+    # No-argument invocation defaults to sync.
+    return parser.parse_args(argv)
+
+
+def _capture_sentry(exc: BaseException, *, fingerprint: str, kind: str) -> None:
+    """Structured Sentry capture with stable fingerprint + tag.
+
+    No-op if Sentry was not initialized (SENTRY_DSN empty). Uses Sentry SDK
+    2.x scope API (``new_scope`` + ``is_initialized``).
+    """
+    try:
+        import sentry_sdk
+    except ImportError:
+        return
+    if not sentry_sdk.is_initialized():
+        return
+    with sentry_sdk.new_scope() as scope:
+        scope.set_tag("error_kind", kind)
+        scope.fingerprint = [fingerprint]
+        sentry_sdk.capture_exception(exc)
+
+
 def main() -> int:
     load_dotenv()
     _configure_logging()
     _configure_sentry()
 
     logger.info("PlaudSync starting (release={release}).", release=_release_tag())
+
+    # Deferred imports — keep import order clean for type-checkers and tests
+    # that monkey-patch these symbols.
+    from plaudsync.auth import PlaudTokenExpired, PlaudTokenMissing, load_token
+    from plaudsync.plaud_client import PlaudClient
+
     try:
-        return run_sync()
+        args = _parse_args(sys.argv[1:])
+        token = load_token()
+        with PlaudClient(token) as client:
+            client.verify()
+            if args.command == "verify":
+                logger.info("Verify-only subcommand: token OK, exiting.")
+                raise SystemExit(0)
+            return run_sync()
+    except PlaudTokenExpired as e:
+        logger.error("Plaud token rejected: {msg}", msg=str(e))
+        _capture_sentry(e, fingerprint="plaud_token_expired", kind="plaud_token_expired")
+        raise SystemExit(2) from e
+    except PlaudTokenMissing as e:
+        logger.error("Plaud token missing: {msg}", msg=str(e))
+        _capture_sentry(e, fingerprint="plaud_token_missing", kind="plaud_token_missing")
+        raise SystemExit(3) from e
     except Exception:
         logger.exception("Sync failed with uncaught exception.")
-        # sentry_sdk auto-captures via logger integration once init'd; re-raise so
-        # Task Scheduler records non-zero exit and can alert via its own channel.
         raise
 
 
