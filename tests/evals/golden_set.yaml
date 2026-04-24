@@ -1,0 +1,33 @@
+# Golden set for LLM classifier EDD (průzkum kolo 2).
+#
+# Target size: 30-50 manually annotated entries.
+# Primary metric: accuracy (exact match on `expected_project`).
+# Kill criterion #5: accuracy < 70% for > 2 weeks of iterations → classifier redesign.
+#
+# Workflow:
+# 1. Add an entry when classification is wrong or a new project category emerges.
+# 2. Source transcripts/titles from real Plaud recordings where possible (scrub PII).
+# 3. Run `pytest tests/evals/ -v` to evaluate; regression > 5 p.p. blocks merge.
+#
+# Schema:
+#   - id: short stable identifier
+#     title: recording title (scrub PII if from real data)
+#     transcript_excerpt: first 200-500 chars, enough to cue classifier
+#     participants: [list of anonymized roles — "eng-lead", "pm-a", etc.]
+#     expected_project: the target project category
+#     notes: optional rationale or edge-case annotation
+#
+# Start with 3-5 synthetic examples below; replace with real-ish data once
+# production sync produces enough recordings.
+
+entries: []
+
+# Example shape (uncomment and adapt once first real case arrives):
+#
+# entries:
+#   - id: ex-001
+#     title: "Sprint planning — backlog grooming"
+#     transcript_excerpt: "today we review the sprint backlog, starting with the auth rework..."
+#     participants: ["pm-a", "eng-lead", "eng-b"]
+#     expected_project: "AuthRework"
+#     notes: "M365 layer should match via participant membership; LLM fallback only if Graph lookup fails"

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(pytest:*)",
+      "Bash(python:*)",
+      "Bash(python -m:*)",
+      "Bash(pip:*)",
+      "Bash(pip install:*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(bandit:*)",
+      "Bash(deepeval:*)",
+      "Bash(promptfoo:*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Read(./**)",
+      "Edit(./src/**)",
+      "Edit(./tests/**)",
+      "Edit(./SPEC.md)",
+      "Edit(./CLAUDE.md)",
+      "Edit(./DEV_LOG.md)",
+      "Edit(./pyproject.toml)",
+      "Edit(./.claude/**)",
+      "Write(./src/**)",
+      "Write(./tests/**)",
+      "Write(./DEV_LOG.md)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)",
+      "Read(./.env)",
+      "Edit(./.env)",
+      "Write(./.env)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/pytest_on_edit.py"
+          }
+        ]
+      }
+    ]
+  }
+}
