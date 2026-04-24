@@ -31,3 +31,33 @@ def test_main_exits_3_on_token_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as exc_info:
         entrypoint.main()
     assert exc_info.value.code == 3
+
+
+def test_verify_subcommand_exits_0_on_valid_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PLAUD_API_TOKEN", "whatever")
+    monkeypatch.setenv("SENTRY_DSN", "")
+    monkeypatch.setattr("sys.argv", ["plaudsync", "verify"])
+
+    def _ok(self: PlaudClient) -> None:  # type: ignore[unused-argument]
+        return None
+
+    monkeypatch.setattr(PlaudClient, "verify", _ok)
+
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+    assert exc_info.value.code == 0
+
+
+def test_verify_subcommand_exits_2_on_expired_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PLAUD_API_TOKEN", "whatever")
+    monkeypatch.setenv("SENTRY_DSN", "")
+    monkeypatch.setattr("sys.argv", ["plaudsync", "verify"])
+
+    def _raise_expired(self: PlaudClient) -> None:  # type: ignore[unused-argument]
+        raise PlaudTokenExpired("Plaud API rejected token")
+
+    monkeypatch.setattr(PlaudClient, "verify", _raise_expired)
+
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+    assert exc_info.value.code == 2
