@@ -52,6 +52,8 @@ def _configure_sentry() -> None:
         # Privacy-critical: never send PII; never include local vars in stack frames.
         send_default_pii=False,
         include_local_variables=False,
+        # Hostname leaks user identity (e.g. "TOMISM"); pin to constant. See L-18.
+        server_name="<redacted>",
         # We do not need perf tracing for a periodic sync job.
         traces_sample_rate=0.0,
         profiles_sample_rate=0.0,

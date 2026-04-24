@@ -30,6 +30,8 @@ pytest-report.xml
 # Logs (runtime artifacts)
 plaudsync.log
 plaudsync.log.*
+sentry-smoke.log
+sentry-smoke.log.*
 logs/
 
 # Claude Code local session / checkpoints
