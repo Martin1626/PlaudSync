@@ -23,9 +23,10 @@ def state_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(state_root: Path) -> TestClient:
+def client(state_root: Path):
     app = create_app(state_root)
-    return TestClient(app)
+    with TestClient(app) as c:
+        yield c
 
 
 def test_healthz_returns_200(client: TestClient) -> None:
@@ -56,15 +57,19 @@ def test_state_returns_idle_on_empty_db(client: TestClient) -> None:
 
 
 def test_state_reflects_running_sync(state_root: Path) -> None:
+    # Pre-seed sync_runs via a separate connection BEFORE the app opens its
+    # lifespan-bound connection. WAL mode lets readers see committed writes.
+    from plaudsync.state import open_state
+    seed_conn = open_state(state_root)
+    seed_conn.execute(
+        "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+        ("2026-04-25T13:00:00+00:00", "ui_sync_now"),
+    )
+    seed_conn.commit()
+    seed_conn.close()
+
     app = create_app(state_root)
     with TestClient(app) as client:
-        # Seed an unfinished sync_runs row via the live conn
-        app.state.db.execute(
-            "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
-            ("2026-04-25T13:00:00+00:00", "ui_sync_now"),
-        )
-        app.state.db.commit()
-
         resp = client.get("/api/state")
 
     assert resp.status_code == 200
