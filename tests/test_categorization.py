@@ -73,3 +73,20 @@ def test_classify_supports_separator_unicode_and_lazy_match(
     assert result.status == "matched"
     assert result.project == expected_project
     assert result.matched_date == date(2026, 4, 25)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Random voice memo",          # no date pattern at all
+        "02-30 ProjektAlfa: foo",     # invalid date (Feb 30)
+        "04-31 ProjektAlfa: foo",     # invalid date (Apr 31)
+        "04-25 ProjektAlfa kickoff",  # missing colon
+    ],
+    ids=["no_pattern", "invalid_feb_30", "invalid_apr_31", "missing_colon"],
+)
+def test_classify_returns_unclassified_for_invalid_input(title: str) -> None:
+    result = classify(title=title, created_at=datetime(2026, 4, 25))
+    assert result.status == "unclassified"
+    assert result.project is None
+    assert result.matched_date is None
