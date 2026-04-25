@@ -129,6 +129,33 @@ def test_auth_verify_success_returns_masked_token(
     assert body["masked_token"].startswith("secret12")
 
 
+def test_get_config_returns_seeded_yaml(client: TestClient, state_root: Path) -> None:
+    # Lifespan auto-seeded; GET should return raw + parsed + no error
+    resp = client.get("/api/config")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["raw_yaml"] != ""
+    assert body["parsed"] is not None
+    assert body["parse_error"] is None
+    assert "ProjektAlfa" in body["parsed"]["projects"]
+
+
+def test_get_config_returns_parse_error_for_broken_yaml(state_root: Path) -> None:
+    # Pre-seed broken YAML BEFORE app create (so lifespan doesn't auto-seed)
+    (state_root / "config.yaml").write_text(
+        "unclassified_dir: not_absolute\nprojects: {}\n", encoding="utf-8"
+    )
+    app = create_app(state_root)
+    with TestClient(app) as client:
+        resp = client.get("/api/config")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["parsed"] is None
+    assert body["parse_error"]["message"]
+    assert "absolute" in body["parse_error"]["message"].lower()
+
+
 def test_state_reflects_running_sync(state_root: Path) -> None:
     # Pre-seed sync_runs via a separate connection BEFORE the app opens its
     # lifespan-bound connection. WAL mode lets readers see committed writes.
