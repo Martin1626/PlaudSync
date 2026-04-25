@@ -4,6 +4,78 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — UI backend implementation plan written
+
+`docs/superpowers/plans/2026-04-25-ui-backend.md` published. 19 TDD
+tasks covering 6 new modules under `src/plaudsync/ui/` (`config_io.py`,
+`state_reader.py`, `sync_starter.py`, `app.py`, `runner.py`, package
+init) + `auth.mask_token()` helper + `__main__.py` `ui` subcommand with
+`--dev` flag + 3 runtime deps (`fastapi`, `uvicorn`, `pywebview`).
+
+### Key cross-spec decisions documented in plan
+
+Plan resolves five overlaps/ambiguities between umbrella v0.2, Dashboard
+v0, and Settings v0.1 specs (locked as CD1–CD5 in plan):
+
+- **CD1:** DEFAULT_YAML auto-seed lives in UI lifespan (NOT sync-core
+  CLI). Sync-core behavior unchanged (missing config = exit 7). UI
+  substitutes `${STATE_ROOT}` literal to actual env-var path **at write
+  time** so the seeded file passes sync-core absolute-path validation.
+  This avoids needing to extend `config.load_config` with substitution
+  logic — Settings spec D8 substitution rule is satisfied transparently
+  for the seed path; future user-edited configs use real paths only.
+- **CD2:** Lifespan does NOT crash on broken existing config — resolves
+  overlap between umbrella spec ("fail-fast crash → ConnectionLostOverlay")
+  and Settings spec Gap 3 ("GET /api/config returns broken YAML +
+  parse_error so frontend shows inline error on mount"). Lifespan only
+  validates STATE_ROOT presence + auto-seeds missing config. Validation
+  is lazy in GET/PUT handlers; sync subprocess exit 7 surfaces as 500
+  spawn_failed banner.
+- **CD3:** `masked_token` lives only on `AuthVerifyResponse` (Settings
+  spec Gap 2 Option A). `ConfigResponse` does NOT carry it. Backend
+  computes mask via `auth.mask_token(token)` = first_8 + "•"×15 + last_4
+  (≥ 12-char tokens) or "•"×20 fallback. `null` only on
+  `PlaudTokenMissing`; populated even on `PlaudTokenExpired` since token
+  shape is known.
+- **CD4:** Polling-only progress (no SSE) — re-confirms umbrella B3.
+- **CD5:** Single SQLite read-only conn lives in `app.state.db` over
+  lifespan; WAL mode lets sync subprocess write concurrently.
+
+### Frontend handoff
+
+Frontend Vite project (React + TS + Tailwind + TanStack Query under
+`frontend/`) is **out of scope** of this plan. Once UI backend lands on
+master, separate writing-plans cycle produces frontend plan consuming
+Dashboard + Settings screen specs. `StaticFiles` mount in `app.py`
+(Task 15) is conditional on `src/plaudsync/ui/static/index.html`
+existence — frontend plan owns the Vite build output drop into that
+path. Pydantic models on `app.py` (`StateResponse`, `RecordingRow`,
+`ConfigResponse`, `AuthVerifyResponse`, etc.) are the canonical wire
+contract that frontend TS types must mirror.
+
+### Branch + execution
+
+Plan default execution: `superpowers:subagent-driven-development` (same
+pattern that succeeded for sync-core plan). Branch: `feat/ui-backend`
+from master. Each task = one fresh subagent + two-stage review.
+Architecturally significant change (new HTTP surface + subprocess spawn
++ CSP) — `/security-review` mandatory before merge.
+
+### Process notes
+
+Independent self-review during plan writing surfaced one cross-spec
+contradiction (CD2: umbrella "fail-fast crash" vs Settings "show inline
+error"). Resolution favors the newer Settings spec because the umbrella
+predates Settings v0.1 review fixes. This is the second consecutive
+plan-writing session where independent review caught a real
+contradiction (Settings spec v0 review caught Gap 2 C→A flip). Pattern
+worth tracking: cross-spec ambiguities tend to surface only when a
+third actor (plan, code, third spec) tries to consume both. Formalize
+"cross-spec consistency check" as a writing-specs / writing-plans gate
+when ≥ 2 specs share a contract surface.
+
+---
+
 ## 2026-04-25 — Sync core smoke test PASS, branch merged + deleted
 
 Manuální smoke proti reálné Plaud Cloud po merge `feat/sync-core` →
