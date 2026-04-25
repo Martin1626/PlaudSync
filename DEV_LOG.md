@@ -23,6 +23,32 @@ Branch: `feat/sync-core` (created from master at start of Task 1).
 
 ---
 
+## 2026-04-25 — Settings spec v0 → v0.1: review fixes applied
+
+Independent code-reviewer agent run proti `2026-04-25-settings-screen-design.md` v0 (commit 340913a) vrátil 5 must-fix items + 8 minor nits. Vše opraveno v jednom revisi commitu.
+
+**Must-fix:**
+
+1. **Gap 2 flipped C → A.** v0 doporučovala "frontend constant 20 dots" (Option C), což je regression proti UI architecture umbrella line 841 (která depictuje real masked token `eyJ•••AbcD`). v0.1 specifies Option A: backend computes mask `first_8 + "•"×15 + last_4` server-side, returns v `AuthVerifyResponse.masked_token`. JWT header bytes nejsou PII, separation of concerns (config endpoint nesmí cross-couplovat auth state). Settings mount triggers implicit verify to populate.
+2. **D8 DEFAULT_YAML seed paths rewritten** — v0 měl `D:\Recordings\...` placeholders co fail config validation na machine without `D:\`. v0.1 uses `${STATE_ROOT}\Recordings\...` per Gap 7 reasoning + dokumentuje literal `${STATE_ROOT}` substitution rule.
+3. **Gap 1 promoted recommend → decided.** v0 mělo Gap 1 jako "recommend" ale AC #8 testovala jako decided spec. v0.1 spec decides definitive UX: first error inline + trailing button "(+N dalších chyb)" + click expands `<details>` list + click on item promotes to current (gutter highlight switches).
+4. **Gap 9 added: textarea Tab key behavior.** Plain `<textarea>` Tab moves focus, breaking YAML indent edit. Decision: `onKeyDown` interceptor inserts 2 spaces (Shift+Tab dedents); Esc blurs textarea jako keyboard nav escape hatch. ~15 LoC.
+5. **D11 added: privacy discipline note** per CLAUDE.md "never inline business labels in messages". Forbidden patterns + grep-able acceptance criterion (#19).
+
+**Minor nits applied:**
+
+- Gap 10 added: gutter perf with large configs (memoize line-number array; 500-line cap in Out of scope; aria-hidden on gutter).
+- DEFAULT_YAML auto-seed promoted from Open question to **cross-spec impact item** — sync-core spec needs v0.3 revision (auto-seed in `config.load_config()` + `${STATE_ROOT}` substitution rule + parent mkdir for seed paths).
+- LoC budget phrasing fixed ("90 % slack" → "~90 LoC headroom").
+- AC expanded 16 → 20: auto-verify mount, multi-error promote-to-current, Tab indent, gutter perf, privacy grep.
+- TS type fixed: `masked_token` removed from `ConfigResponse`, added to `AuthVerifyResponse`.
+
+**Verdict:** review verdict was APPROVE WITH MINOR FIXES; v0.1 ships all must-fixes + relevant nits. No spec-blocking gaps remain.
+
+**Process note:** code-reviewer agent surfaced exactly the kind of cross-spec contradictions writer's-eyes miss (v0 had `masked_token` v ConfigResponse TS type which contradicts both umbrella spec and the spec's own Gap 2 recommendation). Confirms value of independent review pass after spec writing — formalize jako step v writing-specs cycle pro umbrella+per-screen specs.
+
+---
+
 ## 2026-04-25 — Settings screen spec: extracted from prototype + review delta
 
 Companion k Dashboard specu (zápis níže). Stejný `frontend/PlaudSync UI.html` prototype obsahuje i Settings screen (ConnectionPanel + ConfigPanel + YamlEditor) — extracted contract proti UI architecture umbrella v0.2 + sync-core v0.2 (config.py + ConfigParseError) + auth design (PlaudTokenMissing/Expired).

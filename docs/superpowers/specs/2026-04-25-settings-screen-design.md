@@ -1,6 +1,6 @@
 # Settings screen — design spec (extracted from prototype + review delta)
 
-> **Status:** v0 (2026-04-25). Extracted from validated Claude Design prototype `frontend/PlaudSync UI.html` after review against [UI architecture umbrella spec v0.2](2026-04-25-ui-architecture-design.md), [sync-core spec v0.2](2026-04-25-sync-core-design.md) a [auth design](2026-04-24-plaud-auth-design.md). **Not a brainstorm output** — design rozhodnutí byla učiněna v Claude Design prototype session; tento dokument je extracted contract + review findings + acceptance criteria pro implementaci.
+> **Status:** v0.1 (2026-04-25). Extracted from validated Claude Design prototype `frontend/PlaudSync UI.html` after review against [UI architecture umbrella spec v0.2](2026-04-25-ui-architecture-design.md), [sync-core spec v0.2](2026-04-25-sync-core-design.md) a [auth design](2026-04-24-plaud-auth-design.md). v0 → v0.1 changes: independent review fixes (Gap 2 flipped to Option A, D8 seed uses ${STATE_ROOT}, Gaps 9+10 added, D11 privacy note added, AC 16→20). **Not a brainstorm output** — design rozhodnutí byla učiněna v Claude Design prototype session; tento dokument je extracted contract + review findings + acceptance criteria pro implementaci.
 > **Scope:** Settings screen (route `/settings`), one of two MVP screens. Auth token verify + YAML config edit/save + inline parse error display.
 > **Preceded by:** UI architecture umbrella v0.2, sync-core v0.2 (`config.py` modul + `Config`/`ConfigParseError`/`ConfigValidationError`), auth design (`PlaudTokenMissing`/`PlaudTokenExpired`), [Dashboard screen spec v0](2026-04-25-dashboard-screen-design.md) (companion), [frontend/PlaudSync UI.html](../../../frontend/PlaudSync%20UI.html) prototype.
 > **Next step:** UI backend writing-plans cyklus (po dokončení sync-core impl). Settings frontend writing-plans cyklus (po Dashboard spec + UI backend impl).
@@ -27,6 +27,7 @@ Tento dokument extrahuje implementation contract z prototypu (ne re-design) a id
 - **Restore / version history / diff** — out of MVP. User si zazálohuje config.yaml manuálně, pokud chce.
 - **Manual file path picker / "Browse" button pro project paths** — YAML edit-only v MVP. Native file picker přes PyWebView API je v1.1+ nice-to-have.
 - **Auth verify retry button v error banneru** — banner má action "Otevřít Nastavení" pro Dashboard banner, ale samotný verify retry je už v Settings (klik na Test connection znovu).
+- **config.yaml > 500 lines** — gutter rendering O(N) per-keystroke; not virtualized v MVP. Realistic PlaudSync configs jsou < 50 lines; 500 cap = 10× headroom. Viz Gap 10.
 
 ## Decisions extracted from prototype
 
@@ -60,10 +61,11 @@ Tento dokument extrahuje implementation contract z prototypu (ne re-design) a id
 **Body** (`p-5 space-y-4`):
 - **Label:** `"Plaud API token"` (`text-xs font-medium text-gray-600 mb-1.5`).
 - **Token display field** (read-only, masked):
-  - Lock icon (gray) + masked string `"eyJhbGci•••••••••••••••AbcD9"` (font-mono).
+  - Lock icon (gray) + masked string (font-mono), e.g., `"eyJhbGci•••••••••••••••AbcD9"`.
   - Right-aligned chip `"z .env"` (light gray, smallest).
   - Container: `bg-gray-50 border-gray-200 rounded-md px-3 py-2`.
-  - **Real implementation note:** masked string je rendered backend-side. UI architecture spec D5/B5 explicitly forbids exposing token value via API. Backend computes mask (`first_8 + "•" * 15 + last_4` heuristic) a vrací jako `masked_token: str` v `AuthVerifyResponse` nebo separately v `GET /api/config` response. Choice between options tracked v Gap 3 below.
+  - **Implementation contract:** mask je computed server-side a vrácen v `AuthVerifyResponse.masked_token` (nebo `null` když token chybí). UI architecture spec B5 forbids exposing raw token value via API; mask je derivovaný (např. `first_8 + "•" * 15 + last_4`) a non-PII (header bytes JWT jsou veřejně známé). Decision rationale + alternative tracked v Gap 2 below. **Mask not on `ConfigResponse`** — separation of concerns (config endpoint exposes config schema, not auth state).
+  - **First-load behavior:** Settings mount triggers implicit `verifyAuth.mutate()` to populate `masked_token` (without surfacing toast/banner unless verify fails). Alternative: render placeholder dots (20× "•") until user clicks "Otestovat připojení", first-confirmation produces real mask. Recommendation: implicit verify on mount — fewer ceremony for the user.
 - **Verify button** (right-aligned):
   - Idle: outlined gray button "Otestovat připojení" + check icon.
   - Verifying: same button disabled with spinner icon (`animate-spin`).
@@ -160,7 +162,7 @@ Click handler v prototypu: `setYaml(DEFAULT_YAML); setYamlError(null); pushToast
 
 ### D8. DEFAULT_YAML template (empty-config seed)
 
-Backend `GET /api/config` na fresh install returns this string jako `raw_yaml`. Sync-core spec v0.2 garantuje že `${STATE_ROOT}/config.yaml` musí existovat (exit 7 jinak); first-run setup tedy potřebuje seed:
+Backend writes this string to `${STATE_ROOT}/config.yaml` on fresh install (sync-core `config.load_config()` auto-seed; viz Gap 7). Seed paths reference `${STATE_ROOT}/Recordings/...` to guarantee parent-must-exist passes — `${STATE_ROOT}` always exists by env-var-set definition.
 
 ```yaml
 # PlaudSync configuration — spec v0.2 (per-project absolute paths)
@@ -172,21 +174,24 @@ Backend `GET /api/config` na fresh install returns this string jako `raw_yaml`. 
 #     2026-04-25 KlientBeta: status update
 # The captured "Project" name must match a key in 'projects' below; otherwise
 # the recording lands under unclassified_dir/_unmapped_<project>/.
+#
+# After first run, edit these placeholder paths in Nastavení (Settings) UI.
+# Each project can live on a different drive — no shared root.
 
 # Cílová absolutní cesta pro nahrávky bez project labelu (title nematchne)
 # nebo s project labelem, který není v 'projects' (soft fallback).
-unclassified_dir: D:\Recordings\Unclassified
+unclassified_dir: ${STATE_ROOT}\Recordings\Unclassified
 
-# Per-project absolutní cesty. Každý projekt může být na jiném drive — žádný
-# společný kořen. Klíč musí přesně odpovídat captured "Project" v titulku
-# (case-sensitive, Unicode word + space allowed).
+# Per-project absolutní cesty. Klíč musí přesně odpovídat captured "Project"
+# v titulku (case-sensitive, Unicode word + space allowed). Default seed
+# uses ${STATE_ROOT} subdirs; replace with real per-drive paths.
 projects:
-  ProjektAlfa: C:\Projects\Alpha\Recordings
-  KlientBeta: D:\Clients\Beta\Audio
-  Interní: E:\Work\Interni
+  ProjektAlfa: ${STATE_ROOT}\Recordings\ProjektAlfa
+  KlientBeta: ${STATE_ROOT}\Recordings\KlientBeta
+  Interní: ${STATE_ROOT}\Recordings\Interní
 ```
 
-**Open question:** generates seed v sync-core `config.load_config()` (raise on missing) nebo v UI backend `GET /api/config` (returns seed if file missing)? Tracked v Gap 7.
+**`${STATE_ROOT}` substitution rule:** sync-core `config.load_config()` expands the literal string `${STATE_ROOT}` in YAML values to `os.environ["PLAUDSYNC_STATE_ROOT"]` before path validation. Substitution is applied to `unclassified_dir` and each `projects[*]` value. User-edited config can use real absolute paths (`C:\Projects\Alpha`) without substitution — only literal `${STATE_ROOT}` is replaced. **Note:** this is a sync-core impl detail surfaced here for spec coherence; sync-core spec v0.2 needs revision to document `${STATE_ROOT}` expansion + auto-seed behavior. Tracked in Gap 7.
 
 ### D9. Banner: token-expired surface in Settings
 
@@ -220,6 +225,24 @@ Implementation MUSÍ použít:
 | `"Řádek {N}: {message}"` | inline error line |
 | `"{N} řádků"` | line counter |
 
+### D11. Privacy discipline (CLAUDE.md compliance)
+
+CLAUDE.md rule: "Never inline business labels in exception messages or log strings." Settings UI applies this strictly to all user-facing strings:
+
+**Allowed (numbers, generic labels):**
+- `"Konfigurace je neplatná — řádek N"` ← N is numeric, not PII.
+- `"Token vypršel"` ← static label.
+- `"Existující konfigurace je neplatná — řádek N"`.
+
+**Forbidden (must NOT be implemented):**
+- Toast/banner strings interpolating paths: ❌ `"Save failed for ${target_dir}"`.
+- Error messages exposing project names: ❌ `"Project ${project} not found in config"`.
+- Any string template with `${user_token}`, `${title}`, `${plaud_folder}`, `${local_path}`.
+
+**Why:** Sentry capture on uncaught frontend exceptions can surface message strings to backend log + Sentry event. Even though FE→BE is localhost-only, future operations (clipboard copy of error toast, screenshot share for support) may exfiltrate.
+
+**Implementation contract:** if a future feature needs to mention a path/project/title in error UX, render the label via separate JSX node (`<code>`-wrapped, not interpolated into the message), and exclude from any logger / Sentry capture call. PR review (incl. /security-review) MUST flag any string template with non-numeric, non-static interpolation in toast/banner/error text.
+
 ## Components
 
 ```
@@ -249,9 +272,9 @@ frontend/src/
 | api/types.ts (Config/Auth responses) | ~30 |
 | **Settings subtotal** | **~300** |
 | **Dashboard subtotal** (per Dashboard spec) | ~610 |
-| **Total frontend** | **~910** (within 500–1000 budget; 90 % slack) |
+| **Total frontend** | **~910** (within 500–1000 budget; ~90 LoC headroom) |
 
-Settings spec mírně překračuje předchozí estimate (~200) z Dashboard spec — finer breakdown po extracted prototypu zvedl YamlEditor + ConnectionPanel detail.
+Settings spec mírně překračuje předchozí estimate (~200) z Dashboard spec — finer breakdown po extracted prototypu zvedl YamlEditor + ConnectionPanel detail. Multi-error 422 expandable list (Gap 1 decided) + Tab key handler (Gap 9) + memoized gutter (Gap 10) tlačí YamlEditor odhad lehce výš (~80 → ~100); LoC headroom uvedený výše už zohledňuje.
 
 ### Public TS types (mirror Pydantic from UI architecture spec + auth design)
 
@@ -265,7 +288,6 @@ interface ConfigResponse {
   raw_yaml: string;
   parsed: Record<string, unknown> | null;        // dict shape — unclassified_dir + projects
   parse_error: ConfigParseError | null;          // present when GET reads invalid existing file
-  masked_token: string | null;                   // optional, see Gap 3
 }
 
 interface ConfigSaveSuccess {
@@ -284,6 +306,8 @@ interface AuthVerifyResponse {
   ok: boolean;
   reason: "PlaudTokenExpired" | "PlaudTokenMissing" | null;
   message: string | null;
+  masked_token: string | null;                   // server-computed mask (first_8 + "•"×15 + last_4)
+                                                 // null when token missing or verify HTTP error
 }
 ```
 
@@ -369,7 +393,7 @@ User clicks "Uložit" with malformed YAML:
     inline error footer with "Řádek 12: <message>"
 ```
 
-**Multi-error handling:** prototype shows only first error. Real backend may return multiple. Decision tracked v Gap 1 below — recommend show first inline + "(+N dalších)" hint with click → expand modal listing all.
+**Multi-error handling:** prototype shows only first error. Real backend may return multiple. Decided behavior (viz Gap 1 below): first error inline + trailing button "(+N dalších chyb)" → click expands `<details>` listing all → click on item promotes to current.
 
 ### Save 5xx (server error)
 
@@ -445,20 +469,26 @@ User clicks "Načíst znovu":
 
 **Issue:** Prototype's `setYamlError(errLine, errMsg)` is single-error. Sync-core `ConfigValidationError` carries `list[ConfigParseError]` (`config.py` Public API), and `PUT /api/config` 422 body schema in UI architecture spec is `errors: [ConfigParseError, ...]` (array). Real backend can return multiple errors at once (e.g., 3 missing required keys, 2 non-absolute paths). Showing only first means user fixes line 5, saves, sees line 12 error, fixes, saves, sees line 18 error — 3 round-trips for 3 fixes.
 
-**Decision (recommend):** MVP — show first error inline (matches prototype), append `"(+{N-1} dalších chyb)"` text v inline error footer when `errors.length > 1`. Click on that text → expand list as modal or dropdown showing all errors with line numbers. Implementation: trivial conditional render, ~10 LoC v `YamlEditor`.
+**Decision:** show first error inline (matches prototype's red bg gutter line + footer text). When `errors.length > 1`, footer additionally renders trailing element `<button class="text-red-700 underline">(+{N-1} dalších chyb)</button>`. Click expands a `<details>`/popover panel below the editor listing all errors as `<ul>` with `Řádek {line}: {message}` items (each line clickable → scrolls textarea to that line + temporarily highlights gutter). Multiple gutter lines are NOT highlighted simultaneously — single source of truth (the "current" inline error). Click on a list item promotes that error to "current" (inline footer + gutter highlight switch).
 
-**Alternative:** show all errors v gutter (multiple lines highlighted) + listed in footer with `<ul>`. More complete but visual noise; defer to v1.1+ if user feedback shows multi-error pattern is common.
+**Implementation:** ~25 LoC v `YamlEditor` (trailing button + collapsible list + click-to-scroll handler using `textarea.setSelectionRange` + scrollIntoView).
 
 ### Gap 2: Token masking — frontend hardcoded vs backend-rendered
 
-**Issue:** Prototype hardcodes `masked = "eyJhbGci•••••••••••••••AbcD9"`. UI architecture spec D5 / B5 explicitly forbids `/api/config` exposing token value. Real implementation needs:
-- **Option A:** Backend renders mask v `AuthVerifyResponse` (e.g., `masked_token: str` field added). Verify endpoint reads token, masks server-side, returns. UI never receives raw value.
-- **Option B:** Backend renders mask v `ConfigResponse.masked_token`. Settings mount → GET /api/config → mask available without verify call.
-- **Option C:** Frontend reads constant "•" placeholder + chip "z .env" without any backend hint. Simplest, no PII surfaced; user clicks Verify to confirm token works.
+**Issue:** Prototype hardcodes `masked = "eyJhbGci•••••••••••••••AbcD9"`. UI architecture spec B5 forbids `/api/config` exposing token value. UI architecture spec line 841 (Settings brief) explicitly depicts a real mask `"eyJ•••••••••••AbcD"` (header-derived, suffix-derived) — user signal: visual confirmation "yes, this is the token I pasted" matters.
 
-**Decision (recommend):** **Option C** for MVP. Reasons: (a) no new backend response field needed, (b) zero PII surfaced even masked (defense-in-depth), (c) prototype's masked rendering is decorative — user can't act on first/last chars anyway. Implementation: `<ConnectionPanel>` renders `"••••••••••••••••••••"` (20 dots) + chip "z .env". Banner title "Token chybí" surfaces if `PlaudTokenMissing`, replacing decorative mask cue.
+Three options considered:
+- **Option A:** Backend renders mask v `AuthVerifyResponse.masked_token` (first_8 + "•"×15 + last_4 heuristic). Verify endpoint reads token, masks server-side, returns. UI never receives raw value. Settings mount triggers implicit verify to populate.
+- **Option B:** Backend renders mask v `ConfigResponse.masked_token`. Cross-couples auth state into config endpoint — violates separation of concerns.
+- **Option C:** Frontend constant "•"×20 placeholder. Loses umbrella's depicted UX; user can't visually confirm token identity post-paste.
 
-**Alternative:** Option A if user signal comes that they want to confirm "yes, that's the token I pasted". Then add `masked_token` field to `AuthVerifyResponse` only (not config response — avoid cross-coupling). Defer to v1.1+ if requested.
+**Decision: Option A.** Reasons:
+- (a) Matches umbrella line 841 depicted UX (real mask, not generic dots).
+- (b) JWT header bytes (`eyJhbGci...`) are public boilerplate — masking first 8 + last 4 leaks no secret material under any reasonable threat model. Defense-in-depth via `_INLINE_LABEL_RE` scrubber + Sentry rules already covers accidental log/event surface.
+- (c) `AuthVerifyResponse` is the natural home — masked token is a property of "auth state", not "config schema".
+- (d) Settings mount → implicit `useVerifyAuth.mutate()` populates mask without forcing user click. If verify fails (token invalid), banner surfaces error AND `masked_token: null` clears the display.
+
+**Implementation:** backend `auth.py` adds `mask_token(token: str) -> str` helper (`token[:8] + "•"*15 + token[-4:]` for tokens ≥ 12 chars; `"•"*20` fallback for shorter). Returned in `AuthVerifyResponse.masked_token` for both `ok=true` and `ok=false` cases (verify can fail with valid token shape — region issue, network — and we still display mask). `null` only when token literally absent (`PlaudTokenMissing`).
 
 ### Gap 3: Inline parse error from GET /api/config (existing config broken on mount)
 
@@ -534,36 +564,64 @@ Document v `client.ts` why two conventions coexist (auth verify must distinguish
 
 **Alternative:** harmonize both endpoints. Out of Settings spec scope — would require UI architecture spec revision.
 
+### Gap 9: textarea Tab key behavior — focus jump vs indent
+
+**Issue:** YAML is whitespace-sensitive (2-space indent). Plain `<textarea>` with `tab-size: 2` (D5 CSS) styles tab display but doesn't make Tab insert spaces — Tab still moves keyboard focus to next form element by default, breaking edit ergonomics in the editor. User pressing Tab to indent will instead jump to "Uložit" button.
+
+**Decision:** Add `onKeyDown` handler to `<YamlEditor>` textarea: intercept Tab, prevent default, insert 2 spaces at current selection (handles both no-selection caret and range-selection block-indent). Shift+Tab dedents (remove up to 2 leading spaces from each selected line). ~15 LoC, no library needed.
+
+**Tradeoff:** loses native focus-trap accessibility. Mitigation: Esc key blurs the textarea (returns focus to next form element), restoring keyboard nav escape hatch. Document in user-facing hint pod editorem: `"Tab pro odsazení • Esc pro opuštění editoru"` (small gray text, ~12px).
+
+**Acceptance:** keyboard-only user can: Tab into textarea (from previous form element), edit YAML with Tab indent, Esc to leave textarea, Tab to next button. Cycle works.
+
+### Gap 10: textarea performance with very large config files
+
+**Issue:** Per-line `<div>` rendering in line-number gutter scales O(N) with file size. 5000-line YAML rebuilds 5000 DOM nodes on every keystroke. Plain textarea handles content fine; gutter does not.
+
+**Decision:** Document explicit cap in **Out of scope:** "config.yaml > 500 lines is out of scope; no virtualization in v0". Rationale: realistic PlaudSync config is < 50 lines (1 unclassified_dir + 5–20 projects). 500 line cap = 10× realistic + headroom for comments. v1.1+ if user feedback shows configs grow (e.g., user with 200 projects).
+
+**Mitigation v MVP:** memoize line-number array (only re-render when line count changes, not on every char): `useMemo(() => lines.map((_, i) => <div key={i}>{i+1}</div>), [lines.length])`. Trivial perf win without virtualization complexity. Plus `aria-hidden="true"` on gutter container (line-number `<div>`s are non-semantic decorative, screen readers should not announce them).
+
 ## Open questions (for implementation cycle)
 
-1. **`masked_token` placement** (Gap 2) — Option A (verify response), B (config response), C (frontend constant)? Default: C.
-2. **Multi-error 422 display** (Gap 1) — first-only with `(+N dalších)` hint vs all-listed? Default: first-only with hint.
-3. **Reload confirm dialog** (Gap 4) — native `confirm()` vs custom modal vs silent overwrite? Default: native confirm if dirty.
-4. **DEFAULT_YAML seed** (Gap 7) — sync-core auto-creates vs user creates manually per README? Default: sync-core auto-creates (revisit in sync-core impl).
-5. **Save button dirty disable** (Gap 6) — always-enabled vs disabled-when-clean? Default: always-enabled.
+1. **Reload confirm dialog UX** (Gap 4) — native `confirm()` vs custom modal vs silent overwrite? Default: native confirm if dirty.
+2. **Save button dirty disable** (Gap 6) — always-enabled vs disabled-when-clean? Default: always-enabled.
 
-These are implementation-cycle questions, not blockers for spec approval.
+Items previously listed as open are now decided in-spec (Gap 1: multi-error first-with-expand, Gap 2: masked_token in `AuthVerifyResponse`).
+
+**Cross-spec impact requiring sync-core spec revision (NOT impl-cycle):**
+
+3. **Auto-seed DEFAULT_YAML in `config.load_config()`** (Gap 7) — sync-core spec v0.2 currently raises `ConfigValidationError` on missing file (exit 7). Settings spec depends on auto-seed for first-run UX. **Action item:** when sync-core impl reaches `config.py` (currently in progress on `feat/sync-core` branch), revise sync-core spec to v0.3:
+   - `load_config(state_root)` writes DEFAULT_YAML if file missing, then continues with parsed seed (logs `INFO "Created seed config — please review in Settings"`).
+   - `${STATE_ROOT}` literal substitution rule documented.
+   - Parent-must-exist validation creates parent dirs for seed values via `mkdir(parents=True, exist_ok=True)` (limited to seed paths only — user-edited paths still require parent exists).
+   
+   Alternative (rejected): keep `config.load_config` strict + add seed step to sync-core `__main__.py` first-time setup detection. Adds entry-point complexity; auto-seed in `load_config` keeps single source of truth.
 
 ## Acceptance criteria
 
 Settings implementation je hotová pokud:
 
 1. **Visual parity with prototype** — `frontend/PlaudSync UI.html` rendered side-by-side with built React app shows pixel-equivalent UI for ConnectionPanel + ConfigPanel + YamlEditor.
-2. **Token mask renders without raw token leak** — manual smoke: set `PLAUD_API_TOKEN=secret123-xyz` v `.env`, open Settings, inspect HTML source + DOM — no `secret123` substring anywhere.
-3. **Verify success** — valid token → spinner → idle + toast "Token ověřen" within 1500 ms.
-4. **Verify expired** — invalid token → spinner → idle + banner "Token vypršel" + toast "Ověření tokenu selhalo" within 1500 ms.
-5. **Verify missing** — empty `.env` → backend returns `PlaudTokenMissing` → banner "Token chybí".
-6. **Save happy path** — edit YAML, click Uložit → spinner → toast "Konfigurace uložena" within 1000 ms; second mount shows persisted YAML.
-7. **Save 422** — write tab character at line N, click Uložit → spinner → inline error footer "Řádek N: ..." + line N highlighted in gutter (red bg + bold) + toast "Konfigurace je neplatná — řádek N".
-8. **Save 422 multi-error** — submit YAML with 3 errors → first inline + footer hint "(+2 dalších)" with click revealing list.
-9. **Save 5xx** — induce backend write failure (chmod read-only state dir) → toast "Uložení selhalo — zkontroluj log" + no inline error.
-10. **Reload — dirty confirm** — edit YAML, click Načíst znovu → confirm dialog appears, Cancel keeps edits, OK refetches + clears.
-11. **Reload — clean** — no dirty edits → click Načíst znovu → silent refetch + toast "Konfigurace načtena znovu".
-12. **Existing broken config on mount** — corrupt config.yaml on disk, open Settings → inline error footer immediately + toast "Existující konfigurace je neplatná — řádek N".
-13. **Line gutter scroll sync** — paste 100-line YAML, scroll textarea, gutter scrolls in lockstep (no drift).
-14. **Czech localization** — all strings match D10 lock contract.
-15. **Frontend bundle ≤ 500 KB gzipped** — UI architecture umbrella W-U2 watch (combined Dashboard + Settings).
-16. **Accessibility minimum** — keyboard nav: Tab cycles Verify → textarea → Save → Reload. Focus rings visible. aria-labels on icon-only spinners.
+2. **Token mask renders without raw token leak** — manual smoke: set `PLAUD_API_TOKEN=secret123abcdefghijklmnXYZ9` v `.env`, open Settings → ConnectionPanel zobrazí mask `secret12•••••••••••••••XYZ9` (first_8 + 15 dots + last_4); inspect HTML source + DOM — žádný 12-char middle substring leak (specifically `abcdefghijklm` should not appear anywhere).
+3. **Verify success** — valid token → spinner → idle + toast "Token ověřen" + masked_token populated within 1500 ms.
+4. **Verify expired** — invalid token → spinner → idle + banner "Token vypršel" + toast "Ověření tokenu selhalo" within 1500 ms; masked_token still populated (token shape known, just rejected).
+5. **Verify missing** — empty `.env` → backend returns `PlaudTokenMissing` → banner "Token chybí" + masked_token=null → ConnectionPanel zobrazí placeholder dots only.
+6. **Settings mount auto-verify** — opening Settings route triggers implicit verify; success populates mask without user click; failure surfaces banner.
+7. **Save happy path** — edit YAML, click Uložit → spinner → toast "Konfigurace uložena" within 1000 ms; second mount shows persisted YAML.
+8. **Save 422 single-error** — write tab character at line N, click Uložit → spinner → inline error footer "Řádek N: ..." + line N highlighted in gutter (red bg + bold) + toast "Konfigurace je neplatná — řádek N".
+9. **Save 422 multi-error** — submit YAML with 3 errors → first error inline + trailing button "(+2 dalších chyb)" → click expands `<details>` listing all 3 → click on item 2 promotes to current (gutter highlight switches, scroll jumps).
+10. **Save 5xx** — induce backend write failure (chmod read-only state dir) → toast "Uložení selhalo — zkontroluj log" + no inline error.
+11. **Reload — dirty confirm** — edit YAML, click Načíst znovu → confirm dialog appears, Cancel keeps edits, OK refetches + clears.
+12. **Reload — clean** — no dirty edits → click Načíst znovu → silent refetch + toast "Konfigurace načtena znovu".
+13. **Existing broken config on mount** — corrupt config.yaml on disk, open Settings → inline error footer immediately + toast "Existující konfigurace je neplatná — řádek N".
+14. **Line gutter scroll sync** — paste 100-line YAML, scroll textarea, gutter scrolls in lockstep (no drift).
+15. **Tab key indent** — focus textarea, press Tab → 2 spaces inserted at caret (no focus jump). Range select 3 lines + Tab → each line indented 2 spaces. Esc → blurs textarea.
+16. **Gutter perf** — paste 500-line YAML; typing single char produces no visible jank (line-number `<div>`s memoized by `lines.length`).
+17. **Accessibility** — keyboard nav: Tab cycles Verify → textarea → Save → Reload (textarea Tab-trap escaped via Esc). Focus rings visible. aria-labels on icon-only spinners. Gutter has `aria-hidden="true"` (decorative).
+18. **Czech localization** — all strings match D10 lock contract.
+19. **Privacy discipline** — grep frontend source for string templates: zero matches for `\${target_dir}`, `\${project}`, `\${title}`, `\${plaud_folder}`, `\${local_path}` patterns inside toast/banner/error strings. Static labels and numeric line numbers only.
+20. **Frontend bundle ≤ 500 KB gzipped** — UI architecture umbrella W-U2 watch (combined Dashboard + Settings).
 
 ## Implementation plan
 
@@ -579,4 +637,5 @@ Pořadí navazujících kroků:
 
 ## Revision history
 
+- **2026-04-25 (v0.1):** post-review fixes (independent code review of v0). Gap 2 flipped C → A (umbrella line 841 depicts real mask, not generic dots; `masked_token` lives on `AuthVerifyResponse`, not `ConfigResponse`). Gap 1 promoted from "recommend" to "decided" (multi-error first inline + expandable list). D8 seed paths rewritten to `${STATE_ROOT}\Recordings\...` matching Gap 7 reasoning + new substitution rule documented. Added Gap 9 (Tab key indent vs focus jump) + Gap 10 (gutter perf with large configs + aria-hidden). Added D11 (privacy discipline note per CLAUDE.md). Promoted DEFAULT_YAML auto-seed from open question to cross-spec impact item (sync-core spec needs v0.3 revision). Acceptance criteria expanded 16 → 20 (added auto-verify mount, multi-error promote-to-current, Tab indent, gutter perf, privacy grep). Out of scope adds 500-line config cap.
 - **2026-04-25 (v0):** Extracted z `frontend/PlaudSync UI.html` Claude Design prototype (commit `1ea6bd3`). Review delta proti UI architecture umbrella v0.2 + sync-core v0.2 + auth design. 8 gaps identified, 5 deferred to implementation cycle as open questions, 3 with documented decisions inline.
