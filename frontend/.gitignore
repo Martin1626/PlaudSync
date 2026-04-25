@@ -2,3 +2,9 @@ node_modules/
 dist/
 .vite/
 *.local
+
+# TypeScript composite build outputs (tsc -b)
+*.tsbuildinfo
+# Generated when tsc compiles vite.config.ts in composite mode
+vite.config.d.ts
+vite.config.js
