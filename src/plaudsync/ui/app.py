@@ -26,7 +26,11 @@ from plaudsync.auth import (
     mask_token,
 )
 from plaudsync.plaud_client import PlaudClient, PlaudRegionProbeFailed
-from plaudsync.ui.config_io import maybe_seed_default
+from plaudsync.ui.config_io import (
+    maybe_seed_default,
+    read_config_payload,
+    save_config_payload,
+)
 from plaudsync.ui.state_reader import read_state_snapshot
 
 
@@ -98,6 +102,26 @@ class AuthVerifyResponse(BaseModel):
     masked_token: str | None = None
 
 
+class ConfigParseErrorModel(BaseModel):
+    line: int
+    message: str
+
+
+class ConfigResponse(BaseModel):
+    raw_yaml: str
+    parsed: dict | None = None
+    parse_error: ConfigParseErrorModel | None = None
+
+
+class ConfigSaveRequest(BaseModel):
+    raw_yaml: str
+
+
+class ConfigSaveSuccess(BaseModel):
+    ok: Literal[True] = True
+    parsed: dict
+
+
 def create_app(state_root: Path) -> FastAPI:
     """Build a FastAPI app bound to the given state_root.
 
@@ -165,5 +189,19 @@ def create_app(state_root: Path) -> FastAPI:
             message=None,
             masked_token=masked,
         )
+
+    @app.get("/api/config", response_model=ConfigResponse)
+    def get_config() -> dict:
+        return read_config_payload(app.state.state_root)
+
+    @app.put("/api/config", response_model=ConfigSaveSuccess)
+    def put_config(req: ConfigSaveRequest) -> ConfigSaveSuccess:
+        result = save_config_payload(app.state.state_root, req.raw_yaml)
+        if not result["ok"]:
+            raise HTTPException(
+                status_code=422,
+                detail={"ok": False, "errors": result["errors"]},
+            )
+        return ConfigSaveSuccess(parsed=result["parsed"])
 
     return app
