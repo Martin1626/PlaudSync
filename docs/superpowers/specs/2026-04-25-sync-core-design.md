@@ -1,8 +1,8 @@
 # Sync core — design spec
 
-> **Status:** v0 draft (2026-04-25). Výstup brainstorm session (Superpowers `brainstorming` skill).
-> **Scope:** core sync pipeline (listing → download → state → local FS) bez klasifikace.
-> **Preceded by:** [SPEC.md](../../../SPEC.md) v0.1, [2026-04-24-plaud-auth-design.md](2026-04-24-plaud-auth-design.md), [DEV_LOG.md](../../../DEV_LOG.md) entry "Auth layer implemented".
+> **Status:** v0.2 (2026-04-25). v0.1 → v0.2 změna: per-project absolutní cesty z YAML configu (žádný společný `LOCAL_ROOT`). Nové moduly `config.py` + `path_resolver.py`. Env var `PLAUDSYNC_LOCAL_ROOT` přejmenován na `PLAUDSYNC_STATE_ROOT` (jen state, žádné recordings). `recordings.local_path` v SQLite je nyní **absolutní** path.
+> **Scope:** core sync pipeline (listing → classify → path resolve → download → state → local FS) bez klasifikační logiky (categorization spec).
+> **Preceded by:** [SPEC.md](../../../SPEC.md) v0.1, [2026-04-24-plaud-auth-design.md](2026-04-24-plaud-auth-design.md), [2026-04-25-categorization-design.md](2026-04-25-categorization-design.md) v0.2, [DEV_LOG.md](../../../DEV_LOG.md) entry "Auth layer implemented".
 > **Next step:** `writing-plans` skill → implementation plan. **První task plánu = endpoint discovery** (Explore agent nad `arbuzmell/plaud-api` + `sergivalverde/plaud-toolkit`, produkuje appendix v tomto dokumentu se seznamem URL + request/response shapes).
 
 ## Problem
@@ -13,7 +13,7 @@ PlaudSync potřebuje pravidelně (hourly via Task Scheduler) stahovat nové Plau
 2. **Incremental pull** seznamu recordings od posledního úspěšného sync (`since=<last_successful_finished_at>`).
 3. **Download** audio souborů streamingem do lokálního filesystemu (transcript mimo scope v0 — viz Out of scope).
 4. **Zavolat pluggable klasifikátor** (v0 vrací `"_unclassified"`) pro určení cílového projektu.
-5. **Uložit** do deterministické struktury `{LOCAL_ROOT}/{project_name}/{YYYY-MM-DD}_{title_slug}.{ext}`.
+5. **Uložit** do per-project absolutních cest z YAML configu — `${config.projects[name]}/{YYYY-MM-DD}_{title_slug}.{ext}` pro matched, `${config.unclassified_dir}/...` pro unclassified / unmapped (path_resolver detail).
 6. **Persist delta state** v SQLite (idempotence + read-only data source pro UI Dashboard).
 7. **Handle concurrent launch** Task Scheduler ↔ UI Sync Now (file lock, fail-fast).
 8. **Report strukturovaný exit code** Task Scheduleru tak, aby Sentry alerting mělo smysl (success / partial / hard fail).
@@ -22,12 +22,14 @@ PlaudSync potřebuje pravidelně (hourly via Task Scheduler) stahovat nové Plau
 
 - `state.py` modul: SQLite schema (`recordings`, `sync_runs`), migration bootstrap, WAL mode, open/close helpers.
 - `plaud_client.py` extension: region probe v `__init__`, `list_recordings(since)`, `download_audio(recording_id)`.
-- `sync.py` modul: orchestrace pipeline (listing → per-recording download → classifier hook → file write → DB upsert).
+- `sync.py` modul: orchestrace pipeline (listing → per-recording classify → path resolve → download → file write → DB upsert).
 - `locking.py` modul: thin wrapper nad `portalocker` pro file lock lifecycle + `SyncLockHeld` exception.
 - `classifier.py` modul: `Classifier` Protocol + `DefaultBucketClassifier` implementace.
-- `__main__.py` extension: `run_sync()` skutečná implementace, exit codes 4/5/6 mapování, trigger detection.
-- `observability.py` extension: scrub inline labels `title`, `recording_title`, `local_path`, `file_path`.
-- Integration testy s VCR cassettes proti reálnému Plaud API + unit testy nad in-memory SQLite.
+- **`config.py` modul (NEW v0.2):** load + validate YAML config (`unclassified_dir`, `projects` mapping). Schema validace, parse error reporting (line numbers).
+- **`path_resolver.py` modul (NEW v0.2):** `resolve_target_path(result, plaud_folder, config) -> Path`. Owns `_sanitize_folder_name`. Three branches: matched-in-config, matched-not-in-config (`_unmapped_<project>/`), unclassified.
+- `__main__.py` extension: `run_sync()` skutečná implementace, exit codes 4/5/6 mapování, trigger detection, config loading.
+- `observability.py` extension: scrub inline labels `title`, `recording_title`, `local_path`, `file_path`, `plaud_folder`.
+- Integration testy s VCR cassettes proti reálnému Plaud API + unit testy nad in-memory SQLite + path_resolver unit testy.
 
 ## Out of scope
 
@@ -46,10 +48,34 @@ PlaudSync potřebuje pravidelně (hourly via Task Scheduler) stahovat nové Plau
 
 | Env var | Required | Default | Purpose |
 |---------|----------|---------|---------|
-| `PLAUDSYNC_LOCAL_ROOT` | **yes** | — | Absolutní path k cílové složce pro recordings + `.plaudsync/` state dir. User-choice (např. `C:\PlaudRecordings`). |
+| `PLAUDSYNC_STATE_ROOT` | **yes** | — | Absolutní path k adresáři, kde žije PlaudSync **state** (NE recordings). Obsahuje `config.yaml` + `.plaudsync/state.db` + `.plaudsync/sync.lock` + `.plaudsync/plaudsync.log`. User-choice (např. `C:\PlaudSync\`). Recording cesty jsou v `config.yaml`, ne tady. |
 | `PLAUDSYNC_TRIGGER` | no | `task_scheduler` | UI Sync Now subprocess přepíše na `ui_sync_now`. Manual terminal run může přepsat na `manual` pro audit rozlišení. |
 
-`.env.example` update during implementation: přidat `PLAUDSYNC_LOCAL_ROOT=C:\PlaudRecordings` placeholder + README setup note.
+`.env.example` update during implementation: přidat `PLAUDSYNC_STATE_ROOT=C:\PlaudSync` placeholder + README setup note. **Žádný `PLAUDSYNC_LOCAL_ROOT`** (zrušeno v v0.2 — nahrazeno per-project entries v `config.yaml`).
+
+### Config file schema (`${PLAUDSYNC_STATE_ROOT}/config.yaml`)
+
+```yaml
+# Cílová absolutní cesta pro nahrávky, které neprojdou klasifikací
+# (title nematchne pattern, nebo project nematchne config.projects).
+unclassified_dir: D:\Recordings\Unclassified
+
+# Projekty: name → absolutní cílová cesta.
+# Klíč musí přesně odpovídat captured "project" group z titulku
+# (regex z categorization specu — case-sensitive, Unicode word + space).
+projects:
+  ProjektAlfa: C:\Projects\Alpha\Recordings
+  ProjektBeta: D:\Clients\Beta\Audio
+  "Projekt Česká Alfa": E:\Projects\CSAlfa
+```
+
+**Validation rules** (`config.load_config()` raise `ConfigValidationError` s line number):
+- `unclassified_dir` required, must be absolute, parent must exist (auto-create cílový adresář OK).
+- `projects` required (může být `{}`), value každé položky absolutní path, parent must exist.
+- Path string nesmí obsahovat `..` (path traversal guard).
+- Žádná hard-fail pro duplicate path mezi projects (warning v log, dva projekty mohou sdílet folder úmyslně).
+
+**Pozn.:** `state_root` je **jen env var, ne YAML klíč** — vyhneme se chicken-and-egg (potřebuješ state_root znát, abys našel config.yaml). YAML obsahuje jen behavioral routing, env var je bootstrap location.
 
 ## Decisions & rationale
 
@@ -101,7 +127,7 @@ CREATE TABLE IF NOT EXISTS recordings (
     title             TEXT NOT NULL,
     created_at_plaud  TEXT NOT NULL,   -- ISO 8601 z API
     downloaded_at     TEXT NOT NULL,   -- ISO 8601 lokální
-    local_path        TEXT NOT NULL,   -- relativní k LOCAL_ROOT
+    local_path        TEXT NOT NULL,   -- absolutní path (per-project cesty se neshodují společným kořenem)
     classifier_label  TEXT NOT NULL,   -- v0 vždy '_unclassified'
     status            TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped')),
     sync_run_id       INTEGER REFERENCES sync_runs(run_id)
@@ -127,7 +153,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_runs_started_at ON sync_runs(started_at DESC
 - **WAL mode** zapneme při prvním open: `PRAGMA journal_mode=WAL;`.
 - **Incremental since marker:** `SELECT MAX(finished_at) FROM sync_runs WHERE exit_code = 0`. NULL (fresh install) → `since=None` → full listing.
 - **ID strategy:** Plaud stabilní `id` string jako PK, žádné UUID.
-- **File location:** `{LOCAL_ROOT}/.plaudsync/state.db`. Důvod: LOCAL_ROOT je user-choice cesta, `%APPDATA%` by rozdělil state.
+- **File location:** `${PLAUDSYNC_STATE_ROOT}/.plaudsync/state.db`. Důvod: STATE_ROOT je user-choice umístění **jen pro PlaudSync metadata** (config.yaml + state.db + sync.lock + plaudsync.log), recordings žijí na per-project cestách z config.yaml. `%APPDATA%` jako default by rozdělil state z user-visible umístění (uživatel by chtěl vidět log/db v explorer pod tou cestou, kterou si zvolil).
 - **Trigger values:** `task_scheduler` (default), `ui_sync_now` (UI subprocess setuje `PLAUDSYNC_TRIGGER=ui_sync_now`), `manual` (stejná sémantika, rozlišení pro audit).
 
 ### 5. Immutability po prvním downloadu
@@ -145,7 +171,7 @@ Jakmile je recording v DB s `status='downloaded'`, žádné další změny title
 
 ### 6. Concurrent lock: fail-fast, exit 5
 
-`portalocker` non-blocking acquire na `{LOCAL_ROOT}/.plaudsync/sync.lock` jako první krok `run_sync()`. Pokud zámek drží jiný proces → `SyncLockHeld` → exit 5.
+`portalocker` non-blocking acquire na `${PLAUDSYNC_STATE_ROOT}/.plaudsync/sync.lock` jako první krok `run_sync()`. Pokud zámek drží jiný proces → `SyncLockHeld` → exit 5.
 
 **Proč fail-fast místo blocking wait:** Task Scheduler by driftoval, pokud UI user má 4minutový sync; raději přeskočit tento hourly run, příští hodina ho dožene. Race-condition přeskok není chyba — **žádný Sentry event pro exit 5** (jen `logger.info`), aby nezbytečně neznečišťoval alerting noise.
 
@@ -186,6 +212,7 @@ Exit codes 0/1/2/3 jsou dědictví auth layer. Přidáváme 4/5/6:
 | 4 | `PlaudSyncPartialFailure` (≥ 1 recording failed, sync completed) | Yes (next run) | Inspect `sync_runs.recordings_failed` + Loguru log |
 | 5 | `SyncLockHeld` (concurrent sync active) | Yes (next run) | Žádná akce — idempotence guard |
 | 6 | `PlaudRegionProbeFailed` (probe shape neočekávaný) | Maybe | Zkontrolovat Plaud API status / reference repos |
+| 7 | `ConfigValidationError` (config.yaml chybný / chybí) | No | Opravit `${PLAUDSYNC_STATE_ROOT}/config.yaml` (Settings UI inline errors zobrazí konkrétní řádek) |
 
 **Per-recording failure handling (neshazuje sync):**
 
@@ -242,26 +269,43 @@ src/plaudsync/
 │   ├── RecordingMeta dataclass (id, title, created_at, file_size, duration, …)
 │   └── PlaudRegionProbeFailed, PlaudDownloadCorrupted exceptions
 ├── state.py             [NEW, ~120 LoC]
-│   ├── open_state(local_root: Path) -> sqlite3.Connection  # WAL mode, migrations
+│   ├── open_state(state_root: Path) -> sqlite3.Connection  # WAL mode, migrations
 │   ├── last_successful_sync(conn) -> str | None
 │   ├── start_sync_run(conn, trigger: str) -> int           # run_id
 │   ├── finish_sync_run(conn, run_id, exit_code, counts)
-│   └── record_recording(conn, meta, status, run_id)        # INSERT OR IGNORE + update on retry
-├── sync.py              [NEW, ~180 LoC]
-│   ├── run_sync(client, classifier, conn, local_root, trigger) -> int
-│   └── _process_recording(meta, client, classifier, local_root, conn, run_id)
+│   └── record_recording(conn, meta, status, local_path, run_id)
+│        # INSERT OR IGNORE + update on retry; local_path je absolutní
+├── config.py            [NEW v0.2, ~80 LoC]
+│   ├── @dataclass(frozen=True) Config
+│   │     ├── unclassified_dir: Path
+│   │     └── projects: dict[str, Path]
+│   ├── load_config(state_root: Path) -> Config
+│   │     # čte ${state_root}/config.yaml, validuje schema, raise ConfigValidationError
+│   ├── ConfigValidationError(Exception) — .args[0] = list[ConfigParseError]
+│   └── @dataclass ConfigParseError(line: int, message: str)
+├── path_resolver.py     [NEW v0.2, ~60 LoC]
+│   ├── resolve_target_path(result: ClassificationResult,
+│   │                       plaud_folder: str,
+│   │                       config: Config,
+│   │                       filename: str) -> Path
+│   │     # 3 branches: matched-in-config, matched-not-in-config, unclassified
+│   └── _sanitize_folder_name(name: str) -> str
+│        # Windows path-illegal chars → "_", emoji → "_", "" → "_unknown"
+├── sync.py              [NEW, ~200 LoC]
+│   ├── run_sync(client, classifier, conn, config, trigger) -> int
+│   └── _process_recording(meta, client, classifier, config, conn, run_id)
 ├── locking.py           [NEW, ~30 LoC]
 │   ├── SyncLock(path: Path) — context manager, portalocker-based
 │   └── SyncLockHeld(Exception)
 ├── classifier.py        [NEW, ~30 LoC]
 │   ├── Classifier Protocol
 │   └── DefaultBucketClassifier
-├── __main__.py          [EXTENDED, +~40 LoC]
-│   ├── run_sync() — skutečná implementace, drive Classifier+PlaudClient+state+lock
-│   ├── exception → exit code 4/5/6 mapping
+├── __main__.py          [EXTENDED, +~50 LoC]
+│   ├── run_sync() — load_config + drive Classifier+PlaudClient+state+lock
+│   ├── exception → exit code 4/5/6/7 mapping  (7 = ConfigValidationError)
 │   └── _detect_trigger() — čte PLAUDSYNC_TRIGGER env var
 └── observability.py     [EXTENDED, +~10 LoC]
-    └── _INLINE_LABEL_RE — přidat: title, recording_title, local_path, file_path
+    └── _INLINE_LABEL_RE — přidat: title, recording_title, local_path, file_path, plaud_folder
 ```
 
 ### Public API (nové části)
@@ -275,6 +319,7 @@ class RecordingMeta:
     created_at: str          # ISO 8601 z Plaud API
     file_size: int           # bytes (může být 0 pokud API nedodá)
     duration_seconds: int
+    plaud_folder: str        # Plaud-side folder name (path_resolver vstup); default "_unknown"
     # Další pole (transcript URL, audio URL pattern, md5) doplní discovery task
 
 class PlaudRegionProbeFailed(Exception):
@@ -297,10 +342,53 @@ def run_sync(
     client: PlaudClient,
     classifier: Classifier,
     state_conn: sqlite3.Connection,
-    local_root: Path,
+    config: "Config",
     trigger: str = "task_scheduler",
 ) -> int:
     """Full sync pipeline. Vrací exit code 0 (all OK) nebo 4 (≥1 failed)."""
+
+# config.py
+from dataclasses import dataclass
+from pathlib import Path
+
+@dataclass(frozen=True)
+class Config:
+    unclassified_dir: Path
+    projects: dict[str, Path]
+
+@dataclass(frozen=True)
+class ConfigParseError:
+    line: int
+    message: str
+
+class ConfigValidationError(Exception):
+    """Raised by load_config when YAML invalid or schema fails.
+    .args[0] = list[ConfigParseError] — one per validation failure.
+    """
+
+def load_config(state_root: Path) -> Config:
+    """Read ${state_root}/config.yaml, validate, return Config."""
+
+# path_resolver.py
+from plaudsync.categorization import ClassificationResult
+
+def resolve_target_path(
+    result: ClassificationResult,
+    plaud_folder: str,
+    config: Config,
+    filename: str,
+) -> Path:
+    """Return absolute target path for a recording.
+
+    Three branches:
+    - status=="matched" + project in config.projects:
+          ${config.projects[name]}/{filename}
+    - status=="matched" + project NOT in config.projects:
+          ${config.unclassified_dir}/_unmapped_${project}/{filename}
+          + logger.warning + sentry tag error_kind=project_unmapped
+    - status=="unclassified":
+          ${config.unclassified_dir}/${sanitized_plaud_folder}/{filename}
+    """
 
 # locking.py
 class SyncLockHeld(Exception): ...
@@ -320,17 +408,22 @@ Task Scheduler → python -m plaudsync
   → load_dotenv(), _configure_logging(), _configure_sentry()
   → token = auth.load_token()
   → trigger = _detect_trigger()               # PLAUDSYNC_TRIGGER env var
-  → local_root = Path(os.getenv("PLAUDSYNC_LOCAL_ROOT"))
-  → with SyncLock(local_root / ".plaudsync" / "sync.lock"):   # fail → exit 5
-       → conn = state.open_state(local_root)
+  → state_root = Path(os.getenv("PLAUDSYNC_STATE_ROOT"))
+  → config = config.load_config(state_root)   # ${state_root}/config.yaml | exit 7
+  → with SyncLock(state_root / ".plaudsync" / "sync.lock"):   # fail → exit 5
+       → conn = state.open_state(state_root)
        → run_id = state.start_sync_run(conn, trigger)
        → with PlaudClient(token) as client:        # region probe v __init__
             → since = state.last_successful_sync(conn)
             → for meta in client.list_recordings(since=since):
                  → if recording_exists_and_downloaded(conn, meta.plaud_id):
                       → recordings_skipped += 1; continue
-                 → label = classifier.classify(meta)
-                 → target_path = local_root / label / f"{meta.created_at[:10]}_{slugify(meta.title)}.mp3"
+                 → result = classifier.classify(meta.title, parse_iso(meta.created_at))
+                      # categorization spec — pure title→project
+                 → filename = f"{result.matched_date or meta.created_at[:10]}_{slugify(meta.title)}.mp3"
+                 → target_path = path_resolver.resolve_target_path(
+                                     result, plaud_folder=meta.plaud_folder,
+                                     config=config, filename=filename)
                  → target_path.parent.mkdir(parents=True, exist_ok=True)
                  → bytes_written = 0
                  → with open(target_path, "wb") as f:
@@ -338,12 +431,15 @@ Task Scheduler → python -m plaudsync
                            → f.write(chunk); bytes_written += len(chunk)
                  → if meta.file_size and bytes_written != meta.file_size:
                       → raise PlaudDownloadCorrupted
-                 → state.record_recording(conn, meta, "downloaded", run_id)
+                 → state.record_recording(conn, meta, "downloaded",
+                                           local_path=str(target_path), run_id=run_id)
                  → recordings_new += 1
        → state.finish_sync_run(conn, run_id, exit_code=0, counts=...)
   → SyncLock released
   → exit 0
 ```
+
+**Note:** `meta.plaud_folder` je new field on `RecordingMeta` (Plaud listing endpoint discovery doplní; pokud Plaud API nedodá folder name, default `"_unknown"`).
 
 ### Per-recording failure (soft fail)
 
@@ -397,6 +493,7 @@ Viz tabulka v Decision #8. Klíčové invariants:
 - **Exit 4** = sync completed + ≥ 1 recording `status='failed'`. Task Scheduler → Sentry → `/sync-debug` skill pro triage.
 - **Exit 5** = `SyncLockHeld`. Žádný Sentry event. Žádný `sync_runs` řádek.
 - **Exit 6** = `PlaudRegionProbeFailed`. Sentry s fingerprint=`plaud_region_probe_failed`. `sync_runs` row finalizovaný.
+- **Exit 7** = `ConfigValidationError`. Sentry s fingerprint=`config_validation_error` + tag s počtem errors (ne obsah, kvůli scrubbingu). `sync_runs` row **nevzniká** (config se loaduje před lock + start_sync_run).
 - **Exit 1** = ostatní uncaught (typicky bug). Sentry exception capture.
 
 ### Sentry enrichment
@@ -416,7 +513,7 @@ with sentry_sdk.new_scope() as scope:
 
 ### Scrubbing extension (observability.py)
 
-`_INLINE_LABEL_RE` rozšíříme o labels: `title`, `recording_title`, `local_path`, `file_path`. Regex pattern `(?i)(title|recording_title|local_path|file_path)\s*[=:]\s*\S+` → `<redacted-label>`. Test `test_observability_scrubs_title_inline_label` verifikuje chování před prvním production run (gate na kill criterion L-18).
+`_INLINE_LABEL_RE` rozšíříme o labels: `title`, `recording_title`, `local_path`, `file_path`, `plaud_folder`. Regex pattern `(?i)(title|recording_title|local_path|file_path|plaud_folder)\s*[=:]\s*\S+` → `<redacted-label>`. Test `test_observability_scrubs_title_inline_label` verifikuje chování před prvním production run (gate na kill criterion L-18).
 
 ### Retry policy
 
@@ -441,8 +538,10 @@ Per [CLAUDE.md](../../../CLAUDE.md): integration-first + VCR cassettes; mocks je
 - `tests/test_state.py` — in-memory SQLite, migrations, idempotence.
 - `tests/test_locking.py` — portalocker chování (dva lock objects, druhý raise).
 - `tests/test_classifier.py` — `DefaultBucketClassifier` unit.
+- **`tests/test_config.py` (NEW v0.2)** — YAML load + validate edge cases (missing keys, invalid path, traversal guard).
+- **`tests/test_path_resolver.py` (NEW v0.2)** — `resolve_target_path` 3 branches + `_sanitize_folder_name` edge cases.
 - `tests/test_sync.py` — **integration** test plné pipeline: VCR cassettes + tmp_path + in-memory SQLite. Regression watchdog.
-- `tests/test_main_exit_codes.py` — **extension** existujícího, přidat 4/5/6 cases.
+- `tests/test_main_exit_codes.py` — **extension** existujícího, přidat 4/5/6/7 cases.
 - `tests/test_observability_sync.py` — scrubber extension.
 
 ### Test cases (chronologické TDD pořadí)
@@ -453,24 +552,37 @@ Per [CLAUDE.md](../../../CLAUDE.md): integration-first + VCR cassettes; mocks je
 4. `test_state_open_creates_schema_and_wal_mode`.
 5. `test_state_last_successful_sync_none_on_fresh_db`.
 6. `test_state_last_successful_sync_returns_latest_exit_zero`.
-7. `test_state_record_recording_noop_on_already_downloaded_pk` — UPSERT semantika: pokud existing row má `status='downloaded'`, žádný overwrite.
-8. `test_state_record_recording_updates_failed_to_downloaded_on_retry` — UPSERT semantika: `status='failed'` → nová attempt prošla → row update na `downloaded`.
+7. `test_state_record_recording_noop_on_already_downloaded_pk` — UPSERT: pokud existing row má `status='downloaded'`, žádný overwrite.
+8. `test_state_record_recording_updates_failed_to_downloaded_on_retry` — UPSERT: `status='failed'` → nová attempt prošla → row update na `downloaded`. local_path absolutní.
 9. `test_locking_second_acquire_raises_SyncLockHeld`.
 10. `test_locking_release_allows_reacquire`.
 11. `test_classifier_default_bucket_returns_unclassified`.
 12. `test_list_recordings_paginates_respecting_since` — cassette s ≥ 2 pages.
 13. `test_download_audio_streams_and_matches_size` — cassette + tmp dir + size assertion.
 14. `test_download_audio_size_mismatch_raises_PlaudDownloadCorrupted`.
-15. `test_sync_happy_path_writes_file_and_updates_state` — full integration.
-16. `test_sync_partial_failure_exits_4` — druhý download raise, `sync_runs.recordings_failed == 1`, exit 4.
-17. `test_sync_skips_already_downloaded_by_pk`.
-18. `test_sync_region_probe_fail_exits_6`.
-19. `test_sync_lock_held_exits_5_no_sentry_no_runs_row`.
-20. `test_observability_scrubs_title_inline_label`.
-21. `test_observability_scrubs_local_path_in_message`.
-22. `test_main_exit_code_on_sync_partial_failure_is_4`.
-23. `test_main_exit_code_on_sync_lock_held_is_5`.
-24. `test_main_exit_code_on_region_probe_failed_is_6`.
+15. **`test_config_load_returns_config_for_valid_yaml`** — happy path, projects + unclassified_dir parsed.
+16. **`test_config_load_raises_ConfigValidationError_for_missing_unclassified_dir`** — chybí required key, line number captured.
+17. **`test_config_load_raises_for_relative_path_in_projects`** — non-absolute path → ConfigValidationError.
+18. **`test_config_load_raises_for_path_traversal_in_projects`** — `..` v cestě.
+19. **`test_config_load_raises_for_yaml_syntax_error`** — invalid YAML, line number propagated.
+20. **`test_path_resolver_matched_in_config_returns_config_path`** — result.project="Alfa" v config → ${config.projects["Alfa"]}/{filename}.
+21. **`test_path_resolver_matched_not_in_config_returns_unmapped_subdir`** — soft fallback, _unmapped_<project>/, sentry tag set, log warning.
+22. **`test_path_resolver_unclassified_returns_unclassified_with_sanitized_folder`** — status="unclassified", path = ${unclassified_dir}/<sanitized_plaud_folder>/{filename}.
+23. **`test_sanitize_folder_replaces_unsafe_chars`** (parametrize) — `<>:"/\|?*` + emoji všechny redukovány.
+24. **`test_sanitize_folder_empty_returns_unknown`** — `""`, `"!!!"`, `"   "` → `"_unknown"`.
+25. `test_sync_happy_path_writes_file_and_updates_state` — full integration s real config (matched + unclassified).
+26. `test_sync_partial_failure_exits_4` — druhý download raise, `sync_runs.recordings_failed == 1`, exit 4.
+27. `test_sync_skips_already_downloaded_by_pk`.
+28. `test_sync_region_probe_fail_exits_6`.
+29. `test_sync_lock_held_exits_5_no_sentry_no_runs_row`.
+30. **`test_sync_config_invalid_exits_7_no_runs_row`** — mock load_config raise → exit 7, žádný sync_runs řádek.
+31. `test_observability_scrubs_title_inline_label`.
+32. `test_observability_scrubs_local_path_in_message`.
+33. **`test_observability_scrubs_plaud_folder_inline_label`**.
+34. `test_main_exit_code_on_sync_partial_failure_is_4`.
+35. `test_main_exit_code_on_sync_lock_held_is_5`.
+36. `test_main_exit_code_on_region_probe_failed_is_6`.
+37. **`test_main_exit_code_on_config_validation_error_is_7`**.
 
 ### Cassette hygiene
 
@@ -485,13 +597,22 @@ Per [CLAUDE.md](../../../CLAUDE.md): integration-first + VCR cassettes; mocks je
 @pytest.mark.vcr()
 def test_sync_happy_path_writes_file_and_updates_state(tmp_path, monkeypatch):
     monkeypatch.setenv("PLAUD_API_TOKEN", "test-token")
-    monkeypatch.setenv("PLAUDSYNC_LOCAL_ROOT", str(tmp_path))
+    monkeypatch.setenv("PLAUDSYNC_STATE_ROOT", str(tmp_path))
+    # Setup config.yaml with two project paths under tmp_path
+    unclassified_dir = tmp_path / "Unclassified"
+    project_alfa_dir = tmp_path / "Alpha"
+    unclassified_dir.mkdir(); project_alfa_dir.mkdir()
+    (tmp_path / "config.yaml").write_text(
+        f"unclassified_dir: {unclassified_dir}\n"
+        f"projects:\n  ProjektAlfa: {project_alfa_dir}\n"
+    )
+    config = config_module.load_config(tmp_path)
     conn = state.open_state(tmp_path)
     with PlaudClient("test-token") as client:
-        exit_code = run_sync(client, DefaultBucketClassifier(), conn, tmp_path, trigger="manual")
+        exit_code = run_sync(client, DefaultBucketClassifier(), conn, config, trigger="manual")
     assert exit_code == 0
-    assert (tmp_path / "_unclassified").is_dir()
-    assert len(list((tmp_path / "_unclassified").glob("*.mp3"))) >= 1
+    # DefaultBucketClassifier always returns unclassified, so all files land in unclassified_dir
+    assert len(list(unclassified_dir.rglob("*.mp3"))) >= 1
     row = conn.execute("SELECT recordings_new, exit_code FROM sync_runs").fetchone()
     assert row == (N, 0)   # N závisí na cassette content
 ```
@@ -521,17 +642,20 @@ Viz Decision #9. Konfirmuje `project_plaud_sync.md` memory risk acceptance.
 
 Feature je hotová pokud:
 
-1. Všech 24 test cases zelený, `pytest tests/` bez failures.
+1. Všech 37 test cases zelený, `pytest tests/` bez failures.
 2. `bandit -r src/plaudsync/` bez high/medium severity findings.
 3. Manual smoke test proti reálnému Plaud účtu:
-   - První `python -m plaudsync` run → stáhne ≥ 1 recording do `{LOCAL_ROOT}/_unclassified/` + `sync_runs` row s `exit_code=0`.
+   - Setup `${STATE_ROOT}/config.yaml` s `unclassified_dir` + alespoň 1 projektem.
+   - První `python -m plaudsync` run → stáhne ≥ 1 recording do `${unclassified_dir}/` (DefaultBucketClassifier vrací vždy unclassified) + `sync_runs` row s `exit_code=0`.
    - Druhý run ihned po → `recordings_new=0`, `recordings_skipped=N`, exit 0, žádný duplicit file.
    - Druhý terminál paralelně → exit 5 do 1 s, žádný Sentry event, žádný nový `sync_runs` row.
+   - Smazat config.yaml a spustit → exit 7 (`ConfigValidationError`), žádný `sync_runs` řádek.
 4. `plaudsync.log` po smoke testu **neobsahuje** substring žádného recording titlu (grep verification).
 5. Sentry induced-failure test (např. forced size mismatch) **neobsahuje** title ani local_path v message / tags / contexts.
-6. WAL mode aktivní: `sqlite3 state.db "PRAGMA journal_mode"` vrátí `wal`.
+6. WAL mode aktivní: `sqlite3 ${STATE_ROOT}/.plaudsync/state.db "PRAGMA journal_mode"` vrátí `wal`.
 7. Task Scheduler dry-run: manual trigger Task Scheduler job → exit 0 + `sync_runs.trigger='task_scheduler'` v DB.
-8. `.gitignore` update'd (`*.db`, `*.db-wal`, `*.db-shm`) — `git status` po smoke testu je clean.
+8. `.gitignore` update'd (`*.db`, `*.db-wal`, `*.db-shm`, `config.yaml`) — `git status` po smoke testu je clean.
+9. **Per-project absolute path test:** YAML s 2 různými projekty na 2 different drives (např. `C:\` a `D:\`), classify mock vrátí matched s odlišným project name → každý recording skutečně landne na correct drive (manual `dir` check).
 
 ## Implementation plan
 
@@ -550,4 +674,5 @@ Bez appendixu writing-plans nemůže pokračovat do TDD (failing tests potřebuj
 
 ## Revision history
 
-- **2026-04-25:** v0 draft, výstup brainstorm session.
+- **2026-04-25 (v0.2):** per-project absolutní cesty z YAML configu. Nové moduly `config.py` + `path_resolver.py` (převzal `_sanitize_folder_name` z categorization). Env var `PLAUDSYNC_LOCAL_ROOT` → `PLAUDSYNC_STATE_ROOT` (jen state, ne recordings). `recordings.local_path` v SQLite je nyní absolutní path. Nový exit code 7 (`ConfigValidationError`). Nový soft fallback `_unmapped_<project>/` pro project-not-in-config case. Test count 24 → 37. `RecordingMeta.plaud_folder` field added. Decision #4 file location updated to `${STATE_ROOT}/.plaudsync/state.db`. Decision #6 lock file `${STATE_ROOT}/.plaudsync/sync.lock`. Scrubber přidává `plaud_folder` label.
+- **2026-04-25 (v0.1):** v0 draft, výstup brainstorm session.
