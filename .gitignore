@@ -64,3 +64,6 @@ config.yaml
 !tests/**/*.mp3
 !tests/**/*.m4a
 !tests/**/*.wav
+
+# Frontend build artefact (generated from frontend/ Vite project)
+src/plaudsync/ui/static/
