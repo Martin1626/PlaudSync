@@ -4,6 +4,82 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — UI frontend Phase 1 smoke (mock data) PASS
+
+Branch `feat/ui-frontend` complete: 15 plan tasks + 4 follow-up fix
+commits = 19 commits total. ~25 TSX modules transcribing prototype
+`frontend/_prototype/PlaudSync UI.html` (validated Claude Design
+prototype) into Vite + React 19 + TS strict + Tailwind 4 project at
+`frontend/`. Worktree-isolated impl path: `c:/tmp/PlaudSync-ui-frontend`.
+
+### Phase 1 verification matrix (mock-data only, no live backend)
+
+All 12 automated checks passed:
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` (TS strict, all flags) | exit 0 |
+| `npm run build` end-to-end | clean |
+| Bundle gzip size | **94.9 KB** (budget 200 KB; W-U2 threshold 500 KB) |
+| `src/plaudsync/ui/static/` populated post-build | yes |
+| Static dir gitignored (clean working tree post-build) | yes |
+| No inline `<script>` in production index.html (CSP) | clean |
+| Privacy grep — no business labels in toast/banner strings | PASS |
+| `npm run dev` startup | VITE ready in ~300 ms |
+| Dev mock layer tree-shaken from production bundle | confirmed |
+| Czech localization spot-check (D10 lock) | 12 matches |
+| Component file count (components/9, Dashboard/5, Settings/5, dev/3) | match |
+| Commit count on branch | 19 |
+
+### Bundle composition (gzipped)
+
+- `assets/index-HASH.js` (app code) — 62.6 KB
+- `assets/react-HASH.js` (React + ReactDOM + react-router-dom chunk) — 15.0 KB
+- `assets/query-HASH.js` (TanStack Query chunk) — 10.0 KB
+- `assets/index-HASH.css` (Tailwind 4 generated) — 7.0 KB
+- `index.html` — 0.3 KB
+
+### Deviations from plan resolved during execution
+
+- **Task 1 fix:** `vite.config.ts` `__dirname` → `fileURLToPath(new URL("./src", import.meta.url))` (ESM-idiomatic; the original CJS-style worked only via Vite's internal esbuild shim).
+- **Task 2 fix #1:** focus-visible block moved from unlayered into `@layer base` (lets Tailwind `ring-*` utilities override where needed).
+- **Task 2 fix #2:** Tailwind 4.0.0 `@tailwindcss/postcss` had an oxide-rust scanner crash (`Missing field 'negated' on ScannerOptions.sources`); bumped tailwindcss + @tailwindcss/postcss to 4.0.17 AND migrated keyframes from `tailwind.config.ts` to CSS-native `@theme` block in `index.css`. Also moved `@plugin "@tailwindcss/forms"` registration into CSS. `tailwind.config.ts` reduced to a stub kept for IDE tooling.
+- **Task 1/14:** package.json forced bumps (Vite 7 peer deps): `@vitejs/plugin-react` 4.3.4 → 5.2.0, `@types/node` 22.10.2 → 22.12.0.
+- **Task 13:** added `frontend/src/vite-env.d.ts` (`/// <reference types="vite/client" />`) so tsc strict knows about `import.meta.env`. Standard Vite reference fix.
+- **Task 6 chore:** appended `*.tsbuildinfo`, `vite.config.d.ts`, `vite.config.js` to `frontend/.gitignore` (tsc -b composite outputs).
+
+### Phase 1 ACs covered
+
+Dashboard ACs (mock-data testable): 1, 2, 7, 8, 10, 12, 13.
+Settings ACs (mock-data testable): 1, 5, 14, 15, 16, 17, 18, 19, 20.
+
+### Phase 2 ACs deferred (need live backend)
+
+Dashboard: 3, 4, 5, 6, 9, 11.
+Settings: 2, 3, 4, 5 (live verify), 6, 7, 8, 9, 10, 11, 12, 13.
+
+### Next step
+
+Phase 2 smoke schedule: after `feat/ui-backend` merges to master, spin
+up `python -m plaudsync ui` + `cd frontend && npm run dev` with
+`PLAUDSYNC_DEV_PORT=8765`, walk through deferred ACs, append Phase 2
+DEV_LOG entry. **Manual `/security-review` recommended before merging
+`feat/ui-frontend` to main** (CLAUDE.md "before merging to main" gate).
+
+### Open follow-ups (not blockers, captured pre-v1.1)
+
+- Dashboard Gap 1: `_unmapped_<project>` badge variant — needs backend
+  `RecordingRow.classification_route` field (sync-core spec follow-up).
+- Dashboard Gap 4: log viewer modal vs current toast-points-to-log —
+  deferred to v1.1+.
+- Settings Gap 5: YAML syntax highlight — deferred per spec.
+- Task 4 client.ts: `{ raw: text }` fallback for non-JSON bodies could
+  collide with a real `raw` JSON key; consider boxing differently in v1.1.
+- Task 4 client.ts: `AbortSignal` plumbing not yet done (TanStack v5
+  passes `signal` to queryFn — currently dropped). Defer to v1.1+.
+
+---
+
 ## 2026-04-25 — UI frontend implementation plan written
 
 `docs/superpowers/plans/2026-04-25-ui-frontend.md` published. 15 tasks
