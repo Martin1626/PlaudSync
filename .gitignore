@@ -67,3 +67,9 @@ config.yaml
 
 # Frontend build artefact (generated from frontend/ Vite project)
 src/plaudsync/ui/static/
+
+# frontend/_prototype/ contains the original Claude Design HTML+CDN reference
+# prototype. It is NOT served by FastAPI StaticFiles (which mounts only
+# src/plaudsync/ui/static/). Kept tracked in git for design-history reference.
+# If a future contributor adds a new static mount, exclude _prototype/ first —
+# the HTML loads CDN-hosted React/Babel/Tailwind at runtime, breaking CSP.

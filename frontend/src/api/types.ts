@@ -46,6 +46,13 @@ export type AuthFailureReason = "PlaudTokenExpired" | "PlaudTokenMissing";
 export interface AuthVerifyResponse {
   ok: boolean;
   reason: AuthFailureReason | null;
+  /**
+   * Server-provided human-readable message (Czech), surfaced verbatim into
+   * a UI banner when verify fails. Per Settings spec D11 privacy discipline,
+   * the backend MUST NOT embed filesystem paths, project names, recording
+   * titles, token bytes, or other business identifiers in this string —
+   * only static labels and (optionally) numeric values.
+   */
   message: string | null;
   /**
    * Server-rendered mask (first_8 + 15 dots + last_4) per Settings spec v0.1
