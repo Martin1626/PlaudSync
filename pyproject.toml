@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "plaudsync"
 version = "0.0.1"
-description = "Periodic sync of Plaud AI recordings to local disk, categorized via M365 / regex / LLM waterfall."
+description = "Periodic sync of Plaud AI recordings to local disk, categorized via single-layer regex on title."
 readme = "SPEC.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }

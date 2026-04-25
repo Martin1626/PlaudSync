@@ -4,12 +4,12 @@
 
 ## Project
 
-Periodic sync of Plaud AI recordings → local disk, categorized via M365 → regex → LLM waterfall. See [SPEC.md](./SPEC.md). Track decisions/issues in [DEV_LOG.md](./DEV_LOG.md).
+Periodic sync of Plaud AI recordings → local disk, categorized via single-layer regex on title. See [SPEC.md](./SPEC.md). Track decisions/issues in [DEV_LOG.md](./DEV_LOG.md).
 
 ## Stack
 
 - **Python 3.11+**, deps v `pyproject.toml`.
-- **Testing:** pytest + pytest-recording (VCR.py cassettes) + DeepEval (LLM classifier evals).
+- **Testing:** pytest + pytest-recording (VCR.py cassettes).
 - **Observability:** Loguru (rotating file) + Sentry SDK (scrubbed, `send_default_pii=False`).
 - **Secrets:** `.env` (never commit), `.env.example` is template.
 - **Platform:** Windows 11 + Git Bash. Never assume POSIX paths — use `pathlib.Path`.
@@ -25,9 +25,8 @@ Periodic sync of Plaud AI recordings → local disk, categorized via M365 → re
 
 **Implementation phase — TDD integration-first:**
 - **Write FAILING integration test first, commit it, then implement until green.** Do not modify the test to make it pass.
-- Default to **integration tests with VCR cassettes** (`@pytest.mark.vcr()`) for any code touching Plaud API, Microsoft Graph, filesystem, or LLM calls. Mock-only unit tests only for pure logic (regex, classification rules).
+- Default to **integration tests with VCR cassettes** (`@pytest.mark.vcr()`) for any code touching Plaud API or filesystem. Mock-only unit tests only for pure logic (regex, classification rules).
 - Cassettes live in `tests/cassettes/`. Scrub auth tokens via `pytest-recording` config in `tests/conftest.py`.
-- LLM classifier changes → run DeepEval against `tests/evals/golden_set.yaml`. Accuracy drop > 5 p.p. vs previous = regression, blocks merge.
 
 **Review gates (before commit / merge):**
 - **Before every commit:** run `/review` (native slash command).

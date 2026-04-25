@@ -1,11 +1,11 @@
 ---
 name: cassette-refresh
-description: How to re-record a VCR cassette against a real Plaud/M365/Anthropic API endpoint safely, with auth token and PII scrubbing. Invoke when a cassette breaks, a new endpoint is tested, or weekly freshness check fires.
+description: How to re-record a VCR cassette against a real Plaud API endpoint safely, with auth token and PII scrubbing. Invoke when a cassette breaks, a new endpoint is tested, or weekly freshness check fires.
 ---
 
 # Cassette refresh workflow
 
-Re-recording a VCR cassette means hitting the **real external API** and persisting the response for replay. Two failure modes matter: (1) auth tokens leak into the cassette, (2) cassette drifts silently and replay no longer matches production behavior.
+Re-recording a VCR cassette means hitting the **real Plaud API** and persisting the response for replay. Two failure modes matter: (1) auth tokens leak into the cassette, (2) cassette drifts silently and replay no longer matches production behavior.
 
 ## When to invoke this skill
 
@@ -16,7 +16,7 @@ Re-recording a VCR cassette means hitting the **real external API** and persisti
 
 ## Preconditions
 
-- `.env` is populated with real API credentials (`PLAUD_API_TOKEN`, `M365_CLIENT_ID/SECRET`, `ANTHROPIC_API_KEY`).
+- `.env` is populated with real API credentials (`PLAUD_API_TOKEN`).
 - `tests/conftest.py` has `pytest-recording` configured with scrubbing filters (`filter_headers`, `filter_query_parameters`, `before_record_response` callback).
 - Internet connectivity to the target API.
 - Clean git working tree (so cassette diff is reviewable as a single commit).

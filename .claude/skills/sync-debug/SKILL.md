@@ -10,7 +10,7 @@ When PlaudSync fails, the symptom (Sentry alert, missing files, wrong category) 
 ## When to invoke this skill
 
 - Sentry alert fires for the sync job.
-- Expected recording did not appear in `{PLAUDSYNC_LOCAL_ROOT}/{project}/`.
+- Expected recording did not appear in the configured project directory.
 - Recording ended up in wrong project folder.
 - Task Scheduler history shows non-zero exit code.
 - Manual invocation `python -m plaudsync` fails.
@@ -23,17 +23,15 @@ Work through layers in order. Do not skip — symptoms often mask the real root 
 
 - Is `.env` present and populated? `cat .env` (on dev box; never on shared terminal).
 - Are Plaud credentials still valid? Try `curl -H "Authorization: Bearer $PLAUD_API_TOKEN" <plaud-api-me-endpoint>`.
-- Are M365 credentials still valid? MSAL token may have expired; refresh flow may be broken.
-- Is `PLAUDSYNC_LOCAL_ROOT` set to an existing writable directory? `ls -la "$PLAUDSYNC_LOCAL_ROOT"`.
+- Is `PLAUDSYNC_STATE_ROOT` set to an existing writable directory (state DB location)? `ls -la "$PLAUDSYNC_STATE_ROOT"`.
+- Does `$PLAUDSYNC_STATE_ROOT/config.yaml` exist and contain valid `unclassified_dir` + `projects` mapping (per-project absolute paths)?
 - **If any answer is no → fix env first, re-run. Do not touch code until env is green.**
 
 ### Layer 2: Network / API availability
 
 - Can you reach the Plaud API? `curl -v <plaud-api-health-endpoint>`.
-- Is Microsoft Graph up? Check `https://status.office.com`.
-- Is Anthropic API up (for LLM classifier fallback)? Check `https://status.anthropic.com`.
 - Does the Sentry alert include a network-level exception (DNS, connection refused, TLS handshake)?
-- **If a provider is down → wait or disable the layer (e.g., skip LLM fallback, use regex-only) and document in DEV_LOG.**
+- **If the Plaud API is down → wait and document in DEV_LOG.**
 
 ### Layer 3: Cassette / test drift
 
@@ -45,11 +43,15 @@ Work through layers in order. Do not skip — symptoms often mask the real root 
 ### Layer 4: Categorization / business logic
 
 - Only reach this layer after layers 1–3 are clean.
-- Which waterfall rung categorized the failing recording? Check log for "categorized via: M365|regex|LLM".
-- If M365: did the participant lookup return empty? Is the user in the expected Graph group?
-- If regex: does the title/transcript match the pattern? `grep -iE "<pattern>" <transcript>`.
-- If LLM: run DeepEval suite on the current golden set: `python -m pytest tests/evals/ -v`. Has accuracy dropped below 70 %? (Kill criterion #5.)
-- **Fix classifier only when layers 1–3 are confirmed not at fault.**
+- Check the log for the `classify()` result for the failing recording (logged at DEBUG level with structured bind fields — never inline message text).
+- Does the title match the expected format `(YYYY-)?MM-DD <Project>: <rest>`? Quick manual check:
+  ```
+  python -c "from plaudsync.categorization import classify; from datetime import datetime; print(classify('<title>', datetime.now()))"
+  ```
+- If `status='matched'` but project is not in config → soft fallback to `_unmapped_<project>/` under `unclassified_dir`. Add the project to `config.yaml`.
+- If `status='unclassified'` → title did not match format; recording goes to `_unclassified/<plaud_folder>/`. Fix the recording title in Plaud app or add a regex alias if pattern is new but valid.
+- If coverage rate is trending below 90 % over the sliding 30-day window → kill criterion #5 triggers; revise title format discipline or add a second classification layer.
+- **Fix classifier or config only when layers 1–3 are confirmed not at fault.**
 
 ## After resolution
 

@@ -10,7 +10,6 @@
       "Bash(git:*)",
       "Bash(gh:*)",
       "Bash(bandit:*)",
-      "Bash(deepeval:*)",
       "Bash(promptfoo:*)",
       "Bash(ruff:*)",
       "Bash(mypy:*)",

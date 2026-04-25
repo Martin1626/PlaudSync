@@ -4,6 +4,25 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — Categorization implementation: regex-only classifier shipped
+
+Implementation execution of `docs/superpowers/plans/2026-04-25-categorization.md` via subagent-driven-development. 9 commits on master (Tasks 1–9).
+
+### What landed
+
+- **New module:** `src/plaudsync/categorization.py` (~75 LoC) — frozen `ClassificationResult` dataclass (`status`, `project`, `matched_date`) + `classify(title, created_at)` function. Handles `(YYYY-)?MM-DD <Project>: <rest>` title format. Emits structured log warnings for year-mismatch and invalid-date cases (never inline business labels in message text).
+- **Tests:** 14 unit tests in `tests/test_categorization.py` + 1 scrubber test in `tests/test_smoke.py` (plaud_folder redaction).
+- **Observability:** `observability._REDACTED_KEYS` extended with `plaud_folder` key (defense in depth, kill #18 — ensures plaud_folder UUID never surfaces in Sentry even if sync engine logs it).
+- **Repo cleanup:** `anthropic`, `msal`, `deepeval` removed from deps; `tests/evals/` directory removed; DeepEval / golden-set references purged from CLAUDE.md + settings.json.
+- **Kill criterion swap:** #5 updated from "LLM accuracy ≥ 70 %" to "regex coverage rate ≥ 90 % over sliding 30-day window" (SPEC.md already at v0.2, sync-debug + cassette-refresh skills updated).
+- **Doc cascade (Task 9):** SPEC.md confirmed v0.2 (no edits needed). CLAUDE.md, DEV_LOG.md, pyproject.toml, settings.json, sync-debug SKILL.md, cassette-refresh SKILL.md, memory/project_plaud_categorization.md all updated.
+
+### Reference plan
+
+`docs/superpowers/plans/2026-04-25-categorization.md`
+
+---
+
 ## 2026-04-25 — Categorization + sync-core implementation plans written
 
 Two writing-plans outputs published:
