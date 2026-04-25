@@ -48,8 +48,9 @@ Work through layers in order. Do not skip — symptoms often mask the real root 
   ```
   python -c "from plaudsync.categorization import classify; from datetime import datetime; print(classify('<title>', datetime.now()))"
   ```
-- If `status='matched'` but project is not in config → soft fallback to `_unmapped_<project>/` under `unclassified_dir`. Add the project to `config.yaml`.
-- If `status='unclassified'` → title did not match format; recording goes to `_unclassified/<plaud_folder>/`. Fix the recording title in Plaud app or add a regex alias if pattern is new but valid.
+- The fallback path layout below depends on `path_resolver.py` from the sync-core spec — these locations exist only after sync-core ships. Until then, the categorization layer only emits `status='matched' | 'unclassified'`; the sync engine handles physical placement.
+- If `status='matched'` but project is not in config → (sync-core dependent) soft fallback to `_unmapped_<project>/` under `unclassified_dir`. Add the project to `config.yaml`.
+- If `status='unclassified'` → (sync-core dependent) title did not match format; recording goes to `_unclassified/<plaud_folder>/`. Fix the recording title in Plaud app or add a regex alias if pattern is new but valid.
 - If coverage rate is trending below 90 % over the sliding 30-day window → kill criterion #5 triggers; revise title format discipline or add a second classification layer.
 - **Fix classifier or config only when layers 1–3 are confirmed not at fault.**
 
