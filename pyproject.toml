@@ -22,6 +22,8 @@ dependencies = [
     "python-dotenv>=1.0",
     # Config
     "pyyaml>=6.0",
+    # File locking for concurrent sync guard
+    "portalocker>=3.2",
 ]
 
 [project.optional-dependencies]
