@@ -44,3 +44,30 @@ def test_lifespan_seeds_config_on_first_run(state_root: Path) -> None:
     assert (state_root / "config.yaml").exists()
     text = (state_root / "config.yaml").read_text(encoding="utf-8")
     assert "${STATE_ROOT}" not in text
+
+
+def test_state_returns_idle_on_empty_db(client: TestClient) -> None:
+    resp = client.get("/api/state")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sync"]["status"] == "idle"
+    assert body["sync"]["trigger"] is None
+    assert body["recordings"] == []
+
+
+def test_state_reflects_running_sync(state_root: Path) -> None:
+    app = create_app(state_root)
+    with TestClient(app) as client:
+        # Seed an unfinished sync_runs row via the live conn
+        app.state.db.execute(
+            "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+            ("2026-04-25T13:00:00+00:00", "ui_sync_now"),
+        )
+        app.state.db.commit()
+
+        resp = client.get("/api/state")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sync"]["status"] == "running"
+    assert body["sync"]["trigger"] == "ui_sync_now"
