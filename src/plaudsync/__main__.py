@@ -125,6 +125,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="plaudsync")
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("verify", help="Verify PLAUD_API_TOKEN is valid; exit 0/2/3.")
+
+    ui_parser = subparsers.add_parser(
+        "ui",
+        help="Open PlaudSync UI (FastAPI + PyWebView).",
+    )
+    ui_parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Dev mode: point webview at Vite dev server (port 5173); uvicorn binds PLAUDSYNC_DEV_PORT.",
+    )
+
     # No-argument invocation defaults to sync.
     return parser.parse_args(argv)
 
@@ -167,6 +178,9 @@ def main() -> int:
                 client.verify()
             logger.info("Verify-only subcommand: token OK, exiting.")
             raise SystemExit(0)
+        if args.command == "ui":
+            from plaudsync.ui import runner
+            raise SystemExit(runner.main_ui(dev=args.dev))
         # Default: run sync pipeline
         return run_sync_pipeline()
     except PlaudTokenExpired as e:
