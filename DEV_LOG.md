@@ -4,6 +4,90 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — UI backend implementation done + smoke test PASS
+
+Implementation execution of `docs/superpowers/plans/2026-04-25-ui-backend.md`
+via subagent-driven-development on branch `feat/ui-backend`. 28 commits
+landed across 19 tasks.
+
+**What landed:**
+
+- 6 new modules under `src/plaudsync/ui/` (~580 LoC src + ~520 LoC tests):
+  `__init__.py`, `config_io.py` (DEFAULT_YAML + read/save/seed), `state_reader.py`
+  (snapshot + running queries), `sync_starter.py` (subprocess + 500ms wait),
+  `app.py` (FastAPI + 6 endpoints + Pydantic models + CSP + StaticFiles),
+  `runner.py` (uvicorn + PyWebView + browser fallback).
+- `auth.mask_token()` helper (first_8 + 15 dots + last_4).
+- `__main__.py` `ui` subcommand with `--dev` flag wiring.
+- `pyproject.toml` deps: `fastapi>=0.115`, `uvicorn[standard]>=0.30`,
+  `pywebview>=5.3`. Resolved to fastapi 0.136.1 / uvicorn 0.46.0 /
+  pywebview 6.2.1.
+- `.env.example` documents `PLAUDSYNC_UI_DEBUG` + `PLAUDSYNC_DEV_PORT`.
+- `.gitignore` entry for `src/plaudsync/ui/static/` (Vite build output).
+
+**Test results:** 128/128 pass (37 new UI tests across `test_ui_app.py`,
+`test_ui_config_io.py`, `test_ui_state_reader.py`, `test_ui_sync_starter.py`,
+`test_ui_runner.py`, `test_ui_auth_mask.py`, `test_main_ui_subcommand.py`;
++ 91 pre-existing). Bandit `-r src/plaudsync/ui/ -ll`: zero high/medium
+issues, 2 expected low (subprocess.Popen with explicit list args, no shell=True).
+
+**Smoke test (manual, in-process uvicorn):**
+
+| Step | Result |
+|---|---|
+| `create_app(c:/tmp/plaudsync-smoke)` cold start | uvicorn ready in <500 ms on OS-assigned port |
+| Lifespan auto-seed | `c:/tmp/plaudsync-smoke/config.yaml` written; `${STATE_ROOT}` substituted to actual path; YAML parses |
+| `GET /api/healthz` | 200 + `{"status":"ok"}` + CSP header (`default-src 'self'`...) |
+| `GET /api/state` | 200, `sync.status=idle`, `recordings=[]` |
+| `GET /api/config` | 200, `parsed.projects` keys = `[ProjektAlfa, KlientBeta, Interní]`, `parse_error=null` |
+| `PUT /api/config` (invalid path) | 422 with detail (JSON-shape errors visible in body) |
+| Server shutdown via `should_exit=True` | clean exit, no zombie process |
+
+**Implementation deviations (documented for review):**
+
+- **CSP middleware mounted middle-of-handler-list, StaticFiles last.**
+  Initially placed StaticFiles before /api/sync/start endpoint; moved
+  to right before `return app` to avoid catch-all `/` mount intercepting
+  /api/* routes.
+- **`_open_ui_state` UI-local SQLite helper** added in `app.py` instead
+  of reusing sync-core's `open_state` directly. Reason: FastAPI sync
+  handlers run in a worker thread pool while lifespan runs in the
+  asyncio thread; one connection has to be reusable across both, which
+  requires `check_same_thread=False`. WAL mode + idempotent schema
+  bootstrap preserved.
+- **`block_network` marker** added at module level on `tests/test_ui_app.py`
+  and `tests/test_ui_runner.py` (`allowed_hosts=["127.0.0.1", "localhost"]`)
+  because TestClient and asyncio.run create localhost socketpairs that
+  pytest-recording's `--block-network` gate otherwise intercepts. Marker
+  syntax is `block_network(allowed_hosts=...)`, NOT `allow_hosts(...)`
+  (corrected mid-implementation after first attempt failed).
+- **`maybe_seed_default` is no-op even on empty file** (`target.exists()`
+  is True for blank files). Test expectation matches: user content
+  protection trumps re-seeding. Documented in module docstring.
+
+**CD1-CD5 from plan all upheld:** auto-seed in lifespan only, no crash
+on broken config (lazy validation), masked_token only on AuthVerifyResponse,
+polling-only progress, single read-only conn in `app.state.db`.
+
+**Open follow-ups (not blockers):**
+
+- Sentry "2 pending events" stderr message after pytest run — likely
+  `_configure_sentry()` capturing test artifacts. Not affecting tests;
+  investigate during next observability sweep.
+- `RecordingRow.plaud_folder` always `"_unknown"` in v0 (Dashboard spec
+  Gap 2 acknowledged). v1 brainstorm to surface real folder names via
+  separate `/folder/list/web` endpoint.
+- `RecordingRow.classification_route` field for `_unmapped_<project>`
+  badge variant (Dashboard spec Gap 1) — sync-core schema follow-up.
+
+**Branch state:** `feat/ui-backend` ready for `/security-review` (new
+HTTP surface + subprocess spawn + CSP middleware) before merge to main.
+Frontend writing-plans cycle is the next blocker for full UI ship —
+StaticFiles mount in `app.py` is conditional on `src/plaudsync/ui/static/index.html`
+existence, which the frontend plan's Vite build pipeline produces.
+
+---
+
 ## 2026-04-25 — UI frontend implementation plan written
 
 `docs/superpowers/plans/2026-04-25-ui-frontend.md` published. 15 tasks
