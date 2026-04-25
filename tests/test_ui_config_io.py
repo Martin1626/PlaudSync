@@ -8,6 +8,7 @@ import pytest
 from plaudsync.ui.config_io import (
     DEFAULT_YAML_TEMPLATE,
     read_config_payload,
+    save_config_payload,
 )
 
 
@@ -55,3 +56,44 @@ def test_read_returns_parse_error_for_validation_failure(tmp_path: Path) -> None
     assert payload["parsed"] is None
     assert payload["parse_error"] is not None
     assert "absolute" in payload["parse_error"]["message"].lower()
+
+
+def test_save_persists_valid_yaml(tmp_path: Path) -> None:
+    unclassified = tmp_path / "Unclassified"
+    project_dir = tmp_path / "Alpha"
+    unclassified.mkdir()
+    project_dir.mkdir()
+    yaml_text = (
+        f"unclassified_dir: {unclassified}\n"
+        f"projects:\n"
+        f"  ProjektAlfa: {project_dir}\n"
+    )
+
+    result = save_config_payload(tmp_path, yaml_text)
+
+    assert result["ok"] is True
+    assert result["parsed"]["projects"]["ProjektAlfa"] == str(project_dir)
+    assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == yaml_text
+
+
+def test_save_returns_errors_for_invalid_yaml(tmp_path: Path) -> None:
+    result = save_config_payload(tmp_path, "unclassified_dir: relative\nprojects: {}\n")
+
+    assert result["ok"] is False
+    assert isinstance(result["errors"], list)
+    assert len(result["errors"]) >= 1
+    assert any("absolute" in e["message"].lower() for e in result["errors"])
+    # Must not have written invalid file
+    assert not (tmp_path / "config.yaml").exists()
+
+
+def test_save_does_not_overwrite_on_validation_failure(tmp_path: Path) -> None:
+    unclassified = tmp_path / "Unclassified"
+    unclassified.mkdir()
+    good = f"unclassified_dir: {unclassified}\nprojects: {{}}\n"
+    save_config_payload(tmp_path, good)
+    assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == good
+
+    # Attempt to save broken YAML — must keep good copy
+    save_config_payload(tmp_path, "unclassified_dir: relative\nprojects: {}\n")
+    assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == good
