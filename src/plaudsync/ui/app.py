@@ -221,6 +221,7 @@ def create_app(state_root: Path) -> FastAPI:
             "script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
+            "font-src 'self' data:; "
             "connect-src 'self'"
         )
         return response
