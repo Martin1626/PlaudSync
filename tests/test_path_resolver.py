@@ -1,9 +1,15 @@
 """Unit tests for src/plaudsync/path_resolver.py."""
 from __future__ import annotations
 
+from datetime import date
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
-from plaudsync.path_resolver import _sanitize_folder_name
+from plaudsync.categorization import ClassificationResult
+from plaudsync.config import Config
+from plaudsync.path_resolver import _sanitize_folder_name, resolve_target_path
 
 
 @pytest.mark.parametrize(
@@ -22,3 +28,41 @@ from plaudsync.path_resolver import _sanitize_folder_name
 )
 def test_sanitize_folder_name(raw: str, expected: str) -> None:
     assert _sanitize_folder_name(raw) == expected
+
+
+def _make_config(tmp_path: Path) -> Config:
+    return Config(
+        unclassified_dir=tmp_path / "Unclassified",
+        projects={"ProjektAlfa": tmp_path / "Alpha"},
+    )
+
+
+def test_resolve_matched_in_config(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    result = ClassificationResult(
+        status="matched", project="ProjektAlfa", matched_date=date(2026, 4, 25)
+    )
+    target = resolve_target_path(result, plaud_folder="Klienti",
+                                  config=config, filename="rec.mp3")
+    assert target == tmp_path / "Alpha" / "rec.mp3"
+
+
+def test_resolve_matched_not_in_config_uses_unmapped_subdir(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    result = ClassificationResult(
+        status="matched", project="ProjektGamma",  # NOT in config.projects
+        matched_date=date(2026, 4, 25),
+    )
+    with patch("plaudsync.path_resolver.sentry_sdk") as sentry_mock:
+        target = resolve_target_path(result, plaud_folder="Inbox",
+                                      config=config, filename="rec.mp3")
+    assert target == tmp_path / "Unclassified" / "_unmapped_ProjektGamma" / "rec.mp3"
+    sentry_mock.set_tag.assert_called_with("error_kind", "project_unmapped")
+
+
+def test_resolve_unclassified_uses_sanitized_plaud_folder(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    result = ClassificationResult(status="unclassified", project=None, matched_date=None)
+    target = resolve_target_path(result, plaud_folder="Inbox/Misc",
+                                  config=config, filename="rec.mp3")
+    assert target == tmp_path / "Unclassified" / "Inbox_Misc" / "rec.mp3"

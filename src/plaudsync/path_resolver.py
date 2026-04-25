@@ -9,6 +9,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import sentry_sdk
+from loguru import logger
+
+from plaudsync.categorization import ClassificationResult
+from plaudsync.config import Config
+
 
 _ILLEGAL_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
 _NON_PRINTABLE_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -33,3 +39,29 @@ def _sanitize_folder_name(name: str) -> str:
     if not any(ch.isalnum() for ch in cleaned):
         return "_unknown"
     return cleaned
+
+
+def resolve_target_path(
+    result: ClassificationResult,
+    plaud_folder: str,
+    config: Config,
+    filename: str,
+) -> Path:
+    """Resolve absolute target path for a recording.
+
+    See sync-core spec for branch logic.
+    """
+    if result.status == "matched":
+        assert result.project is not None  # invariant from ClassificationResult
+        if result.project in config.projects:
+            return config.projects[result.project] / filename
+        # Soft fallback: project not in config
+        logger.bind(plaud_folder=plaud_folder).warning(
+            "project unmapped — soft fallback into unclassified_dir"
+        )
+        sentry_sdk.set_tag("error_kind", "project_unmapped")
+        return config.unclassified_dir / f"_unmapped_{result.project}" / filename
+
+    # status == "unclassified"
+    sanitized = _sanitize_folder_name(plaud_folder)
+    return config.unclassified_dir / sanitized / filename
