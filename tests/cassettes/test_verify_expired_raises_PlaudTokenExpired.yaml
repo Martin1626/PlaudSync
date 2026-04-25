@@ -13,27 +13,13 @@ interactions:
       authorization:
       - <redacted>
     method: GET
-    uri: https://api.plaud.ai/file/simple/web
+    uri: https://api.plaud.ai/file/simple/web?is_trash=0&limit=1&skip=0
   response:
     body:
       string: '{"detail":"token invalid or expired"}'
     headers:
-      CF-RAY:
-      - 9f18477dcd6df97c-PRG
-      Connection:
-      - keep-alive
-      Content-Length:
-      - '37'
       Content-Type:
       - application/json
-      Date:
-      - Fri, 24 Apr 2026 21:42:41 GMT
-      Server:
-      - cloudflare
-      Set-Cookie:
-      - <redacted>
-      cf-cache-status:
-      - DYNAMIC
     status:
       code: 401
       message: Unauthorized

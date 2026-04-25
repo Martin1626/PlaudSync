@@ -18,7 +18,8 @@ def test_main_exits_2_on_token_expired(monkeypatch: pytest.MonkeyPatch) -> None:
             "Plaud API rejected token - re-paste from browser localStorage.tokenstr"
         )
 
-    monkeypatch.setattr(PlaudClient, "verify", _raise_expired)
+    # Patch _region_probe so __init__ raises before verify() is called.
+    monkeypatch.setattr(PlaudClient, "_region_probe", _raise_expired)
 
     with pytest.raises(SystemExit) as exc_info:
         entrypoint.main()
@@ -42,10 +43,9 @@ def test_verify_subcommand_exits_0_on_valid_token(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("SENTRY_DSN", "")
     monkeypatch.setattr("sys.argv", ["plaudsync", "verify"])
 
-    def _ok(self: PlaudClient) -> None:  # type: ignore[unused-argument]
-        return None
-
-    monkeypatch.setattr(PlaudClient, "verify", _ok)
+    # Patch _region_probe (called by __init__ and verify) to be a no-op.
+    monkeypatch.setattr(PlaudClient, "_region_probe", lambda self: None)
+    monkeypatch.setattr(PlaudClient, "verify", lambda self: None)
 
     with pytest.raises(SystemExit) as exc_info:
         entrypoint.main()
@@ -60,7 +60,9 @@ def test_verify_subcommand_exits_2_on_expired_token(monkeypatch: pytest.MonkeyPa
     def _raise_expired(self: PlaudClient) -> None:  # type: ignore[unused-argument]
         raise PlaudTokenExpired("Plaud API rejected token")
 
-    monkeypatch.setattr(PlaudClient, "verify", _raise_expired)
+    # Patch _region_probe: __init__ calls it first; if it raises, construction
+    # aborts and verify() is never reached. Either way exit code 2 is returned.
+    monkeypatch.setattr(PlaudClient, "_region_probe", _raise_expired)
 
     with pytest.raises(SystemExit) as exc_info:
         entrypoint.main()

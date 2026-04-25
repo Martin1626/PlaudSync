@@ -1,8 +1,7 @@
-"""HTTP client for Plaud API with injected auth header.
+"""Plaud Cloud API HTTP client.
 
-Scope of this module in the auth feature: constructor + verify(). Other
-methods (list_recordings, download_audio, ...) land in later sync-engine
-features; their shape is intentionally not predetermined here.
+See docs/superpowers/specs/2026-04-25-sync-core-design.md for region
+probe semantics + listing/download interface.
 """
 from __future__ import annotations
 
@@ -13,31 +12,65 @@ import requests
 from plaudsync.auth import PlaudTokenExpired
 
 BASE_URL = "https://api.plaud.ai"
-# Plaud has no dedicated auth-verify endpoint (reverse-engineered API). We reuse
-# /file/simple/web — the same lightweight file-list endpoint that plaud-api
-# (arbuzmell/plaud-api) uses for web-style listings. 401 response on invalid
-# token is deterministic; we ignore the response body on 2xx.
-VERIFY_PATH = "/file/simple/web"
+
+
+class PlaudRegionProbeFailed(Exception):
+    """Region probe response shape did not match either expected pattern."""
+
+
+class PlaudDownloadCorrupted(Exception):
+    """Downloaded body size or hash does not match metadata."""
 
 
 class PlaudClient:
     def __init__(self, token: str) -> None:
+        self._token = token
         self._session = requests.Session()
         self._session.headers["Authorization"] = f"Bearer {token}"
+        self._base_url = BASE_URL
+        self._region_probe()
+
+    def _region_probe(self) -> None:
+        url = f"{self._base_url}/file/simple/web"
+        resp = self._session.get(url, params={"skip": 0, "limit": 1, "is_trash": 0})
+        if resp.status_code == 401:
+            raise PlaudTokenExpired(
+                "Plaud API rejected token - re-paste from browser localStorage.tokenstr"
+            )
+        resp.raise_for_status()
+        body = resp.json()
+
+        # Branch A: region mismatch redirect
+        if isinstance(body, dict) and body.get("status") == -302:
+            data = body.get("data") or {}
+            domains = data.get("domains") or {}
+            api = domains.get("api")
+            if not api:
+                raise PlaudRegionProbeFailed(
+                    f"region redirect missing api domain: {body!r}"
+                )
+            self._base_url = api
+            return
+
+        # Branch B: default region (data_file_list present)
+        if isinstance(body, dict) and "data_file_list" in body:
+            return
+
+        # Branch C: unexpected shape
+        raise PlaudRegionProbeFailed(
+            f"region probe unexpected response shape: keys={list(body.keys()) if isinstance(body, dict) else type(body).__name__}"
+        )
 
     def verify(self) -> None:
         """Pre-flight check against the Plaud API.
 
-        - HTTP 2xx -> return None.
+        Re-issues the region probe. Success means token + region OK.
+        - HTTP 2xx + known shape -> return None.
         - HTTP 401 -> raise PlaudTokenExpired.
-        - Other    -> propagates requests.HTTPError (maps to generic exit 1).
+        - Unexpected shape -> raise PlaudRegionProbeFailed.
+        - Other HTTP error -> propagates requests.HTTPError (maps to generic exit 1).
         """
-        response = self._session.get(f"{BASE_URL}{VERIFY_PATH}")
-        if response.status_code == 401:
-            raise PlaudTokenExpired(
-                "Plaud API rejected token - re-paste from browser localStorage.tokenstr"
-            )
-        response.raise_for_status()
+        self._region_probe()
 
     def close(self) -> None:
         self._session.close()
