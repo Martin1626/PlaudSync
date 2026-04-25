@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
 
+from loguru import logger
+
 
 _TITLE_RE = re.compile(
     r"""^                              # start of string
@@ -28,14 +30,7 @@ _TITLE_RE = re.compile(
 
 @dataclass(frozen=True)
 class ClassificationResult:
-    """Outcome of classify(). Immutable — sync engine compares by value.
-
-    status="matched" iff title parsed; project is the raw captured group
-    (no slug transform), matched_date is built from year (title-explicit
-    or metadata fallback), month, day.
-
-    status="unclassified" if regex didn't match or date components are invalid.
-    """
+    """Outcome of classify(). Immutable — sync engine compares by value."""
 
     status: Literal["matched", "unclassified"]
     project: str | None
@@ -52,11 +47,24 @@ def classify(title: str, created_at: datetime) -> ClassificationResult:
     day = int(match.group("day"))
     project = match.group("project").strip()
 
-    year = int(year_str) if year_str is not None else created_at.year
+    if year_str is None:
+        year = created_at.year
+    else:
+        title_year = int(year_str)
+        if title_year != created_at.year:
+            logger.warning(
+                "year mismatch in title vs metadata: title={title_year}, "
+                "metadata={metadata_year}",
+                title_year=title_year,
+                metadata_year=created_at.year,
+            )
+        year = title_year
 
     try:
         matched_date = date(year, month, day)
     except ValueError:
+        logger.warning("invalid date in title: year={year}, month={month}, day={day}",
+                       year=year, month=month, day=day)
         return ClassificationResult(status="unclassified", project=None, matched_date=None)
 
     return ClassificationResult(status="matched", project=project, matched_date=matched_date)

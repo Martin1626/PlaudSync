@@ -90,3 +90,43 @@ def test_classify_returns_unclassified_for_invalid_input(title: str) -> None:
     assert result.status == "unclassified"
     assert result.project is None
     assert result.matched_date is None
+
+
+def test_classify_year_in_title_overrides_metadata_and_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When title-explicit year differs from created_at.year, title wins,
+    a Loguru warning is emitted for audit.
+    """
+    import logging
+
+    # Loguru forwards to stdlib logging via add(... ); for tests we propagate.
+    from loguru import logger
+
+    handler_id = logger.add(
+        lambda msg: caplog.records.append(  # type: ignore[arg-type]
+            logging.LogRecord(
+                name="plaudsync.categorization",
+                level=logging.WARNING,
+                pathname="",
+                lineno=0,
+                msg=msg.record["message"],  # type: ignore[index]
+                args=None,
+                exc_info=None,
+            )
+        ),
+        level="WARNING",
+    )
+    try:
+        result = classify(
+            title="2025-04-25 ProjektAlfa: foo",
+            created_at=datetime(2026, 4, 25),
+        )
+    finally:
+        logger.remove(handler_id)
+
+    assert result.status == "matched"
+    assert result.matched_date == date(2025, 4, 25)
+    assert any("year mismatch" in r.msg.lower() for r in caplog.records), (
+        f"expected 'year mismatch' warning, got: {[r.msg for r in caplog.records]}"
+    )
