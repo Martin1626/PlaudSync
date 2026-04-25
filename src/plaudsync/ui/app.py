@@ -257,7 +257,22 @@ def create_app(state_root: Path) -> FastAPI:
     # Mount AFTER all /api/* routes so it doesn't intercept them.
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists() and (static_dir / "index.html").exists():
+        from fastapi.responses import FileResponse
         from fastapi.staticfiles import StaticFiles
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+
+        # /assets/* and other built files served from disk
+        app.mount("/assets", StaticFiles(directory=str(static_dir / "assets")),
+                  name="assets")
+
+        # SPA fallback: any non-API path returns index.html so React Router can
+        # take over client-side routing (e.g. /settings, /settings/foo, refresh
+        # at any client route). Order matters: this is LAST so it doesn't
+        # intercept registered API routes.
+        index_html = static_dir / "index.html"
+
+        @app.get("/{full_path:path}")
+        def spa_fallback(full_path: str) -> FileResponse:
+            del full_path  # noqa: F841 — path is captured by router only
+            return FileResponse(str(index_html))
 
     return app
