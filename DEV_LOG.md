@@ -4,6 +4,48 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — Cascade: per-project absolute paths
+
+User požadavek: každý projekt má vlastní lokální cílovou cestu, žádný společný kořen (např. ProjektAlfa na `C:\`, ProjektBeta na `D:\`). Tento požadavek vyšel najevo po obdržení Claude Design ZIP prototypu — Settings YAML editor potřeboval konkrétní schema.
+
+### Q&A z brainstorm session
+
+| # | Otázka | Volba | Důvod |
+|---|---|---|---|
+| 1 | Kde žije `state.db` + lock file (když není společný recordings root)? | **A** Nový env var `PLAUDSYNC_STATE_ROOT` (state-only umístění, žádné recordings) | Vyhne se duplicitě YAML+env. Bootstrap location musí být env var, behavioral routing je YAML. |
+| 2 | Jak řešit "title matchne projekt, config ho nezná"? | **A** Soft fallback do `${unclassified_dir}/_unmapped_<project>/` | Symetrie s "title nematchne". Sync pokračuje, log warning + sentry tag. User vidí přesný project label v Exploreru. |
+| 3 | Per-Plaud-folder subdivize unclassified bucketu? | **A** Zachovat | Beze změny chování v původním v0.1. Kontext z Plaud workflow se neztrácí. |
+
+### YAML schema
+
+```yaml
+unclassified_dir: D:\Recordings\Unclassified
+projects:
+  ProjektAlfa: C:\Projects\Alpha\Recordings
+  ProjektBeta: D:\Clients\Beta\Audio
+```
+
+Validace v `config.py.load_config()`: `unclassified_dir` + všechny project paths absolutní, parent existuje, žádné `..` (path traversal guard).
+
+### Cascade dopady (4 commits)
+
+1. **categorization v0.2** (025e609) — `ClassificationResult.target_subdir` dropped, `classify()` ztrácí `plaud_folder` parametr, `_sanitize_folder_name` přesunut. Test count 12 → 10.
+2. **sync-core v0.2** (a1eac75) — nové moduly `config.py` + `path_resolver.py`. Env var rename. `recordings.local_path` absolutní. Nový exit code 7 (ConfigValidationError). Test count 24 → 37.
+3. **ui-architecture v0.2** (aa0238e) — env var rename, lifespan handler načítá config.yaml + state.db z STATE_ROOT, `RecordingRow.target_subdir` → `target_dir` (absolutní). Settings empty-config template ukazuje konkrétní YAML schema.
+4. **SPEC.md v0.2 + .env.example** (this commit) — single-layer regex deklarace, M365+Anthropic z paid deps pryč, success criterion #2 změněno z "LLM accuracy" na "regex coverage".
+
+### Architectural insight
+
+YAML config = **per-project routing** (kde co skončí). Env var = **bootstrap** (kde najít YAML). Po cascade je separation čistá, žádná chicken-and-egg.
+
+### Process notes
+
+- Brainstorming skill aplikován (continued v stejné conversation jako UI architecture brainstorm). 3 clarifying questions (Q1/Q2/Q3) s explicit recommendations a counterarguments. User schválil `OK` → proceeded with cascade in 4 separate commits per spec (jeden commit per spec = lepší git log než mega-commit).
+- Counterargument bias watch (z 2026-04-24 SPEC pivot): user opět zvolil 3× recommendation. Watch item formalizace stále `#1` z workflow memory (> 2 korekce per task = trigger; opak = under-watch).
+- Discovered v0.2 trigger: user feedback z prototypu odhalil missing config schema detail. **Lekce:** spec brainstorm bez mockupu může minout konkrétní data shapes, které prototyp explicitně potřebuje. Pro budoucí umbrella specy zvážit "data shape draft" pass před writing.
+
+---
+
 ## 2026-04-24 — Auth layer implemented (plan 2026-04-24)
 
 Plán `docs/superpowers/plans/2026-04-24-plaud-auth.md` dokončen. 12 testů zelených (`pytest tests/`), bandit clean (61 LoC auth modulů), log a Sentry scrub hygiene gates prošly (smoke token `unique-smoke-token-xyzzy-9876` neunikl).
