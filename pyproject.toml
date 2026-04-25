@@ -15,10 +15,6 @@ dependencies = [
     # HTTP clients
     "httpx>=0.27",
     "requests>=2.32",
-    # Microsoft Graph
-    "msal>=1.30",
-    # LLM provider
-    "anthropic>=0.40",
     # Observability
     "loguru>=0.7.2",
     "sentry-sdk>=2.10",
@@ -36,8 +32,6 @@ dev = [
     # Integration tests — HTTP replay
     "vcrpy>=8.0",
     "pytest-recording>=0.13",
-    # LLM evals
-    "deepeval>=1.5",
     # Security SAST
     "bandit>=1.7",
     # Packaging (optional, activate when distributing)
@@ -61,7 +55,6 @@ addopts = [
 ]
 markers = [
     "vcr: integration test using VCR cassette (pytest-recording)",
-    "eval: LLM classifier eval against golden set (DeepEval)",
     "slow: test > 1s wall clock",
 ]
 # VCR default cassette location
