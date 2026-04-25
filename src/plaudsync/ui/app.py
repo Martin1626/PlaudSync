@@ -32,6 +32,7 @@ from plaudsync.ui.config_io import (
     save_config_payload,
 )
 from plaudsync.ui.state_reader import read_state_snapshot
+from plaudsync.ui.sync_starter import start_sync_subprocess
 
 
 def _open_ui_state(state_root: Path) -> sqlite3.Connection:
@@ -122,6 +123,11 @@ class ConfigSaveSuccess(BaseModel):
     parsed: dict
 
 
+class StartSyncResponse(BaseModel):
+    sync_id: str
+    started_at: str
+
+
 def create_app(state_root: Path) -> FastAPI:
     """Build a FastAPI app bound to the given state_root.
 
@@ -203,5 +209,33 @@ def create_app(state_root: Path) -> FastAPI:
                 detail={"ok": False, "errors": result["errors"]},
             )
         return ConfigSaveSuccess(parsed=result["parsed"])
+
+    @app.post("/api/sync/start", status_code=202, response_model=StartSyncResponse)
+    def start_sync() -> StartSyncResponse:
+        result = start_sync_subprocess(app.state.state_root, app.state.db)
+        if result["kind"] == "started":
+            return StartSyncResponse(
+                sync_id=result["sync_id"],
+                started_at=result["started_at"],
+            )
+        if result["kind"] == "conflict":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "ok": False,
+                    "reason": "already_running",
+                    "started_at": result["started_at"],
+                    "by": result["by"],
+                },
+            )
+        # spawn_failed
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "ok": False,
+                "reason": "spawn_failed",
+                "exit_code": result["exit_code"],
+            },
+        )
 
     return app
