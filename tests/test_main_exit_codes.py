@@ -1,24 +1,58 @@
 """Integration tests for __main__.main() exit-code contract."""
 from __future__ import annotations
 
+import contextlib
+import sqlite3
+from pathlib import Path
+from unittest.mock import MagicMock
+
 import pytest
 
 from plaudsync import __main__ as entrypoint
 from plaudsync.auth import PlaudTokenExpired
+from plaudsync.config import Config
 from plaudsync.plaud_client import PlaudClient
 
 
-def test_main_exits_2_on_token_expired(monkeypatch: pytest.MonkeyPatch) -> None:
+def _setup_sync_pipeline_mocks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Patch config loading, locking, and state so pipeline proceeds to token/client step."""
+    unclassified = tmp_path / "U"
+    unclassified.mkdir()
+    valid_config = Config(unclassified_dir=unclassified, projects={})
+
+    monkeypatch.setenv("PLAUDSYNC_STATE_ROOT", str(tmp_path))
+    monkeypatch.setattr("plaudsync.config.load_config", lambda _root: valid_config)
+
+    # Patch SyncLock to a no-op context manager so lock acquisition is skipped.
+    @contextlib.contextmanager  # type: ignore[misc]
+    def _noop_lock(_path: Path):  # type: ignore[no-untyped-def]
+        yield
+
+    monkeypatch.setattr("plaudsync.locking.SyncLock", _noop_lock)
+
+    # Patch open_state to return a throwaway in-memory SQLite connection.
+    monkeypatch.setattr(
+        "plaudsync.state.open_state",
+        lambda _root: sqlite3.connect(":memory:"),
+    )
+
+
+def test_main_exits_2_on_token_expired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("PLAUD_API_TOKEN", "whatever")
     monkeypatch.setenv("SENTRY_DSN", "")  # disable Sentry for the test
     monkeypatch.setattr("sys.argv", ["plaudsync"])  # default sync invocation
+    _setup_sync_pipeline_mocks(monkeypatch, tmp_path)
 
     def _raise_expired(self: PlaudClient) -> None:  # type: ignore[unused-argument]
         raise PlaudTokenExpired(
             "Plaud API rejected token - re-paste from browser localStorage.tokenstr"
         )
 
-    # Patch _region_probe so __init__ raises before verify() is called.
+    # Patch _region_probe so __init__ raises before any network call.
     monkeypatch.setattr(PlaudClient, "_region_probe", _raise_expired)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -26,12 +60,15 @@ def test_main_exits_2_on_token_expired(monkeypatch: pytest.MonkeyPatch) -> None:
     assert exc_info.value.code == 2
 
 
-def test_main_exits_3_on_token_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_exits_3_on_token_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.delenv("PLAUD_API_TOKEN", raising=False)
     monkeypatch.setenv("SENTRY_DSN", "")
     monkeypatch.setattr("sys.argv", ["plaudsync"])
     # Prevent main() from re-populating PLAUD_API_TOKEN via .env during the test.
     monkeypatch.setattr("plaudsync.__main__.load_dotenv", lambda: None)
+    _setup_sync_pipeline_mocks(monkeypatch, tmp_path)
 
     with pytest.raises(SystemExit) as exc_info:
         entrypoint.main()
