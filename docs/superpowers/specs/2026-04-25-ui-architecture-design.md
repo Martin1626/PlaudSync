@@ -1,8 +1,8 @@
 # UI architecture umbrella — design spec
 
-> **Status:** v0 draft (2026-04-25). Výstup brainstorm session (Superpowers `brainstorming` skill).
+> **Status:** v0.2 (2026-04-25). v0.1 → v0.2 změna: per-project absolutní cesty (cascade z categorization v0.2 + sync-core v0.2). Env var `PLAUDSYNC_LOCAL_ROOT` → `PLAUDSYNC_STATE_ROOT`. `RecordingRow.target_subdir` → `RecordingRow.target_dir` (absolutní). YAML config schema má konkrétní shape (`unclassified_dir` + `projects` mapping). Settings UI zobrazí inline 422 errors per-line.
 > **Scope:** napříč-screen architektura UI vrstvy PlaudSync (FastAPI + React + PyWebView). Pevné mantinely, na kterých per-screen brainstormy stojí.
-> **Preceded by:** [SPEC.md](../../../SPEC.md) v0.1 (UI scope sekce po pivotu), [DEV_LOG.md](../../../DEV_LOG.md) entry "SPEC pivot: UI z out-of-scope", [2026-04-24-plaud-auth-design.md](2026-04-24-plaud-auth-design.md) (POST /api/auth/verify endpoint), [2026-04-25-sync-core-design.md](2026-04-25-sync-core-design.md) (SQLite schema, exit codes 4/5/6, lock file).
+> **Preceded by:** [SPEC.md](../../../SPEC.md) v0.1 (UI scope sekce po pivotu), [DEV_LOG.md](../../../DEV_LOG.md) entry "SPEC pivot: UI z out-of-scope", [2026-04-24-plaud-auth-design.md](2026-04-24-plaud-auth-design.md) (POST /api/auth/verify endpoint), [2026-04-25-sync-core-design.md](2026-04-25-sync-core-design.md) v0.2 (config schema, path_resolver, exit codes 4/5/6/7, state.db v ${STATE_ROOT}), [2026-04-25-categorization-design.md](2026-04-25-categorization-design.md) v0.2.
 > **Next step:** Claude Design prototyp (2 screens, brief extract v sekci níže) → per-screen brainstormy (Dashboard, Settings) → backend writing-plans cyklus.
 
 ## Problem
@@ -159,7 +159,7 @@ Pokud `webview.start()` raisne (WebView2 runtime missing nebo crash), `__main__ 
       downloaded_at: string,        // ISO 8601
       classification_status: "matched" | "unclassified",
       project: string | null,
-      target_subdir: string,
+      target_dir: string,                  // absolutní path (config.projects[name] nebo unclassified_dir/...)
       status: "downloaded" | "failed" | "skipped",
     },
     // … last 50, no pagination v MVP
@@ -439,9 +439,11 @@ src/plaudsync/
 │   ├── app.py               [NEW, ~150 LoC]
 │   │   ├── FastAPI app instance
 │   │   ├── lifespan handler — open SQLite read-only connection na
-│   │   │   `Path(os.getenv("PLAUDSYNC_LOCAL_ROOT")) / ".plaudsync" / "state.db"`
-│   │   │   (sync-core spec Decision #4 — UI nikdy nepíše do DB,
-│   │   │    jen channel pro POST /api/sync/start spawn subprocess)
+│   │   │   `Path(os.getenv("PLAUDSYNC_STATE_ROOT")) / ".plaudsync" / "state.db"`
+│   │   │   + load_config(state_root) z `${STATE_ROOT}/config.yaml`
+│   │   │   (sync-core spec v0.2 — UI nikdy nepíše do DB,
+│   │   │    jen channel pro POST /api/sync/start spawn subprocess.
+│   │   │    Config invalid při startup → uvicorn raise → ConnectionLostOverlay.)
 │   │   ├── CSP middleware
 │   │   ├── StaticFiles mount na "/" (production)
 │   │   └── 6 endpoints
@@ -520,7 +522,7 @@ class RecordingRow(BaseModel):
     downloaded_at: str
     classification_status: Literal["matched", "unclassified"]
     project: str | None
-    target_subdir: str
+    target_dir: str          # absolutní path (per-project z config.yaml, nebo unclassified_dir/...)
     status: Literal["downloaded", "failed", "skipped"]
 
 class StateResponse(BaseModel):
@@ -681,7 +683,7 @@ Konsolidováno z Bloku C5. Klíčové invariants:
 - **Žádný error má způsobit vyprázdnění Dashboard recording listu.** Když poll selže, frontend stále zobrazuje poslední úspěšný snapshot (TanStack Query default behavior — `keepPreviousData`).
 - **409 z `/api/sync/start` není error UX.** Transparent transition na running stav.
 - **Sync exit code 4 (partial) není failed.** Oranžový banner místo červeného. Recording list ukazuje úspěšné položky bez varování.
-- **`PLAUDSYNC_LOCAL_ROOT` neset / nedostupný adresář** = backend startup failure → uvicorn crash → ConnectionLostOverlay. (Mitigation: validovat při lifespan startup, fail-fast s clear error v `plaudsync.log`.)
+- **`PLAUDSYNC_STATE_ROOT` neset / nedostupný adresář, nebo `config.yaml` chybí / je neplatný** = backend startup failure → uvicorn crash → ConnectionLostOverlay. (Mitigation: validovat při lifespan startup, fail-fast s clear error v `plaudsync.log`. Pre-flight check je proti exit code 7 sync-core paralelně.)
 
 ### Sentry posture pro UI vrstvu
 
@@ -845,7 +847,16 @@ Komponenty pro stub:
    - Below: row s "Save" button (primary) + "Reload" button (secondary, re-fetch /api/config)
    - Inline error display: pokud 422, pod textarea červený text "Line 5: invalid indentation" + visual marker na řádku v editoru
 
-**Empty config state:** textarea preloaded s default template z backend (`local_root: C:\PlaudRecordings\n# Add categorization rules here\n`).
+**Empty config state:** textarea preloaded s default template z backend:
+```yaml
+unclassified_dir: C:\PlaudRecordings\Unclassified
+projects:
+  # Map project names (matched from recording titles) to absolute paths.
+  # Each project can live on a different drive — there is NO common root.
+  # Example:
+  #   ProjektAlfa: C:\Projects\Alpha\Recordings
+  #   ProjektBeta: D:\Clients\Beta\Audio
+```
 
 ### Data shapes pro mock (TypeScript)
 
@@ -877,7 +888,7 @@ interface RecordingRow {
   downloaded_at: string;
   classification_status: "matched" | "unclassified";
   project: string | null;
-  target_subdir: string;
+  target_dir: string;     // absolutní path; per-project z config.projects nebo unclassified_dir/...
   status: "downloaded" | "failed" | "skipped";
 }
 
@@ -905,7 +916,8 @@ interface StateResponse {
                  created_at: "2026-04-25T13:00:00+02:00",
                  downloaded_at: "2026-04-25T13:00:30+02:00",
                  classification_status: "matched", project: "ProjektAlfa",
-                 target_subdir: "ProjektAlfa", status: "downloaded" }] }
+                 target_dir: "C:\\Projects\\Alpha\\Recordings",
+                 status: "downloaded" }] }
 
 // Last sync partial failure
 { sync: { status: "idle", trigger: null, started_at: null,
@@ -956,4 +968,5 @@ interface StateResponse {
 
 ## Revision history
 
-- **2026-04-25:** v0 draft, výstup brainstorm session.
+- **2026-04-25 (v0.2):** cascade z categorization v0.2 + sync-core v0.2. Env var `PLAUDSYNC_LOCAL_ROOT` → `PLAUDSYNC_STATE_ROOT` (state-only umístění). `RecordingRow.target_subdir` → `RecordingRow.target_dir` (absolutní path z config.projects). `/api/config` schema má konkrétní shape (`unclassified_dir` + `projects` mapping). Lifespan handler nyní načítá config.yaml + ověřuje schéma fail-fast. Empty config state v Settings exemplifikuje YAML s per-project paths.
+- **2026-04-25 (v0.1):** v0 draft, výstup brainstorm session.
