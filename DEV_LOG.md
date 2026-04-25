@@ -4,6 +4,25 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — Sync core implementation plan written
+
+`docs/superpowers/plans/2026-04-25-sync-core.md` published. 16 TDD
+tasks covering 8 new modules + 4 modifications. Endpoint discovery
+(5 community Plaud clients reverse-engineered) embedded as appendix
+in spec.
+
+Key decisions confirmed by discovery:
+- `since` filter is **client-side** (Plaud has no server-side `since`);
+  iterator stops early on first older record (desc by start_time).
+- `plaud_folder` is a **UUID** (`filetag_id` / `tag_ids[0]`), not a
+  display name. v0 ships UUIDs; v1 brainstorm resolves UUID → name.
+- Audio download: temp-url JSON → S3 presigned URL (no auth header on
+  S3). Two-step pattern.
+
+Branch: `feat/sync-core` (created from master at start of Task 1).
+
+---
+
 ## 2026-04-25 — Settings screen spec: extracted from prototype + review delta
 
 Companion k Dashboard specu (zápis níže). Stejný `frontend/PlaudSync UI.html` prototype obsahuje i Settings screen (ConnectionPanel + ConfigPanel + YamlEditor) — extracted contract proti UI architecture umbrella v0.2 + sync-core v0.2 (config.py + ConfigParseError) + auth design (PlaudTokenMissing/Expired).
