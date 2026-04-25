@@ -140,6 +140,36 @@ class PlaudClient:
                 yield meta
             skip += page_size
 
+    def download_audio(self, recording_id: str) -> Iterator[bytes]:
+        """Two-step download: temp-url JSON → S3 stream.
+
+        No Authorization header on S3 (signature in URL). Caller is
+        responsible for size verification via RecordingMeta.file_size.
+        """
+        # Step 1: get presigned URL
+        url = f"{self._base_url}/file/temp-url/{recording_id}"
+        resp = self._session.get(url)
+        resp.raise_for_status()
+        body = resp.json()
+        presigned = (
+            body.get("temp_url")
+            or body.get("tempUrl")
+            or body.get("url")
+            or body.get("downloadUrl")
+        )
+        if not presigned:
+            raise PlaudDownloadCorrupted(
+                f"missing temp URL in response: {list(body.keys())}"
+            )
+
+        # Step 2: stream from S3 (no auth header)
+        s3_session = requests.Session()  # fresh session — no Authorization header
+        with s3_session.get(presigned, stream=True) as audio_resp:
+            audio_resp.raise_for_status()
+            for chunk in audio_resp.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+
     def verify(self) -> None:
         """Pre-flight check against the Plaud API.
 
