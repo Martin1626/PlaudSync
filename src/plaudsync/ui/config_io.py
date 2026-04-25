@@ -7,8 +7,10 @@ ${STATE_ROOT}/config.yaml is missing on first run (CD1).
 """
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, Union
 
 import yaml
 
@@ -93,3 +95,64 @@ def read_config_payload(state_root: Path) -> ConfigResponsePayload:
                 "parse_error": {"line": line, "message": f"yaml: {e}"}}
 
     return {"raw_yaml": raw, "parsed": _config_to_dict(config), "parse_error": None}
+
+
+class ConfigSaveSuccessPayload(TypedDict):
+    ok: bool
+    parsed: dict
+
+
+class ConfigSaveErrorsPayload(TypedDict):
+    ok: bool
+    errors: list[ConfigParseErrorPayload]
+
+
+def _all_errors_payload(errors: list[ConfigParseError]) -> list[ConfigParseErrorPayload]:
+    return [{"line": e.line, "message": e.message} for e in errors]
+
+
+def save_config_payload(
+    state_root: Path,
+    raw_yaml: str,
+) -> Union[ConfigSaveSuccessPayload, ConfigSaveErrorsPayload]:
+    """Validate raw_yaml against sync-core schema; on success, atomic-write to disk.
+
+    Returns ok=True payload with parsed dict OR ok=False payload with errors[].
+    Caller (FastAPI handler) maps ok=False to HTTP 422.
+
+    Atomic write: temp file in same directory, then os.replace (atomic on
+    Windows + POSIX). A crash mid-write leaves the prior config intact.
+    """
+    # Parse + validate via a temp state_root to avoid touching real disk
+    # on validation failure. We write the raw text to a tmp dir, run
+    # load_config there, only persist to real path on success.
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch_root = Path(scratch)
+        (scratch_root / "config.yaml").write_text(raw_yaml, encoding="utf-8")
+        try:
+            config = load_config(scratch_root)
+        except ConfigValidationError as e:
+            return {"ok": False, "errors": _all_errors_payload(e.args[0])}
+        except yaml.YAMLError as e:
+            line = getattr(getattr(e, "problem_mark", None), "line", 0) + 1
+            return {"ok": False,
+                    "errors": [{"line": line, "message": f"yaml: {e}"}]}
+
+    target = state_root / "config.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Atomic write: tmp file in same dir + os.replace
+    fd, tmp_path = tempfile.mkstemp(prefix="config.", suffix=".yaml", dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(raw_yaml)
+        os.replace(tmp_path, target)
+    except Exception:
+        # Best-effort cleanup if replace failed
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+    return {"ok": True, "parsed": _config_to_dict(config)}
