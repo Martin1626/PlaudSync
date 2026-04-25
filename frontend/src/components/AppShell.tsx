@@ -4,6 +4,8 @@ import { useStateQuery } from "@/api/hooks";
 import type { SyncState } from "@/api/types";
 import { useBanners } from "@/context/BannersContext";
 import { useToasts } from "@/context/ToastsContext";
+import DevPanel from "@/dev/DevPanel";
+import { useMockContext } from "@/dev/MockProvider";
 
 import BannerStack from "./BannerStack";
 import ConnectionLostOverlay from "./ConnectionLostOverlay";
@@ -27,6 +29,8 @@ export default function AppShell() {
   const { banners, dismissBanner } = useBanners();
   const { toasts, pushToast, dismissToast } = useToasts();
   const conn = useConnectionLost();
+  const mockCtx = useMockContext();
+  const overlayVisible = (mockCtx?.showOverlay ?? false) || conn.visible;
 
   const sync = data?.sync ?? IDLE_SYNC;
 
@@ -65,9 +69,11 @@ export default function AppShell() {
       </main>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <ConnectionLostOverlay
-        visible={conn.visible}
+        visible={overlayVisible}
         {...(conn.lastError !== undefined && { lastError: conn.lastError })}
+        {...(mockCtx ? { onClose: () => mockCtx.setShowOverlay(false) } : {})}
       />
+      <DevPanel />
     </div>
   );
 }
