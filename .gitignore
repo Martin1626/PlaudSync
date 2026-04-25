@@ -55,6 +55,9 @@ desktop.ini
 *.db-shm
 config.yaml
 
+# Vite build output (frontend writing-plans cycle populates this)
+src/plaudsync/ui/static/
+
 # Project-specific: downloaded recordings (local only, never commit)
 /recordings/
 /downloads/

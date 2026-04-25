@@ -210,6 +210,21 @@ def create_app(state_root: Path) -> FastAPI:
             )
         return ConfigSaveSuccess(parsed=result["parsed"])
 
+    @app.middleware("http")
+    async def csp_middleware(request, call_next):
+        response = await call_next(request)
+        # UI architecture spec E5: strict baseline. unsafe-inline on style is
+        # the documented compromise (Tailwind static CSS + occasional React
+        # inline styles); script-src strict to block any CDN injection.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'"
+        )
+        return response
+
     @app.post("/api/sync/start", status_code=202, response_model=StartSyncResponse)
     def start_sync() -> StartSyncResponse:
         result = start_sync_subprocess(app.state.state_root, app.state.db)
@@ -237,5 +252,12 @@ def create_app(state_root: Path) -> FastAPI:
                 "exit_code": result["exit_code"],
             },
         )
+
+    # Production: serve built React bundle. Dev (Vite at :5173) doesn't need this.
+    # Mount AFTER all /api/* routes so it doesn't intercept them.
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists() and (static_dir / "index.html").exists():
+        from fastapi.staticfiles import StaticFiles
+        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
     return app
