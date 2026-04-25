@@ -44,6 +44,7 @@ _REDACTED_KEYS = frozenset(
         "transcript_excerpt",
         "participants",
         "attendees",
+        "plaud_folder",
     }
 )
 

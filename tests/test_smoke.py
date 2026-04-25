@@ -17,3 +17,19 @@ def test_smoke_sanity() -> None:
 def test_smoke_observability_imports() -> None:
     """Sanity: observability module imports without side effects."""
     from plaudsync import observability  # noqa: F401
+
+
+def test_observability_redacts_plaud_folder_key() -> None:
+    """plaud_folder is a known business label (Plaud-side folder name like
+    'Klienti'); must be scrubbed from Sentry tags/contexts.
+    """
+    from plaudsync.observability import scrub_event
+
+    event = {
+        "tags": {"plaud_folder": "Klienti"},
+        "contexts": {"recording": {"plaud_folder": "Inbox"}},
+    }
+    scrubbed = scrub_event(event, hint={})
+    assert scrubbed is not None
+    assert scrubbed["tags"]["plaud_folder"] == "<redacted-label>"
+    assert scrubbed["contexts"]["recording"]["plaud_folder"] == "<redacted-label>"
