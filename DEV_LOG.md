@@ -4,6 +4,38 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — Sync core code review: 3 hardening fixes + 2 deviation notes
+
+Independent code-reviewer agent run proti `feat/sync-core` (HEAD `a8ab7d2`)
+vrátil APPROVED_WITH_FIXES. Aplikováno v commitu `abf4a57`:
+
+**Hardening (Important):**
+- I-1: `_region_probe` allowlist `https://*.plaud.ai` — bez guardu by attacker
+  schopný falšovat API odpověď přesměroval `_base_url` na vlastní host a token
+  by tekl na další request.
+- I-2: `download_audio` vynucuje `https://` na presigned URL + `allow_redirects=False`
+  na S3 leg. Legitimní S3 presigned URL nikdy nepotřebují redirect.
+- I-3: `_process_recording` unlinkuje partial file na jakoukoli mid-stream
+  exception (předtím jen na size mismatch). Bránění UI/file watcheru zobrazit
+  half-recording s real-looking name.
+
+**Documented deviations (no fix):**
+- I-9: `__main__.py:94-96` přidal `FileNotFoundError → exit 7` handler nad rámec
+  spec. Důvod: `load_config` raisí FileNotFoundError když chybí config.yaml,
+  ne ConfigValidationError. Beneficial deviation — uživatel dostane stejný
+  exit 7 místo opaque exit 1. Ponechano.
+- M-8: `sync.py:62-66` Sentry `recording_failed` capture vynechal
+  `set_context("sync_run", {"run_id": ..., "trigger": ...})` per spec line 506-507.
+  Trigger není v `run_sync` scope u failure pointu — vyžadovalo by threading.
+  Defer do follow-up; má-li triage nedostatečnou kontext info, doplnit pak.
+
+Cassette M-6: `test_sync_happy_path_*` body měl unscrubbed title
+`"04-25 Test: meeting"` — přepsáno na `"<redacted-title>"`.
+
+Branch po fixech: 79/79 testů zelených (5 nových testů pro hardening).
+
+---
+
 ## 2026-04-25 — Sync core implementation plan written
 
 `docs/superpowers/plans/2026-04-25-sync-core.md` published. 16 TDD
