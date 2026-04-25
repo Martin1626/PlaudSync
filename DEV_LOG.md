@@ -326,14 +326,14 @@ Založena struktura projektu po průzkumech kol 1–4. Soubory vytvořeny: `SPEC
 | 2 | > 30 % false-pass v TDD (mock pass, real fail) @ 1 měsíc | — | not started |
 | 3 | SPEC.md bez git update @ 4 týdny | 2026-04-24 (created) | active |
 | 4 | Plan Mode overhead > 30 % @ 1 měsíc | — | not started |
-| 5 | LLM classifier accuracy < 70 % na golden setu @ > 2 týdny iterací | — | not started |
+| 5 | Regex match coverage < 90 % na sliding 30-day window | — | not started (swapped 2026-04-25 from LLM accuracy → regex coverage per categorization v0.2) |
 
 ### Kolo 2 (tooling)
 
 | # | Criterion | Last check | Status |
 |---|-----------|-----------|--------|
 | T-5 | Cassette re-record > 1×/měsíc kvůli nestabilitě | — | not started |
-| T-6 | DeepEval dependency conflict s Anthropic/OpenAI SDK | — | not started |
+| T-6 | DeepEval dependency conflict s Anthropic/OpenAI SDK | — | superseded 2026-04-25 (DeepEval dropped with regex-only categorization) |
 | T-7 | Superpowers context pollution > 30 % nevyužíván @ 3 týdny | — | not started (pending install) |
 | T-8 | CI slowdown > 30 s vs baseline @ 1 měsíc | — | not started |
 
