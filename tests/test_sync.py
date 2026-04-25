@@ -79,6 +79,68 @@ def test_sync_skips_already_downloaded_by_pk(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_sync_unlinks_partial_file_on_mid_stream_failure(tmp_path: Path) -> None:
+    """Mid-stream exception during write must unlink the half-written file."""
+    unclassified = tmp_path / "U"
+    unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified, projects={})
+    conn = open_state(tmp_path)
+
+    class _FakeClient:
+        def list_recordings(self, since=None):
+            class _M:
+                plaud_id = "rec_partial"
+                title = "T"
+                created_at = "2026-04-25T12:00:00+00:00"
+                start_time_ms = 1714000000000
+                duration_seconds = 100
+                file_size = 9999
+                plaud_folder = "f"
+            yield _M()
+
+        def download_audio(self, _):
+            yield b"PARTIAL"
+            raise RuntimeError("connection dropped mid-stream")
+
+    from plaudsync.classifier import DefaultBucketClassifier
+    from plaudsync.sync import run_sync
+    exit_code = run_sync(_FakeClient(), DefaultBucketClassifier(), conn, config, "manual")
+    assert exit_code == 4
+    # No .mp3 left behind.
+    assert list(unclassified.rglob("*.mp3")) == []
+    conn.close()
+
+
+def test_sync_unlinks_partial_file_on_size_mismatch(tmp_path: Path) -> None:
+    """Size mismatch (already covered by current code) must unlink the file."""
+    unclassified = tmp_path / "U"
+    unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified, projects={})
+    conn = open_state(tmp_path)
+
+    class _FakeClient:
+        def list_recordings(self, since=None):
+            class _M:
+                plaud_id = "rec_short"
+                title = "T"
+                created_at = "2026-04-25T12:00:00+00:00"
+                start_time_ms = 1714000000000
+                duration_seconds = 100
+                file_size = 9999
+                plaud_folder = "f"
+            yield _M()
+
+        def download_audio(self, _):
+            yield b"SHORT"
+
+    from plaudsync.classifier import DefaultBucketClassifier
+    from plaudsync.sync import run_sync
+    exit_code = run_sync(_FakeClient(), DefaultBucketClassifier(), conn, config, "manual")
+    assert exit_code == 4
+    assert list(unclassified.rglob("*.mp3")) == []
+    conn.close()
+
+
 def test_sync_partial_failure_exits_4(tmp_path: Path) -> None:
     """One download succeeds, one raises → exit 4 + recordings_failed=1."""
     unclassified = tmp_path / "U"

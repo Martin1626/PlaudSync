@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import TracebackType
 from typing import Iterator
+from urllib.parse import urlparse
 
 import requests
 
@@ -93,6 +94,17 @@ class PlaudClient:
                 raise PlaudRegionProbeFailed(
                     f"region redirect missing api domain: {body!r}"
                 )
+            # SSRF guard: refuse redirects to anything that isn't a plaud.ai
+            # subdomain over https. The token would otherwise be sent to the
+            # attacker-controlled host on the next request.
+            parsed = urlparse(api)
+            if parsed.scheme != "https" or not (
+                parsed.hostname == "plaud.ai"
+                or (parsed.hostname or "").endswith(".plaud.ai")
+            ):
+                raise PlaudRegionProbeFailed(
+                    f"refusing region redirect to non-plaud host: scheme={parsed.scheme}"
+                )
             self._base_url = api
             return
 
@@ -162,9 +174,15 @@ class PlaudClient:
                 f"missing temp URL in response: {list(body.keys())}"
             )
 
+        # SSRF guard: presigned URL must be https. Legitimate S3 presigned
+        # URLs never need a redirect — disable them so a 302 from a malicious
+        # host can't chain further.
+        if urlparse(presigned).scheme != "https":
+            raise PlaudDownloadCorrupted("presigned URL must use https")
+
         # Step 2: stream from S3 (no auth header)
         s3_session = requests.Session()  # fresh session — no Authorization header
-        with s3_session.get(presigned, stream=True) as audio_resp:
+        with s3_session.get(presigned, stream=True, allow_redirects=False) as audio_resp:
             audio_resp.raise_for_status()
             for chunk in audio_resp.iter_content(chunk_size=64 * 1024):
                 if chunk:

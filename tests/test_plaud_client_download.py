@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from plaudsync.plaud_client import PlaudClient
+from plaudsync.plaud_client import PlaudClient, PlaudDownloadCorrupted
 
 
 @pytest.mark.vcr(cassette_library_dir="tests/cassettes/test_plaud_client_download")
@@ -23,3 +23,12 @@ def test_download_returns_size() -> None:
         # happens in sync.py based on RecordingMeta.file_size.
         chunks = list(client.download_audio("rec_xyz"))
     assert b"".join(chunks) == b"short"
+
+
+@pytest.mark.vcr(cassette_library_dir="tests/cassettes/test_plaud_client_download")
+def test_download_rejects_http_presigned_url() -> None:
+    # SSRF guard: presigned URL must use https. Iterator must raise
+    # before issuing the request to the attacker host.
+    with PlaudClient("test-token") as client:
+        with pytest.raises(PlaudDownloadCorrupted):
+            list(client.download_audio("rec_evil"))

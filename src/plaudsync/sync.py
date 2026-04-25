@@ -104,17 +104,20 @@ def _process_recording(
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     bytes_written = 0
-    with open(target_path, "wb") as f:
-        for chunk in client.download_audio(meta.plaud_id):
-            f.write(chunk)
-            bytes_written += len(chunk)
+    try:
+        with open(target_path, "wb") as f:
+            for chunk in client.download_audio(meta.plaud_id):
+                f.write(chunk)
+                bytes_written += len(chunk)
+    except Exception:
+        # Mid-stream interruption (network drop, S3 RST, etc.) leaves a partial
+        # file on disk. Remove it so a UI/file watcher does not surface a
+        # half-recording with a real-looking name.
+        target_path.unlink(missing_ok=True)
+        raise
 
     if meta.file_size and bytes_written != meta.file_size:
-        # Partial-write cleanup.
-        try:
-            target_path.unlink()
-        except OSError:
-            pass
+        target_path.unlink(missing_ok=True)
         raise PlaudDownloadCorrupted(
             f"size mismatch: expected={meta.file_size}, written={bytes_written}"
         )
