@@ -4,6 +4,34 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — Settings screen spec: extracted from prototype + review delta
+
+Companion k Dashboard specu (zápis níže). Stejný `frontend/PlaudSync UI.html` prototype obsahuje i Settings screen (ConnectionPanel + ConfigPanel + YamlEditor) — extracted contract proti UI architecture umbrella v0.2 + sync-core v0.2 (config.py + ConfigParseError) + auth design (PlaudTokenMissing/Expired).
+
+Output: `docs/superpowers/specs/2026-04-25-settings-screen-design.md`. Sekce:
+
+- **10 design decisions extracted** (D1–D10): layout (ConnectionPanel above ConfigPanel), token display contract (masked, "z .env" chip, hint blok), verify button state machine (idle/verifying/success/error 5 states), ConfigPanel header + Save/Reload + line counter, YamlEditor gutter+textarea+inline error footer (scroll-sync, 13/20px JetBrains Mono metrics, line highlight on error), Save button state machine, Reload behavior, DEFAULT_YAML seed template, banner derivation v Settings (token-expired surface), full localization string lock contract.
+- **Component tree** s LoC budget odhadem (~300 LoC pro Settings subset; combined Dashboard + Settings ~910 — within 500–1000 budget, 90% slack).
+- **TS types mirror Pydantic + auth** (ConfigResponse, ConfigSaveResponse union, ConfigSaveErrors, AuthVerifyResponse, ConfigParseError).
+- **Public hooks** signatures (useConfig, useSaveConfig, useVerifyAuth) s TanStack Query 422-handling note (PUT /api/config 422 throws via fetch wrapper, vs auth verify 200+ok=false structural-result pattern).
+- **8 gaps** (review delta) — 3 s decision, 5 deferred do implementation cyklu:
+  - Gap 1: Multi-error 422 — prototype shows only first; recommend first inline + "(+N dalších)" hint with click-to-expand modal.
+  - Gap 2: Token masking — frontend hardcoded vs backend-rendered? Recommend Option C (frontend constant 20 dots + "z .env" chip; no PII surfaced).
+  - Gap 3: Inline parse error from GET /api/config (existing broken config on mount) — UI must immediately surface; mount effect.
+  - Gap 4: Reload silently discards local edits (recommend native `confirm()` if dirty).
+  - Gap 5: Plain textarea, no syntax highlight / auto-indent / bracket pair (skip for MVP, ~30–80 KB cost not worth).
+  - Gap 6: Save always-enabled, no dirty detection (acceptable v0).
+  - Gap 7: DEFAULT_YAML seed — sync-core auto-creates vs user manual? Cross-spec note for sync-core impl: auto-create v config.load_config + relax parent-must-exist for seed.
+  - Gap 8: PUT /api/config 422 vs auth verify 200+ok=false convention split — document v client.ts wrapper.
+
+**Open questions (for implementation cycle):** masked_token placement (verify response / config response / frontend constant — default C), multi-error display (first-only with hint vs all-listed), reload confirm dialog UX (native vs custom modal vs silent), DEFAULT_YAML seed location (sync-core vs UI backend — cross-spec impl decision), save dirty disable (always-enabled vs disabled-when-clean).
+
+**Implementation gating:** Settings frontend writing-plans čeká na sync-core impl (Config + ConfigParseError) + UI backend impl (ConfigResponse shape) + Dashboard spec (companion, already shipped at 49c8e4e). Sequence unchanged: sync-core impl (in progress, 7cd5885 latest) → UI backend plan → UI backend impl → Frontend plan (Dashboard + Settings combined) → Frontend impl.
+
+**Process note:** stejný extracted-from-prototype workflow jako Dashboard. User design je hotový v prototype; spec je contract + review findings + acceptance criteria, ne re-design. Brainstorming skill záměrně neinvokován (žádné design rozhodnutí k prozkoumání).
+
+---
+
 ## 2026-04-25 — Dashboard screen spec: extracted from prototype + review delta
 
 User měl Dashboard design hotový v Claude Design prototype (`frontend/PlaudSync UI.html`, commit 1ea6bd3 — 1222 LoC HTML+React+Tailwind, 5 plně funkčních scenarios + ConnectionLostOverlay + 12 sample recordings). Místo brainstormu od nuly proběhl **review** prototype proti UI architecture umbrella v0.2 + sync-core v0.2 specs.
