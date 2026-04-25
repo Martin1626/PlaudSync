@@ -4,6 +4,42 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — Sync core smoke test PASS, branch merged + deleted
+
+Manuální smoke proti reálné Plaud Cloud po merge `feat/sync-core` →
+`master` (`9a6b6a5`):
+
+| Krok | Výsledek |
+|---|---|
+| `python -m plaudsync verify` | exit 0, region probe + token OK (~3s) |
+| 1. sync (~5 min) | exit 0, 92 nahrávek staženo |
+| state.db | `sync_runs(1, exit=0, new=92, skipped=0, failed=0, manual)`; 92× status='downloaded' |
+| 2. sync (idempotence) | exit 0, `new=0, skipped=0, failed=0` — since filter zastavil iterátor na page 1 |
+| log audit | 4 INFO řádky, 0 výskytů `title`/`file_name`/`temp_url`/`Bearer` |
+
+**Pozorování:**
+
+- `plaud_folder` fallback fungoval — všech 92 nahrávek v `Unclassified/_unknown/`
+  protože `from_raw` nedostal `filetag_id` ani `tag_ids[0]` z reálné API
+  (DefaultBucketClassifier → unclassified branch). Future v1 brainstorm: rozhodnout
+  jestli zůstat u `_unknown` nebo dotahovat tag display name přes endpoint
+  `/folder/list/web`.
+- České diakritiky v filename zachované (`_slugify` `[^\w\-]+` s `re.UNICODE`):
+  `Schůzka_FHB_Příprava_…`, `Marek_Bartoš_Socio-etické_chování_LLM_…`.
+- Pagination + since filter: druhý běh 0 API calls na listing po prvním page
+  (since marker zastavil iterátor) — efektivní pro 1h Task Scheduler cadence.
+- Throughput: 5 min / 92 nahrávek ≈ 3 sec/recording vč. temp-url + S3 stream.
+  Single-threaded, bezpečné pro Task Scheduler interval ≥ 1h.
+
+**State po smoke:** `feat/sync-core` lokální branch smazán (`git branch -d`).
+Repo state: master HEAD `9a6b6a5` (merge commit), `C:/PlaudSync/` obsahuje
+state.db + 92 .mp3 + plaudsync.log. Kill criteria L-1..L-18 nezapálené.
+
+Další logický krok: Task Scheduler hookup — vytvořit periodic job pro
+`python -m plaudsync` každou hodinu. Mimo sync-core scope.
+
+---
+
 ## 2026-04-25 — Sync core code review: 3 hardening fixes + 2 deviation notes
 
 Independent code-reviewer agent run proti `feat/sync-core` (HEAD `a8ab7d2`)
