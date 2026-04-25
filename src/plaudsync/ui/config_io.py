@@ -12,8 +12,6 @@ import tempfile
 from pathlib import Path
 from typing import TypedDict, Union
 
-import yaml
-
 from plaudsync.config import (
     Config,
     ConfigParseError,
@@ -86,13 +84,11 @@ def read_config_payload(state_root: Path) -> ConfigResponsePayload:
     try:
         config = load_config(state_root)
     except ConfigValidationError as e:
+        # sync-core's load_config wraps yaml.YAMLError into ConfigValidationError,
+        # so this catches both schema validation failures and YAML syntax errors.
         errors: list[ConfigParseError] = e.args[0]
         return {"raw_yaml": raw, "parsed": None,
                 "parse_error": _first_error_payload(errors)}
-    except yaml.YAMLError as e:
-        line = getattr(getattr(e, "problem_mark", None), "line", 0) + 1
-        return {"raw_yaml": raw, "parsed": None,
-                "parse_error": {"line": line, "message": f"yaml: {e}"}}
 
     return {"raw_yaml": raw, "parsed": _config_to_dict(config), "parse_error": None}
 
@@ -132,11 +128,9 @@ def save_config_payload(
         try:
             config = load_config(scratch_root)
         except ConfigValidationError as e:
+            # sync-core wraps yaml.YAMLError into ConfigValidationError, so this
+            # catches both syntax + schema failures with line numbers.
             return {"ok": False, "errors": _all_errors_payload(e.args[0])}
-        except yaml.YAMLError as e:
-            line = getattr(getattr(e, "problem_mark", None), "line", 0) + 1
-            return {"ok": False,
-                    "errors": [{"line": line, "message": f"yaml: {e}"}]}
 
     target = state_root / "config.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)

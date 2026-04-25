@@ -269,6 +269,18 @@ def test_csp_header_present_on_api_responses(client: TestClient) -> None:
     assert "connect-src 'self'" in csp
 
 
+def test_csp_header_present_on_error_responses(client: TestClient) -> None:
+    """Error responses (e.g. 422 from PUT /api/config) must also carry CSP
+    so a malicious payload cannot exfiltrate via uncovered status codes."""
+    resp = client.put("/api/config", json={
+        "raw_yaml": "unclassified_dir: relative\nprojects: {}\n",
+    })
+    assert resp.status_code == 422
+    csp = resp.headers.get("content-security-policy")
+    assert csp is not None
+    assert "default-src 'self'" in csp
+
+
 def test_state_reflects_running_sync(state_root: Path) -> None:
     # Pre-seed sync_runs via a separate connection BEFORE the app opens its
     # lifespan-bound connection. WAL mode lets readers see committed writes.
