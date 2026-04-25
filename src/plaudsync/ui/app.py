@@ -15,10 +15,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
+from plaudsync.auth import (
+    PlaudTokenExpired,
+    PlaudTokenMissing,
+    load_token,
+    mask_token,
+)
+from plaudsync.plaud_client import PlaudClient, PlaudRegionProbeFailed
 from plaudsync.ui.config_io import maybe_seed_default
 from plaudsync.ui.state_reader import read_state_snapshot
 
@@ -84,6 +91,13 @@ class StateResponse(BaseModel):
     recordings: list[RecordingRow]
 
 
+class AuthVerifyResponse(BaseModel):
+    ok: bool
+    reason: Literal["PlaudTokenExpired", "PlaudTokenMissing"] | None = None
+    message: str | None = None
+    masked_token: str | None = None
+
+
 def create_app(state_root: Path) -> FastAPI:
     """Build a FastAPI app bound to the given state_root.
 
@@ -116,5 +130,40 @@ def create_app(state_root: Path) -> FastAPI:
     @app.get("/api/state", response_model=StateResponse)
     def get_state() -> dict:
         return read_state_snapshot(app.state.db)
+
+    @app.post("/api/auth/verify", response_model=AuthVerifyResponse)
+    def auth_verify() -> AuthVerifyResponse:
+        try:
+            token = load_token()
+        except PlaudTokenMissing:
+            return AuthVerifyResponse(
+                ok=False,
+                reason="PlaudTokenMissing",
+                message="PLAUD_API_TOKEN not set in .env",
+                masked_token=None,
+            )
+
+        masked = mask_token(token)
+        try:
+            with PlaudClient(token) as client:
+                client.verify()
+        except PlaudTokenExpired:
+            return AuthVerifyResponse(
+                ok=False,
+                reason="PlaudTokenExpired",
+                message="Plaud API rejected token - re-paste from browser localStorage.tokenstr",
+                masked_token=masked,
+            )
+        except PlaudRegionProbeFailed:
+            # Region probe failure is a sync-core-level issue; surface via HTTP 500
+            # so the frontend shows toast "Ověření tokenu selhalo - zkontroluj síť".
+            raise HTTPException(status_code=500, detail="region probe failed")
+
+        return AuthVerifyResponse(
+            ok=True,
+            reason=None,
+            message=None,
+            masked_token=masked,
+        )
 
     return app
