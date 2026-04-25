@@ -42,3 +42,34 @@ def test_classify_returns_matched_for_short_date_with_year_from_metadata() -> No
     assert result.status == "matched"
     assert result.project == "ProjektAlfa"
     assert result.matched_date == date(2026, 4, 25)
+
+
+@pytest.mark.parametrize(
+    "title,expected_project",
+    [
+        # Separator variants: space, dash, slash, mixed
+        ("04-25 ProjektAlfa: kickoff", "ProjektAlfa"),
+        ("04-25 - ProjektAlfa: kickoff", "ProjektAlfa"),
+        ("04-25 / ProjektAlfa: kickoff", "ProjektAlfa"),
+        ("04-25  - / ProjektAlfa: kickoff", "ProjektAlfa"),
+        # Unicode + spaces in project name
+        ("04-25 Projekt Česká Alfa: kickoff", "Projekt Česká Alfa"),
+        # Lazy match — first colon wins
+        ("04-25 ProjektAlfa: kickoff: agenda", "ProjektAlfa"),
+    ],
+    ids=[
+        "sep_space",
+        "sep_dash_with_spaces",
+        "sep_slash_with_spaces",
+        "sep_mixed",
+        "unicode_project_with_spaces",
+        "lazy_first_colon_wins",
+    ],
+)
+def test_classify_supports_separator_unicode_and_lazy_match(
+    title: str, expected_project: str
+) -> None:
+    result = classify(title=title, created_at=datetime(2026, 4, 25))
+    assert result.status == "matched"
+    assert result.project == expected_project
+    assert result.matched_date == date(2026, 4, 25)
