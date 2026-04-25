@@ -4,6 +4,31 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — Dashboard screen spec: extracted from prototype + review delta
+
+User měl Dashboard design hotový v Claude Design prototype (`frontend/PlaudSync UI.html`, commit 1ea6bd3 — 1222 LoC HTML+React+Tailwind, 5 plně funkčních scenarios + ConnectionLostOverlay + 12 sample recordings). Místo brainstormu od nuly proběhl **review** prototype proti UI architecture umbrella v0.2 + sync-core v0.2 specs.
+
+Output: `docs/superpowers/specs/2026-04-25-dashboard-screen-design.md`. Sekce:
+
+- **10 design decisions extracted** (D1–D10): layout, SyncNowPanel 6 states, RecordingsList row format, ProjectBadge color taxonomy, SyncStatusBadge 5 states, BannerStack derivation rules, Toast triggers, ConnectionLostOverlay terminal error UX, live recordings list during sync, polling cadence (5s idle / 1.5s running).
+- **Component tree** s LoC budget odhadem (~610 LoC pro Dashboard subset, total frontend ~810 — within UI umbrella 500-1000 budget).
+- **TS types mirror Pydantic** (StateResponse, RecordingRow, SyncState, SyncProgress, ClassificationStatus, RecordingStatus).
+- **Public hooks** signatures (useStateQuery, useStartSync) s TanStack Query polling pattern.
+- **7 gaps** (review delta) — 3 s decision, 4 deferred do implementation cyklu:
+  - Gap 1: `_unmapped_<project>` not visually distinct → add 3rd badge variant nebo `classification_route` field (open).
+  - Gap 2: `plaud_folder` is UUID v0 (sync-core spec confirms), prototype mock shows readable strings (real production data won't match).
+  - Gap 3: `target_dir` not displayed (acceptable v0; tooltip on ProjectBadge as Phase 2).
+  - Gap 4: "Zobrazit log" action behavior undefined (4 options A/B/C/D, default C = toast pointing to file).
+  - Gap 5: Loading state during cold start (skeleton vs spinner — pick during impl).
+  - Gap 6: Live recordings no animation (acceptable v0).
+  - Gap 7: Banner dismissal across sessions (acceptable v0; localStorage-backed if feedback needs).
+
+**Open questions (for implementation cycle):** classification_route field design, log action behavior, loading skeleton vs spinner, UUID truncation in plaud_folder display.
+
+**Implementation gating:** Dashboard frontend writing-plans čeká na sync-core impl (Pydantic shapes) + Settings spec + UI backend writing-plans + impl. Sequence: sync-core impl → Settings review → UI backend plan → UI backend impl → Frontend plan (Dashboard + Settings combined) → Frontend impl.
+
+---
+
 ## 2026-04-25 — Categorization implementation: regex-only classifier shipped
 
 Implementation execution of `docs/superpowers/plans/2026-04-25-categorization.md` via subagent-driven-development. 9 commits on master (Tasks 1–9).
