@@ -18,6 +18,16 @@
     color: #111827;
     -webkit-font-smoothing: antialiased;
   }
+  /* focus ring polish */
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
 }
 
 @layer utilities {
@@ -53,15 +63,4 @@
 }
 ::-webkit-scrollbar-track {
   background: transparent;
-}
-
-/* focus ring polish */
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
-  outline: 2px solid #2563eb;
-  outline-offset: 2px;
-  border-radius: 6px;
 }
