@@ -156,6 +156,36 @@ def test_get_config_returns_parse_error_for_broken_yaml(state_root: Path) -> Non
     assert "absolute" in body["parse_error"]["message"].lower()
 
 
+def test_put_config_persists_valid_yaml(client: TestClient, state_root: Path) -> None:
+    unclassified = state_root / "Custom"
+    unclassified.mkdir()
+    yaml_text = f"unclassified_dir: {unclassified}\nprojects: {{}}\n"
+
+    resp = client.put("/api/config", json={"raw_yaml": yaml_text})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["parsed"]["unclassified_dir"] == str(unclassified)
+    assert (state_root / "config.yaml").read_text(encoding="utf-8") == yaml_text
+
+
+def test_put_config_returns_422_with_errors_for_invalid_yaml(
+    client: TestClient, state_root: Path
+) -> None:
+    resp = client.put("/api/config", json={
+        "raw_yaml": "unclassified_dir: relative\nprojects: {}\n",
+    })
+
+    assert resp.status_code == 422
+    body = resp.json()
+    detail = body["detail"]
+    assert detail["ok"] is False
+    assert isinstance(detail["errors"], list)
+    assert len(detail["errors"]) >= 1
+    assert any("absolute" in e["message"].lower() for e in detail["errors"])
+
+
 def test_state_reflects_running_sync(state_root: Path) -> None:
     # Pre-seed sync_runs via a separate connection BEFORE the app opens its
     # lifespan-bound connection. WAL mode lets readers see committed writes.
