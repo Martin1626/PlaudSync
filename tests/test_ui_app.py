@@ -186,6 +186,81 @@ def test_put_config_returns_422_with_errors_for_invalid_yaml(
     assert any("absolute" in e["message"].lower() for e in detail["errors"])
 
 
+class _FakePopen:
+    def __init__(self, control):
+        self._control = control
+        self.returncode = control if isinstance(control, int) else None
+
+    def wait(self, timeout: float | None = None) -> int:
+        import subprocess as _sp
+        if self._control is _sp.TimeoutExpired:
+            raise _sp.TimeoutExpired(cmd="x", timeout=timeout or 0)
+        return self._control
+
+
+def test_post_sync_start_returns_202_when_running(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from plaudsync.ui import sync_starter
+
+    monkeypatch.setattr(sync_starter.subprocess, "Popen",
+                        lambda *a, **k: _FakePopen(subprocess.TimeoutExpired))
+
+    resp = client.post("/api/sync/start")
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert "sync_id" in body
+    assert "started_at" in body
+
+
+def test_post_sync_start_returns_409_on_lock_held(
+    state_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from plaudsync.state import open_state
+    from plaudsync.ui import sync_starter
+
+    # Pre-seed unfinished sync_runs row before app opens its connection.
+    seed_conn = open_state(state_root)
+    seed_conn.execute(
+        "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+        ("2026-04-25T13:00:00+00:00", "task_scheduler"),
+    )
+    seed_conn.commit()
+    seed_conn.close()
+
+    monkeypatch.setattr(sync_starter.subprocess, "Popen",
+                        lambda *a, **k: _FakePopen(5))
+
+    app = create_app(state_root)
+    with TestClient(app) as client:
+        resp = client.post("/api/sync/start")
+
+    assert resp.status_code == 409
+    body = resp.json()
+    detail = body["detail"]
+    assert detail["reason"] == "already_running"
+    assert detail["by"] == "task_scheduler"
+
+
+def test_post_sync_start_returns_500_on_other_exit_code(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from plaudsync.ui import sync_starter
+
+    monkeypatch.setattr(sync_starter.subprocess, "Popen",
+                        lambda *a, **k: _FakePopen(7))
+
+    resp = client.post("/api/sync/start")
+
+    assert resp.status_code == 500
+    body = resp.json()
+    assert body["detail"]["reason"] == "spawn_failed"
+    assert body["detail"]["exit_code"] == 7
+
+
 def test_state_reflects_running_sync(state_root: Path) -> None:
     # Pre-seed sync_runs via a separate connection BEFORE the app opens its
     # lifespan-bound connection. WAL mode lets readers see committed writes.
