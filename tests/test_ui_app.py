@@ -56,6 +56,79 @@ def test_state_returns_idle_on_empty_db(client: TestClient) -> None:
     assert body["recordings"] == []
 
 
+def test_auth_verify_missing_token_returns_token_missing(
+    state_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PLAUD_API_TOKEN", raising=False)
+    app = create_app(state_root)
+    with TestClient(app) as client:
+        resp = client.post("/api/auth/verify")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["reason"] == "PlaudTokenMissing"
+    assert body["masked_token"] is None
+
+
+def test_auth_verify_token_expired_returns_reason(
+    state_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from plaudsync.auth import PlaudTokenExpired
+    from plaudsync.plaud_client import PlaudClient
+
+    monkeypatch.setenv("PLAUD_API_TOKEN", "secret123abcdefghijklmnXYZ9")
+
+    def fake_init(self, token: str) -> None:  # type: ignore[no-untyped-def]
+        raise PlaudTokenExpired("rejected")
+
+    monkeypatch.setattr(PlaudClient, "__init__", fake_init)
+
+    app = create_app(state_root)
+    with TestClient(app) as client:
+        resp = client.post("/api/auth/verify")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["reason"] == "PlaudTokenExpired"
+    # Masked token populated even on expired (token shape known)
+    assert body["masked_token"] is not None
+    assert body["masked_token"].startswith("secret12")
+    assert body["masked_token"].endswith("XYZ9")
+
+
+def test_auth_verify_success_returns_masked_token(
+    state_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from plaudsync.plaud_client import PlaudClient
+
+    monkeypatch.setenv("PLAUD_API_TOKEN", "secret123abcdefghijklmnXYZ9")
+
+    def fake_init(self, token: str) -> None:  # type: ignore[no-untyped-def]
+        self._token = token  # bare init, no probe
+
+    def fake_close(self) -> None:  # type: ignore[no-untyped-def]
+        return None
+
+    def fake_verify(self) -> None:  # type: ignore[no-untyped-def]
+        return None
+
+    monkeypatch.setattr(PlaudClient, "__init__", fake_init)
+    monkeypatch.setattr(PlaudClient, "close", fake_close)
+    monkeypatch.setattr(PlaudClient, "verify", fake_verify)
+
+    app = create_app(state_root)
+    with TestClient(app) as client:
+        resp = client.post("/api/auth/verify")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["reason"] is None
+    assert body["masked_token"].startswith("secret12")
+
+
 def test_state_reflects_running_sync(state_root: Path) -> None:
     # Pre-seed sync_runs via a separate connection BEFORE the app opens its
     # lifespan-bound connection. WAL mode lets readers see committed writes.
