@@ -7,6 +7,7 @@ import pytest
 
 from plaudsync.ui.config_io import (
     DEFAULT_YAML_TEMPLATE,
+    maybe_seed_default,
     read_config_payload,
     save_config_payload,
 )
@@ -97,3 +98,47 @@ def test_save_does_not_overwrite_on_validation_failure(tmp_path: Path) -> None:
     # Attempt to save broken YAML — must keep good copy
     save_config_payload(tmp_path, "unclassified_dir: relative\nprojects: {}\n")
     assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == good
+
+
+def test_seed_creates_config_yaml_when_missing(tmp_path: Path) -> None:
+    assert not (tmp_path / "config.yaml").exists()
+
+    created = maybe_seed_default(tmp_path)
+
+    assert created is True
+    assert (tmp_path / "config.yaml").exists()
+    text = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    # Substitution applied — no literal ${STATE_ROOT} remains
+    assert "${STATE_ROOT}" not in text
+    # State root path appears in seeded values
+    assert str(tmp_path) in text
+
+
+def test_seed_substitution_produces_loadable_config(tmp_path: Path) -> None:
+    maybe_seed_default(tmp_path)
+
+    # Seeded paths must pass sync-core absolute-path validation
+    payload = read_config_payload(tmp_path)
+    assert payload["parse_error"] is None, payload["parse_error"]
+    assert payload["parsed"] is not None
+    assert "ProjektAlfa" in payload["parsed"]["projects"]
+
+
+def test_seed_is_noop_when_config_present(tmp_path: Path) -> None:
+    existing = "unclassified_dir: /custom\nprojects: {}\n"
+    (tmp_path / "config.yaml").write_text(existing, encoding="utf-8")
+
+    created = maybe_seed_default(tmp_path)
+
+    assert created is False
+    assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == existing
+
+
+def test_seed_returns_false_for_empty_config_yaml(tmp_path: Path) -> None:
+    """Empty file is treated as 'present' — sync-core will surface as parse_error
+    on next read; we don't overwrite user content even if it's blank."""
+    (tmp_path / "config.yaml").write_text("", encoding="utf-8")
+
+    created = maybe_seed_default(tmp_path)
+
+    assert created is False
