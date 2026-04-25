@@ -23,8 +23,14 @@ from plaudsync.path_resolver import _sanitize_folder_name, resolve_target_path
         ("   ", "_unknown"),                         # whitespace only
         ("!!!", "_unknown"),                         # all-punctuation reduces to empty
         ("emoji_🎉_test", "emoji__test"),            # emoji stripped
+        ("..bar", "bar"),                             # leading dots stripped
+        ("..", "_unknown"),                           # only-dots → unknown
+        (".", "_unknown"),                            # single dot → unknown
+        ("..foo..", "foo"),                           # leading + trailing dots
     ],
-    ids=["safe", "slash", "all_illegal", "unicode", "empty", "whitespace", "punct_only", "emoji"],
+    ids=["safe", "slash", "all_illegal", "unicode", "empty", "whitespace",
+         "punct_only", "emoji", "leading_dots", "only_dots", "single_dot",
+         "leading_trailing_dots"],
 )
 def test_sanitize_folder_name(raw: str, expected: str) -> None:
     assert _sanitize_folder_name(raw) == expected
@@ -58,6 +64,22 @@ def test_resolve_matched_not_in_config_uses_unmapped_subdir(tmp_path: Path) -> N
                                       config=config, filename="rec.mp3")
     assert target == tmp_path / "Unclassified" / "_unmapped_ProjektGamma" / "rec.mp3"
     sentry_mock.set_tag.assert_called_with("error_kind", "project_unmapped")
+
+
+def test_resolve_matched_not_in_config_sanitizes_project_name(tmp_path: Path) -> None:
+    # Defense-in-depth: project label from a future non-default classifier
+    # may contain path-traversal chars. _unmapped_<project> must be sanitized.
+    config = _make_config(tmp_path)
+    result = ClassificationResult(
+        status="matched", project="../escape",
+        matched_date=date(2026, 4, 25),
+    )
+    with patch("plaudsync.path_resolver.sentry_sdk"):
+        target = resolve_target_path(result, plaud_folder="Inbox",
+                                      config=config, filename="rec.mp3")
+    # No traversal segment must survive into the path components.
+    assert ".." not in target.parts
+    assert target.parent.parent == config.unclassified_dir
 
 
 def test_resolve_unclassified_uses_sanitized_plaud_folder(tmp_path: Path) -> None:

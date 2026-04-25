@@ -32,7 +32,11 @@ def _sanitize_folder_name(name: str) -> str:
     cleaned = _ILLEGAL_CHARS_RE.sub("_", name)
     cleaned = _NON_PRINTABLE_RE.sub("_", cleaned)
     cleaned = _SUPPLEMENTARY_RE.sub("", cleaned)
-    cleaned = cleaned.strip()
+    # Strip leading/trailing whitespace AND dots. A bare ".." or "." would
+    # collapse into a path-traversal segment on Linux (Windows mkdir refuses,
+    # but the code should be platform-safe). PlaudSync targets Windows today;
+    # this is defense-in-depth.
+    cleaned = cleaned.strip(" .")
     # If after sanitization nothing meaningful remains (only "_" / punctuation /
     # whitespace), substitute placeholder. Use Path-aware predicate: must contain
     # at least one alphanumeric.
@@ -60,7 +64,11 @@ def resolve_target_path(
             "project unmapped — soft fallback into unclassified_dir"
         )
         sentry_sdk.set_tag("error_kind", "project_unmapped")
-        return config.unclassified_dir / f"_unmapped_{result.project}" / filename
+        # Sanitize project name — even though today's regex classifier returns
+        # `[\w ]+?`, a future custom classifier could return path-traversal
+        # chars. Defense-in-depth.
+        safe_project = _sanitize_folder_name(result.project)
+        return config.unclassified_dir / f"_unmapped_{safe_project}" / filename
 
     # status == "unclassified"
     sanitized = _sanitize_folder_name(plaud_folder)
