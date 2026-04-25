@@ -261,6 +261,14 @@ def test_post_sync_start_returns_500_on_other_exit_code(
     assert body["detail"]["exit_code"] == 7
 
 
+def test_csp_header_present_on_api_responses(client: TestClient) -> None:
+    resp = client.get("/api/healthz")
+    csp = resp.headers.get("content-security-policy")
+    assert csp is not None
+    assert "default-src 'self'" in csp
+    assert "connect-src 'self'" in csp
+
+
 def test_state_reflects_running_sync(state_root: Path) -> None:
     # Pre-seed sync_runs via a separate connection BEFORE the app opens its
     # lifespan-bound connection. WAL mode lets readers see committed writes.
