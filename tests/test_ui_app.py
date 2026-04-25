@@ -1,4 +1,9 @@
-"""Integration tests for plaudsync.ui.app FastAPI endpoints."""
+"""Integration tests for plaudsync.ui.app FastAPI endpoints.
+
+TestClient uses an in-process ASGI transport but creates a localhost socket
+under the hood — needs allow_hosts to satisfy pytest-recording's
+--block-network gate.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,6 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from plaudsync.ui.app import create_app
+
+pytestmark = pytest.mark.block_network(allowed_hosts=["127.0.0.1", "localhost"])
 
 
 @pytest.fixture
