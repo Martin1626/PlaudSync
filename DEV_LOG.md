@@ -4,6 +4,60 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — UI frontend implementation plan written
+
+`docs/superpowers/plans/2026-04-25-ui-frontend.md` published. 15 tasks
+transcribing the validated Claude Design prototype (`frontend/PlaudSync UI.html`,
+1222 LoC, 5 scenarios) into a Vite + React 19 + TS strict + Tailwind 4
+project at `frontend/`. Production build copies dist to gitignored
+`src/plaudsync/ui/static/` (umbrella E1/E3) for FastAPI StaticFiles mount.
+
+### Key transcription decisions
+
+- **No global store library** (umbrella D2): app-level toasts + banners
+  via two minimal React Contexts (`ToastsProvider`, `BannersProvider`).
+  Per-component dismiss state stays local with `useState`.
+- **No test framework** in MVP (umbrella E6): verification = TS strict +
+  manual smoke split into Phase 1 (mock-data, this branch) and Phase 2
+  (live backend, after `feat/ui-backend` lands on master).
+- **Dev mock layer gated by `import.meta.env.DEV`**: `dev/MockProvider`
+  seeds TanStack Query cache with prototype `SCENARIOS` so the entire
+  Dashboard + Settings flow is exercisable without a backend.
+  `staleTime: Infinity` in dev keeps mock fresh; production tree-shakes
+  the entire `dev/` directory via Vite dead-code elimination.
+- **CSP-friendly bundle** (umbrella E5): `modulePreload.polyfill: false`
+  in vite.config.ts removes the inline preload script; JetBrains Mono
+  self-hosted via `@fontsource` so `connect-src 'self'` stays strict.
+- **Bundle target ≤ 200 KB gzipped** (umbrella AC #4): `check-bundle-
+  size.mjs` postbuild script warns over budget; W-U2 hard threshold 500
+  KB. Realistic estimate: ~130 KB (React+ReactDOM 45 KB, query 14 KB,
+  router 12 KB, app code ~50 KB).
+
+### Settings spec v0.1 review fixes incorporated
+
+- Gap 1 multi-error: `InlineConfigErrors.tsx` first-inline + `(+N
+  dalších)` `<details>` expansion + click-to-promote.
+- Gap 2 Option A: `AuthVerifyResponse.masked_token` (server-rendered
+  first_8+15dots+last_4); ConnectionPanel implicit-verify on mount.
+- Gap 3: `ConfigResponse.parse_error` surfaces inline + toast on mount.
+- Gap 4: dirty-Reload triggers `window.confirm("Zahodit neuložené
+  změny?")`.
+- Gap 9: textarea `Tab → 2 spaces`, `Shift+Tab → dedent`, `Esc → blur`,
+  hint footer "Tab pro odsazení • Esc pro opuštění editoru".
+
+### Open follow-ups (post-merge, not blockers)
+
+- Dashboard Gap 1 — `_unmapped_<project>` badge variant blocked on
+  backend `RecordingRow.classification_route` field (sync-core spec
+  follow-up; not added to current plan).
+- Dashboard Gap 4 — log viewer modal: deferred to v1.1+. MVP behavior
+  is a toast pointing user to `plaudsync.log` in project dir.
+- Settings Gap 5 — YAML syntax highlight: deferred per spec.
+
+Phase 2 smoke (live-backend ACs) gated on `feat/ui-backend` merge.
+
+---
+
 ## 2026-04-25 — UI backend implementation plan written
 
 `docs/superpowers/plans/2026-04-25-ui-backend.md` published. 19 TDD
