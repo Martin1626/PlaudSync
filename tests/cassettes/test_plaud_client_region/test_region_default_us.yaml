@@ -1,0 +1,15 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept: ['*/*']
+      Authorization: ['<redacted>']
+    method: GET
+    uri: https://api.plaud.ai/file/simple/web?skip=0&limit=1&is_trash=0
+  response:
+    body:
+      string: '{"data_file_list":[]}'
+    headers:
+      Content-Type: [application/json]
+    status: {code: 200, message: OK}
+version: 1

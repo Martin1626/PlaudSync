@@ -1,43 +1,203 @@
-"""HTTP client for Plaud API with injected auth header.
+"""Plaud Cloud API HTTP client.
 
-Scope of this module in the auth feature: constructor + verify(). Other
-methods (list_recordings, download_audio, ...) land in later sync-engine
-features; their shape is intentionally not predetermined here.
+See docs/superpowers/specs/2026-04-25-sync-core-design.md for region
+probe semantics + listing/download interface.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from types import TracebackType
+from typing import Iterator
+from urllib.parse import urlparse
 
 import requests
 
 from plaudsync.auth import PlaudTokenExpired
 
 BASE_URL = "https://api.plaud.ai"
-# Plaud has no dedicated auth-verify endpoint (reverse-engineered API). We reuse
-# /file/simple/web — the same lightweight file-list endpoint that plaud-api
-# (arbuzmell/plaud-api) uses for web-style listings. 401 response on invalid
-# token is deterministic; we ignore the response body on 2xx.
-VERIFY_PATH = "/file/simple/web"
+
+
+@dataclass(frozen=True)
+class RecordingMeta:
+    """Normalised metadata for a single Plaud recording."""
+
+    plaud_id: str
+    title: str
+    created_at: str          # ISO 8601
+    start_time_ms: int
+    duration_seconds: int
+    file_size: int
+    plaud_folder: str
+
+    @classmethod
+    def from_raw(cls, raw: dict) -> "RecordingMeta":
+        plaud_id = raw.get("id") or raw.get("file_id") or ""
+        title = raw.get("file_name") or raw.get("filename") or raw.get("title") or ""
+        start_time_ms = raw.get("start_time")
+        if start_time_ms is None and "created_at" in raw:
+            iso = raw["created_at"].replace("Z", "+00:00")
+            start_time_ms = int(datetime.fromisoformat(iso).timestamp() * 1000)
+        if start_time_ms is None:
+            start_time_ms = 0
+        duration_ms = raw.get("duration_ms")
+        if duration_ms is None and "duration_seconds" in raw:
+            duration_ms = raw["duration_seconds"] * 1000
+        duration_seconds = (duration_ms or 0) // 1000
+        file_size = raw.get("filesize") or raw.get("file_size") or 0
+        plaud_folder = raw.get("filetag_id")
+        if not plaud_folder and raw.get("tag_ids"):
+            plaud_folder = raw["tag_ids"][0]
+        return cls(
+            plaud_id=plaud_id,
+            title=title,
+            created_at=datetime.fromtimestamp(start_time_ms / 1000, tz=timezone.utc).isoformat(),
+            start_time_ms=start_time_ms,
+            duration_seconds=duration_seconds,
+            file_size=file_size,
+            plaud_folder=plaud_folder or "_unknown",
+        )
+
+
+class PlaudRegionProbeFailed(Exception):
+    """Region probe response shape did not match either expected pattern."""
+
+
+class PlaudDownloadCorrupted(Exception):
+    """Downloaded body size or hash does not match metadata."""
 
 
 class PlaudClient:
     def __init__(self, token: str) -> None:
+        self._token = token
         self._session = requests.Session()
         self._session.headers["Authorization"] = f"Bearer {token}"
+        self._base_url = BASE_URL
+        self._region_probe()
+
+    def _region_probe(self) -> None:
+        url = f"{self._base_url}/file/simple/web"
+        resp = self._session.get(url, params={"skip": 0, "limit": 1, "is_trash": 0})
+        if resp.status_code == 401:
+            raise PlaudTokenExpired(
+                "Plaud API rejected token - re-paste from browser localStorage.tokenstr"
+            )
+        resp.raise_for_status()
+        body = resp.json()
+
+        # Branch A: region mismatch redirect
+        if isinstance(body, dict) and body.get("status") == -302:
+            data = body.get("data") or {}
+            domains = data.get("domains") or {}
+            api = domains.get("api")
+            if not api:
+                raise PlaudRegionProbeFailed(
+                    f"region redirect missing api domain: {body!r}"
+                )
+            # SSRF guard: refuse redirects to anything that isn't a plaud.ai
+            # subdomain over https. The token would otherwise be sent to the
+            # attacker-controlled host on the next request.
+            parsed = urlparse(api)
+            if parsed.scheme != "https" or not (
+                parsed.hostname == "plaud.ai"
+                or (parsed.hostname or "").endswith(".plaud.ai")
+            ):
+                raise PlaudRegionProbeFailed(
+                    f"refusing region redirect to non-plaud host: scheme={parsed.scheme}"
+                )
+            self._base_url = api
+            return
+
+        # Branch B: default region (data_file_list present)
+        if isinstance(body, dict) and "data_file_list" in body:
+            return
+
+        # Branch C: unexpected shape
+        raise PlaudRegionProbeFailed(
+            f"region probe unexpected response shape: keys={list(body.keys()) if isinstance(body, dict) else type(body).__name__}"
+        )
+
+    def list_recordings(self, since: str | None = None) -> Iterator[RecordingMeta]:
+        """Yield RecordingMeta for all recordings, newest first.
+
+        Paginates using offset (skip/limit) until the API returns an empty page.
+        If *since* is provided (ISO 8601), iteration stops as soon as a recording
+        with start_time_ms <= since_ms is encountered — Plaud returns results
+        descending by start_time so no older records follow.
+        """
+        since_ms: int | None = None
+        if since is not None:
+            iso = since.replace("Z", "+00:00")
+            since_ms = int(datetime.fromisoformat(iso).timestamp() * 1000)
+
+        skip = 0
+        page_size = 50
+        while True:
+            url = f"{self._base_url}/file/simple/web"
+            resp = self._session.get(
+                url, params={"skip": skip, "limit": page_size, "is_trash": 0}
+            )
+            if resp.status_code == 401:
+                raise PlaudTokenExpired("token rejected mid-listing")
+            resp.raise_for_status()
+            body = resp.json()
+            page = body.get("data_file_list") or []
+            if not page:
+                return
+            for raw in page:
+                meta = RecordingMeta.from_raw(raw)
+                if since_ms is not None and meta.start_time_ms <= since_ms:
+                    # API returns desc by start_time → stop entire iteration.
+                    return
+                yield meta
+            skip += page_size
+
+    def download_audio(self, recording_id: str) -> Iterator[bytes]:
+        """Two-step download: temp-url JSON → S3 stream.
+
+        No Authorization header on S3 (signature in URL). Caller is
+        responsible for size verification via RecordingMeta.file_size.
+        """
+        # Step 1: get presigned URL
+        url = f"{self._base_url}/file/temp-url/{recording_id}"
+        resp = self._session.get(url)
+        resp.raise_for_status()
+        body = resp.json()
+        presigned = (
+            body.get("temp_url")
+            or body.get("tempUrl")
+            or body.get("url")
+            or body.get("downloadUrl")
+        )
+        if not presigned:
+            raise PlaudDownloadCorrupted(
+                f"missing temp URL in response: {list(body.keys())}"
+            )
+
+        # SSRF guard: presigned URL must be https. Legitimate S3 presigned
+        # URLs never need a redirect — disable them so a 302 from a malicious
+        # host can't chain further.
+        if urlparse(presigned).scheme != "https":
+            raise PlaudDownloadCorrupted("presigned URL must use https")
+
+        # Step 2: stream from S3 (no auth header)
+        s3_session = requests.Session()  # fresh session — no Authorization header
+        with s3_session.get(presigned, stream=True, allow_redirects=False) as audio_resp:
+            audio_resp.raise_for_status()
+            for chunk in audio_resp.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
 
     def verify(self) -> None:
         """Pre-flight check against the Plaud API.
 
-        - HTTP 2xx -> return None.
+        Re-issues the region probe. Success means token + region OK.
+        - HTTP 2xx + known shape -> return None.
         - HTTP 401 -> raise PlaudTokenExpired.
-        - Other    -> propagates requests.HTTPError (maps to generic exit 1).
+        - Unexpected shape -> raise PlaudRegionProbeFailed.
+        - Other HTTP error -> propagates requests.HTTPError (maps to generic exit 1).
         """
-        response = self._session.get(f"{BASE_URL}{VERIFY_PATH}")
-        if response.status_code == 401:
-            raise PlaudTokenExpired(
-                "Plaud API rejected token - re-paste from browser localStorage.tokenstr"
-            )
-        response.raise_for_status()
+        self._region_probe()
 
     def close(self) -> None:
         self._session.close()

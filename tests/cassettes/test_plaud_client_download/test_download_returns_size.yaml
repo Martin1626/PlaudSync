@@ -1,0 +1,31 @@
+interactions:
+- request:
+    body: null
+    headers: {Authorization: ['<redacted>']}
+    method: GET
+    uri: https://api.plaud.ai/file/simple/web?skip=0&limit=1&is_trash=0
+  response:
+    body: {string: '{"data_file_list":[]}'}
+    headers: {Content-Type: [application/json]}
+    status: {code: 200, message: OK}
+- request:
+    body: null
+    headers: {Authorization: ['<redacted>']}
+    method: GET
+    uri: https://api.plaud.ai/file/temp-url/rec_xyz
+  response:
+    body: {string: '{"temp_url":"https://s3.example.com/rec_xyz.mp3?sig=abc"}'}
+    headers: {Content-Type: [application/json]}
+    status: {code: 200, message: OK}
+- request:
+    body: null
+    headers: {}
+    method: GET
+    uri: https://s3.example.com/rec_xyz.mp3?sig=abc
+  response:
+    body: {string: 'short'}
+    headers:
+      Content-Type: [audio/mpeg]
+      Content-Length: ['5']
+    status: {code: 200, message: OK}
+version: 1

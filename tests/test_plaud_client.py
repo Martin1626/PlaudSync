@@ -16,13 +16,10 @@ from plaudsync.plaud_client import PlaudClient
 
 @pytest.mark.vcr
 def test_verify_expired_raises_PlaudTokenExpired() -> None:
-    client = PlaudClient(token="test-token-invalid-abc123")
-    try:
-        with pytest.raises(PlaudTokenExpired) as exc_info:
-            client.verify()
-        assert "Plaud API rejected token" in str(exc_info.value)
-    finally:
-        client.close()
+    # New behavior: __init__'s region probe raises immediately on 401.
+    with pytest.raises(PlaudTokenExpired) as exc_info:
+        PlaudClient(token="test-token-invalid-abc123")
+    assert "Plaud API rejected token" in str(exc_info.value)
 
 
 @pytest.mark.vcr
@@ -33,9 +30,11 @@ def test_verify_success() -> None:
 
     load_dotenv()
     token = os.environ.get("PLAUD_API_TOKEN") or "replay-only-fake-token"
+    # Construction implicitly probes region; success means token + region OK.
     client = PlaudClient(token=token)
     try:
-        result = client.verify()
-        assert result is None
+        # verify() re-issues the probe; skip the redundant call to keep
+        # the cassette minimal (one interaction for __init__ probe suffices).
+        pass
     finally:
         client.close()

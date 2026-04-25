@@ -1,0 +1,50 @@
+interactions:
+- request:
+    body: null
+    headers: {Authorization: ['<redacted>']}
+    method: GET
+    uri: https://api.plaud.ai/file/simple/web?skip=0&limit=1&is_trash=0
+  response:
+    body: {string: '{"data_file_list":[]}'}
+    headers: {Content-Type: [application/json]}
+    status: {code: 200, message: OK}
+- request:
+    body: null
+    headers: {Authorization: ['<redacted>']}
+    method: GET
+    uri: https://api.plaud.ai/file/simple/web?skip=0&limit=50&is_trash=0
+  response:
+    body:
+      string: '{"data_file_list":[{"id":"rec_001","file_name":"<redacted-title>","start_time":1714000000000,"duration_ms":3600000,"filesize":33,"filetag_id":"folder1"}]}'
+    headers: {Content-Type: [application/json]}
+    status: {code: 200, message: OK}
+- request:
+    body: null
+    headers: {Authorization: ['<redacted>']}
+    method: GET
+    uri: https://api.plaud.ai/file/simple/web?skip=50&limit=50&is_trash=0
+  response:
+    body: {string: '{"data_file_list":[]}'}
+    headers: {Content-Type: [application/json]}
+    status: {code: 200, message: OK}
+- request:
+    body: null
+    headers: {Authorization: ['<redacted>']}
+    method: GET
+    uri: https://api.plaud.ai/file/temp-url/rec_001
+  response:
+    body: {string: '{"temp_url":"https://s3.example.com/rec_001.mp3?sig=z"}'}
+    headers: {Content-Type: [application/json]}
+    status: {code: 200, message: OK}
+- request:
+    body: null
+    headers: {}
+    method: GET
+    uri: https://s3.example.com/rec_001.mp3?sig=z
+  response:
+    body: {string: 'AAAABBBBCCCCDDDD<truncated_audio>'}
+    headers:
+      Content-Type: [audio/mpeg]
+      Content-Length: ['33']
+    status: {code: 200, message: OK}
+version: 1

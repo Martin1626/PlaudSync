@@ -49,6 +49,12 @@ Thumbs.db
 .DS_Store
 desktop.ini
 
+# Sync-core state — outside repo (PLAUDSYNC_STATE_ROOT user-chosen)
+*.db
+*.db-wal
+*.db-shm
+config.yaml
+
 # Project-specific: downloaded recordings (local only, never commit)
 /recordings/
 /downloads/

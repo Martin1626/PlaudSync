@@ -4,6 +4,136 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — Sync core code review: 3 hardening fixes + 2 deviation notes
+
+Independent code-reviewer agent run proti `feat/sync-core` (HEAD `a8ab7d2`)
+vrátil APPROVED_WITH_FIXES. Aplikováno v commitu `abf4a57`:
+
+**Hardening (Important):**
+- I-1: `_region_probe` allowlist `https://*.plaud.ai` — bez guardu by attacker
+  schopný falšovat API odpověď přesměroval `_base_url` na vlastní host a token
+  by tekl na další request.
+- I-2: `download_audio` vynucuje `https://` na presigned URL + `allow_redirects=False`
+  na S3 leg. Legitimní S3 presigned URL nikdy nepotřebují redirect.
+- I-3: `_process_recording` unlinkuje partial file na jakoukoli mid-stream
+  exception (předtím jen na size mismatch). Bránění UI/file watcheru zobrazit
+  half-recording s real-looking name.
+
+**Documented deviations (no fix):**
+- I-9: `__main__.py:94-96` přidal `FileNotFoundError → exit 7` handler nad rámec
+  spec. Důvod: `load_config` raisí FileNotFoundError když chybí config.yaml,
+  ne ConfigValidationError. Beneficial deviation — uživatel dostane stejný
+  exit 7 místo opaque exit 1. Ponechano.
+- M-8: `sync.py:62-66` Sentry `recording_failed` capture vynechal
+  `set_context("sync_run", {"run_id": ..., "trigger": ...})` per spec line 506-507.
+  Trigger není v `run_sync` scope u failure pointu — vyžadovalo by threading.
+  Defer do follow-up; má-li triage nedostatečnou kontext info, doplnit pak.
+
+Cassette M-6: `test_sync_happy_path_*` body měl unscrubbed title
+`"04-25 Test: meeting"` — přepsáno na `"<redacted-title>"`.
+
+Branch po fixech: 79/79 testů zelených (5 nových testů pro hardening).
+
+---
+
+## 2026-04-25 — Sync core implementation plan written
+
+`docs/superpowers/plans/2026-04-25-sync-core.md` published. 16 TDD
+tasks covering 8 new modules + 4 modifications. Endpoint discovery
+(5 community Plaud clients reverse-engineered) embedded as appendix
+in spec.
+
+Key decisions confirmed by discovery:
+- `since` filter is **client-side** (Plaud has no server-side `since`);
+  iterator stops early on first older record (desc by start_time).
+- `plaud_folder` is a **UUID** (`filetag_id` / `tag_ids[0]`), not a
+  display name. v0 ships UUIDs; v1 brainstorm resolves UUID → name.
+- Audio download: temp-url JSON → S3 presigned URL (no auth header on
+  S3). Two-step pattern.
+
+Branch: `feat/sync-core` (created from master at start of Task 1).
+
+---
+
+## 2026-04-25 — Settings spec v0 → v0.1: review fixes applied
+
+Independent code-reviewer agent run proti `2026-04-25-settings-screen-design.md` v0 (commit 340913a) vrátil 5 must-fix items + 8 minor nits. Vše opraveno v jednom revisi commitu.
+
+**Must-fix:**
+
+1. **Gap 2 flipped C → A.** v0 doporučovala "frontend constant 20 dots" (Option C), což je regression proti UI architecture umbrella line 841 (která depictuje real masked token `eyJ•••AbcD`). v0.1 specifies Option A: backend computes mask `first_8 + "•"×15 + last_4` server-side, returns v `AuthVerifyResponse.masked_token`. JWT header bytes nejsou PII, separation of concerns (config endpoint nesmí cross-couplovat auth state). Settings mount triggers implicit verify to populate.
+2. **D8 DEFAULT_YAML seed paths rewritten** — v0 měl `D:\Recordings\...` placeholders co fail config validation na machine without `D:\`. v0.1 uses `${STATE_ROOT}\Recordings\...` per Gap 7 reasoning + dokumentuje literal `${STATE_ROOT}` substitution rule.
+3. **Gap 1 promoted recommend → decided.** v0 mělo Gap 1 jako "recommend" ale AC #8 testovala jako decided spec. v0.1 spec decides definitive UX: first error inline + trailing button "(+N dalších chyb)" + click expands `<details>` list + click on item promotes to current (gutter highlight switches).
+4. **Gap 9 added: textarea Tab key behavior.** Plain `<textarea>` Tab moves focus, breaking YAML indent edit. Decision: `onKeyDown` interceptor inserts 2 spaces (Shift+Tab dedents); Esc blurs textarea jako keyboard nav escape hatch. ~15 LoC.
+5. **D11 added: privacy discipline note** per CLAUDE.md "never inline business labels in messages". Forbidden patterns + grep-able acceptance criterion (#19).
+
+**Minor nits applied:**
+
+- Gap 10 added: gutter perf with large configs (memoize line-number array; 500-line cap in Out of scope; aria-hidden on gutter).
+- DEFAULT_YAML auto-seed promoted from Open question to **cross-spec impact item** — sync-core spec needs v0.3 revision (auto-seed in `config.load_config()` + `${STATE_ROOT}` substitution rule + parent mkdir for seed paths).
+- LoC budget phrasing fixed ("90 % slack" → "~90 LoC headroom").
+- AC expanded 16 → 20: auto-verify mount, multi-error promote-to-current, Tab indent, gutter perf, privacy grep.
+- TS type fixed: `masked_token` removed from `ConfigResponse`, added to `AuthVerifyResponse`.
+
+**Verdict:** review verdict was APPROVE WITH MINOR FIXES; v0.1 ships all must-fixes + relevant nits. No spec-blocking gaps remain.
+
+**Process note:** code-reviewer agent surfaced exactly the kind of cross-spec contradictions writer's-eyes miss (v0 had `masked_token` v ConfigResponse TS type which contradicts both umbrella spec and the spec's own Gap 2 recommendation). Confirms value of independent review pass after spec writing — formalize jako step v writing-specs cycle pro umbrella+per-screen specs.
+
+---
+
+## 2026-04-25 — Settings screen spec: extracted from prototype + review delta
+
+Companion k Dashboard specu (zápis níže). Stejný `frontend/PlaudSync UI.html` prototype obsahuje i Settings screen (ConnectionPanel + ConfigPanel + YamlEditor) — extracted contract proti UI architecture umbrella v0.2 + sync-core v0.2 (config.py + ConfigParseError) + auth design (PlaudTokenMissing/Expired).
+
+Output: `docs/superpowers/specs/2026-04-25-settings-screen-design.md`. Sekce:
+
+- **10 design decisions extracted** (D1–D10): layout (ConnectionPanel above ConfigPanel), token display contract (masked, "z .env" chip, hint blok), verify button state machine (idle/verifying/success/error 5 states), ConfigPanel header + Save/Reload + line counter, YamlEditor gutter+textarea+inline error footer (scroll-sync, 13/20px JetBrains Mono metrics, line highlight on error), Save button state machine, Reload behavior, DEFAULT_YAML seed template, banner derivation v Settings (token-expired surface), full localization string lock contract.
+- **Component tree** s LoC budget odhadem (~300 LoC pro Settings subset; combined Dashboard + Settings ~910 — within 500–1000 budget, 90% slack).
+- **TS types mirror Pydantic + auth** (ConfigResponse, ConfigSaveResponse union, ConfigSaveErrors, AuthVerifyResponse, ConfigParseError).
+- **Public hooks** signatures (useConfig, useSaveConfig, useVerifyAuth) s TanStack Query 422-handling note (PUT /api/config 422 throws via fetch wrapper, vs auth verify 200+ok=false structural-result pattern).
+- **8 gaps** (review delta) — 3 s decision, 5 deferred do implementation cyklu:
+  - Gap 1: Multi-error 422 — prototype shows only first; recommend first inline + "(+N dalších)" hint with click-to-expand modal.
+  - Gap 2: Token masking — frontend hardcoded vs backend-rendered? Recommend Option C (frontend constant 20 dots + "z .env" chip; no PII surfaced).
+  - Gap 3: Inline parse error from GET /api/config (existing broken config on mount) — UI must immediately surface; mount effect.
+  - Gap 4: Reload silently discards local edits (recommend native `confirm()` if dirty).
+  - Gap 5: Plain textarea, no syntax highlight / auto-indent / bracket pair (skip for MVP, ~30–80 KB cost not worth).
+  - Gap 6: Save always-enabled, no dirty detection (acceptable v0).
+  - Gap 7: DEFAULT_YAML seed — sync-core auto-creates vs user manual? Cross-spec note for sync-core impl: auto-create v config.load_config + relax parent-must-exist for seed.
+  - Gap 8: PUT /api/config 422 vs auth verify 200+ok=false convention split — document v client.ts wrapper.
+
+**Open questions (for implementation cycle):** masked_token placement (verify response / config response / frontend constant — default C), multi-error display (first-only with hint vs all-listed), reload confirm dialog UX (native vs custom modal vs silent), DEFAULT_YAML seed location (sync-core vs UI backend — cross-spec impl decision), save dirty disable (always-enabled vs disabled-when-clean).
+
+**Implementation gating:** Settings frontend writing-plans čeká na sync-core impl (Config + ConfigParseError) + UI backend impl (ConfigResponse shape) + Dashboard spec (companion, already shipped at 49c8e4e). Sequence unchanged: sync-core impl (in progress, 7cd5885 latest) → UI backend plan → UI backend impl → Frontend plan (Dashboard + Settings combined) → Frontend impl.
+
+**Process note:** stejný extracted-from-prototype workflow jako Dashboard. User design je hotový v prototype; spec je contract + review findings + acceptance criteria, ne re-design. Brainstorming skill záměrně neinvokován (žádné design rozhodnutí k prozkoumání).
+
+---
+
+## 2026-04-25 — Dashboard screen spec: extracted from prototype + review delta
+
+User měl Dashboard design hotový v Claude Design prototype (`frontend/PlaudSync UI.html`, commit 1ea6bd3 — 1222 LoC HTML+React+Tailwind, 5 plně funkčních scenarios + ConnectionLostOverlay + 12 sample recordings). Místo brainstormu od nuly proběhl **review** prototype proti UI architecture umbrella v0.2 + sync-core v0.2 specs.
+
+Output: `docs/superpowers/specs/2026-04-25-dashboard-screen-design.md`. Sekce:
+
+- **10 design decisions extracted** (D1–D10): layout, SyncNowPanel 6 states, RecordingsList row format, ProjectBadge color taxonomy, SyncStatusBadge 5 states, BannerStack derivation rules, Toast triggers, ConnectionLostOverlay terminal error UX, live recordings list during sync, polling cadence (5s idle / 1.5s running).
+- **Component tree** s LoC budget odhadem (~610 LoC pro Dashboard subset, total frontend ~810 — within UI umbrella 500-1000 budget).
+- **TS types mirror Pydantic** (StateResponse, RecordingRow, SyncState, SyncProgress, ClassificationStatus, RecordingStatus).
+- **Public hooks** signatures (useStateQuery, useStartSync) s TanStack Query polling pattern.
+- **7 gaps** (review delta) — 3 s decision, 4 deferred do implementation cyklu:
+  - Gap 1: `_unmapped_<project>` not visually distinct → add 3rd badge variant nebo `classification_route` field (open).
+  - Gap 2: `plaud_folder` is UUID v0 (sync-core spec confirms), prototype mock shows readable strings (real production data won't match).
+  - Gap 3: `target_dir` not displayed (acceptable v0; tooltip on ProjectBadge as Phase 2).
+  - Gap 4: "Zobrazit log" action behavior undefined (4 options A/B/C/D, default C = toast pointing to file).
+  - Gap 5: Loading state during cold start (skeleton vs spinner — pick during impl).
+  - Gap 6: Live recordings no animation (acceptable v0).
+  - Gap 7: Banner dismissal across sessions (acceptable v0; localStorage-backed if feedback needs).
+
+**Open questions (for implementation cycle):** classification_route field design, log action behavior, loading skeleton vs spinner, UUID truncation in plaud_folder display.
+
+**Implementation gating:** Dashboard frontend writing-plans čeká na sync-core impl (Pydantic shapes) + Settings spec + UI backend writing-plans + impl. Sequence: sync-core impl → Settings review → UI backend plan → UI backend impl → Frontend plan (Dashboard + Settings combined) → Frontend impl.
+
+---
+
 ## 2026-04-25 — Categorization implementation: regex-only classifier shipped
 
 Implementation execution of `docs/superpowers/plans/2026-04-25-categorization.md` via subagent-driven-development. 9 commits on master (Tasks 1–9).

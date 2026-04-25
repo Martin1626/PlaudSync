@@ -70,13 +70,55 @@ def _release_tag() -> str:
     return f"plaudsync@{__version__}"
 
 
-def run_sync() -> int:
-    """Placeholder — implement sync pipeline in follow-up Plan-Mode sessions.
+def _detect_trigger() -> str:
+    return os.getenv("PLAUDSYNC_TRIGGER", "task_scheduler")
 
-    Returns exit code (0 = success, non-zero = failure).
-    """
-    logger.info("run_sync() is a placeholder; implement in follow-up feature work.")
-    return 0
+
+def run_sync_pipeline() -> int:
+    from plaudsync.auth import load_token
+    from plaudsync.classifier import DefaultBucketClassifier
+    from plaudsync.config import ConfigValidationError, load_config
+    from plaudsync.locking import SyncLock, SyncLockHeld
+    from plaudsync.plaud_client import PlaudClient, PlaudRegionProbeFailed
+    from plaudsync.state import open_state
+    from plaudsync.sync import run_sync as orchestrate_sync
+
+    state_root_str = os.getenv("PLAUDSYNC_STATE_ROOT")
+    if not state_root_str:
+        logger.error("PLAUDSYNC_STATE_ROOT not set")
+        raise SystemExit(7)
+    state_root = Path(state_root_str)
+
+    try:
+        config = load_config(state_root)
+    except FileNotFoundError as e:
+        logger.error("config.yaml not found in state_root")
+        raise SystemExit(7) from e
+    except ConfigValidationError as e:
+        logger.error("config invalid: {n} errors", n=len(e.args[0]))
+        _capture_sentry(e, fingerprint="config_validation_error", kind="config_validation_error")
+        raise SystemExit(7) from e
+
+    lock_path = state_root / ".plaudsync" / "sync.lock"
+    try:
+        with SyncLock(lock_path):
+            token = load_token()
+            conn = open_state(state_root)
+            try:
+                with PlaudClient(token) as client:
+                    return orchestrate_sync(
+                        client, DefaultBucketClassifier(), conn, config,
+                        trigger=_detect_trigger(),
+                    )
+            finally:
+                conn.close()
+    except SyncLockHeld:
+        logger.info("skipping run, previous sync still active")
+        raise SystemExit(5)
+    except PlaudRegionProbeFailed as e:
+        logger.exception("plaud region probe failed")
+        _capture_sentry(e, fingerprint="plaud_region_probe_failed", kind="plaud_region_probe_failed")
+        raise SystemExit(6) from e
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -119,13 +161,14 @@ def main() -> int:
 
     try:
         args = _parse_args(sys.argv[1:])
-        token = load_token()
-        with PlaudClient(token) as client:
-            client.verify()
-            if args.command == "verify":
-                logger.info("Verify-only subcommand: token OK, exiting.")
-                raise SystemExit(0)
-            return run_sync()
+        if args.command == "verify":
+            token = load_token()
+            with PlaudClient(token) as client:
+                client.verify()
+            logger.info("Verify-only subcommand: token OK, exiting.")
+            raise SystemExit(0)
+        # Default: run sync pipeline
+        return run_sync_pipeline()
     except PlaudTokenExpired as e:
         logger.error("Plaud token rejected: {msg}", msg=str(e))
         _capture_sentry(e, fingerprint="plaud_token_expired", kind="plaud_token_expired")
@@ -134,6 +177,8 @@ def main() -> int:
         logger.error("Plaud token missing: {msg}", msg=str(e))
         _capture_sentry(e, fingerprint="plaud_token_missing", kind="plaud_token_missing")
         raise SystemExit(3) from e
+    except SystemExit:
+        raise
     except Exception:
         logger.exception("Sync failed with uncaught exception.")
         raise

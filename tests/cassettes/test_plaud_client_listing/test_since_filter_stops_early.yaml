@@ -1,0 +1,24 @@
+interactions:
+- request:
+    body: null
+    headers: {Authorization: ['<redacted>']}
+    method: GET
+    uri: https://api.plaud.ai/file/simple/web?skip=0&limit=1&is_trash=0
+  response:
+    body: {string: '{"data_file_list":[]}'}
+    headers: {Content-Type: [application/json]}
+    status: {code: 200, message: OK}
+- request:
+    body: null
+    headers: {Authorization: ['<redacted>']}
+    method: GET
+    uri: https://api.plaud.ai/file/simple/web?skip=0&limit=50&is_trash=0
+  response:
+    body:
+      string: '{"data_file_list":[
+        {"id":"new1","file_name":"New1","start_time":1700000010000,"duration_ms":1000,"filesize":100,"filetag_id":"f"},
+        {"id":"new2","file_name":"New2","start_time":1700000009000,"duration_ms":1000,"filesize":100,"filetag_id":"f"},
+        {"id":"old1","file_name":"Old1","start_time":1700000005000,"duration_ms":1000,"filesize":100,"filetag_id":"f"}]}'
+    headers: {Content-Type: [application/json]}
+    status: {code: 200, message: OK}
+version: 1

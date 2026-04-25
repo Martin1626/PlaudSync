@@ -9,10 +9,39 @@
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 from typing import Any
 
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# Title / filename scrubber for cassette bodies
+# ---------------------------------------------------------------------------
+
+_TITLE_KEYS = ("file_name", "filename", "title", "recording_title")
+_TITLE_RE = re.compile(
+    r'"(?P<key>' + "|".join(_TITLE_KEYS) + r')"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"'
+)
+
+
+def _scrub_titles_in_body(body_str: str | bytes) -> str | bytes:
+    """Replace title-ish JSON values with <redacted-title> sentinel.
+
+    Cassette files commit-friendly: any real recording title from a
+    re-record run gets normalized.  Handles both str and bytes bodies
+    (VCR.py delivers bytes during replay from YAML cassettes).
+    """
+    was_bytes = isinstance(body_str, bytes)
+    text = body_str.decode("utf-8", errors="replace") if was_bytes else body_str
+
+    def _replace(match: re.Match[str]) -> str:
+        return f'"{match.group("key")}": "<redacted-title>"'
+
+    result = _TITLE_RE.sub(_replace, text)
+    return result.encode("utf-8") if was_bytes else result
 
 
 # ---------------------------------------------------------------------------
@@ -62,5 +91,15 @@ def _redact_response(response: dict[str, Any]) -> dict[str, Any]:
     for name in ("Set-Cookie", "set-cookie", "Authorization", "authorization"):
         if name in headers:
             headers[name] = ["<redacted>"]
-    # Body truncation / scrubbing happens per-endpoint as needed; keep a hook here.
+    body = response.get("body") or {}
+    if "string" in body and "Content-Type" in (response.get("headers") or {}):
+        ct = (response["headers"].get("Content-Type") or [""])[0]
+        if "json" in ct.lower():
+            body["string"] = _scrub_titles_in_body(body["string"])
+        elif "audio" in ct.lower() and len(body["string"]) > 1024:
+            raw = body["string"]
+            if isinstance(raw, bytes):
+                body["string"] = raw[:1024] + b"<truncated>"
+            else:
+                body["string"] = raw[:1024] + "<truncated>"
     return response
