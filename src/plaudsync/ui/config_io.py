@@ -156,3 +156,22 @@ def save_config_payload(
         raise
 
     return {"ok": True, "parsed": _config_to_dict(config)}
+
+
+def maybe_seed_default(state_root: Path) -> bool:
+    """Write DEFAULT_YAML_TEMPLATE to ${state_root}/config.yaml if absent.
+
+    Substitutes literal ${STATE_ROOT} with str(state_root) before writing
+    so the resulting file passes sync-core's absolute-path validation.
+
+    Returns True when seeded, False when noop (file already exists, even if
+    empty — we never clobber user content).
+    """
+    target = state_root / "config.yaml"
+    if target.exists():
+        return False
+
+    state_root.mkdir(parents=True, exist_ok=True)
+    seeded = DEFAULT_YAML_TEMPLATE.replace("${STATE_ROOT}", str(state_root))
+    target.write_text(seeded, encoding="utf-8")
+    return True
