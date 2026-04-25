@@ -657,20 +657,170 @@ Feature je hotová pokud:
 8. `.gitignore` update'd (`*.db`, `*.db-wal`, `*.db-shm`, `config.yaml`) — `git status` po smoke testu je clean.
 9. **Per-project absolute path test:** YAML s 2 různými projekty na 2 different drives (např. `C:\` a `D:\`), classify mock vrátí matched s odlišným project name → každý recording skutečně landne na correct drive (manual `dir` check).
 
+## API endpoints discovered (Explore agent output, 2026-04-25)
+
+Reverse-engineered from 5 community Plaud clients (`sergivalverde/plaud-toolkit`, `leonardsellem/plaud-sync-for-obsidian`, `iiAtlas/plaud-recording-downloader`, `arbuzmell/plaud-api`, `openplaud/openplaud`). Confidence rating per Explore methodology: **High** = ≥ 2 repos agree on URL+shape, **Medium** = single source.
+
+### Region probe / verify (reused from auth layer)
+
+- **URL:** `GET https://api.plaud.ai/file/simple/web` (or regional)
+- **Headers:** `Authorization: Bearer <token>`
+- **Region detect response (HTTP 200):**
+  ```json
+  {"status": -302, "msg": "user region mismatch",
+   "data": {"domains": {"api": "https://api-euc1.plaud.ai"}}}
+  ```
+- **Default-region response (HTTP 200):** listing payload directly (see "List recordings" below).
+- **Confidence:** High (3 repos).
+
+### List recordings (incremental sync)
+
+- **URL:** `GET {base_url}/file/simple/web?skip=N&limit=50&is_trash=0`
+- **Pagination:** **offset-based** (skip/limit), loop until response array empty. **No cursor, no server-side `since` filter.**
+- **Response (HTTP 200):**
+  ```json
+  {"data_file_list": [
+    {
+      "id": "uuid",                        // also "file_id" alias
+      "file_name": "Title text",           // also "filename", "title" aliases
+      "start_time": 1705318200000,         // epoch milliseconds (preferred)
+      "created_at": "2024-01-15T10:30:00Z", // ISO 8601 (alias)
+      "duration_ms": 3600000,              // also "duration_seconds" alias
+      "filesize": 52428800,                // also "file_size" alias (bytes)
+      "is_trash": 0,
+      "is_trans": 1, "is_summary": 1,
+      "tag_ids": ["tag_uuid"],             // OR
+      "filetag_id": "tag_uuid"             // single tag (folder)
+    }
+  ]}
+  ```
+- **Folder name field:** **Plaud returns only `filetag_id` / `tag_ids` UUIDs, NOT folder display names.** Display names live in a separate (un-discovered) endpoint, likely `GET /tag/list` or similar. **Implication for v0:** `RecordingMeta.plaud_folder` carries the **UUID string**, path_resolver sanitizes UUID into a folder name (deterministic but human-unfriendly). Resolving UUID → display name is **deferred to v1** (separate brainstorm).
+- **Confidence:** High (4 repos).
+
+### Get single recording detail
+
+- **URL:** `GET {base_url}/file/detail/{file_id}`
+- **Response:** Full metadata + `pre_download_content_list` array with presigned S3 URLs for transcript / summary / audio (alternative to `/file/temp-url`).
+- **Confidence:** High (3 repos).
+- **v0 usage:** **Not used by sync core.** v0 sync only needs listing + audio. Detail endpoint reserved for future transcript download feature.
+
+### Download audio
+
+- **URL:** `GET {base_url}/file/temp-url/{file_id}` (optional `?is_opus=false`)
+- **Headers:** `Authorization: Bearer <token>`
+- **Response (HTTP 200):**
+  ```json
+  {"temp_url": "https://s3-bucket.amazonaws.com/file.mp3?X-Amz-Signature=..."}
+  ```
+  Field aliases observed: `temp_url`, `tempUrl`, `url`, `downloadUrl` (fallback chain).
+- **Mechanism:** Plaud returns JSON with **S3 presigned URL**. Client GETs the S3 URL **without `Authorization` header** (signature embedded in URL).
+- **Confidence:** High (3 repos).
+- **v0 implementation:** `download_audio()` does TWO requests: (1) GET temp-url → JSON → extract URL; (2) GET S3 URL with `stream=True` → yield chunks. No Authorization header on (2).
+
+### Alternative direct download (fallback)
+
+- **URL:** `GET {base_url}/file/download/{file_id}`
+- **Response:** Binary stream (Plaud proxies S3).
+- **Confidence:** Medium (1 repo).
+- **v0 usage:** Not used. Reserved as fallback if `/file/temp-url` returns malformed JSON or empty URL.
+
+### `since` semantics (client-side filtering)
+
+**Critical:** Plaud listing endpoint does **not** accept `since=<timestamp>` server-side. Spec's `list_recordings(since: str | None)` becomes a **client-side filter** inside the iterator:
+
+```python
+def list_recordings(self, since: str | None = None) -> Iterator[RecordingMeta]:
+    skip = 0
+    since_ms = parse_iso(since).timestamp() * 1000 if since else None
+    while True:
+        page = self._get_page(skip=skip, limit=50)
+        if not page:
+            break
+        for raw in page:
+            meta = RecordingMeta.from_raw(raw)
+            if since_ms is not None and meta.start_time_ms <= since_ms:
+                # client-side cutoff — older record, stop iterating entire batch
+                # (server returns desc by start_time so we can break early)
+                return
+            yield meta
+        skip += 50
+```
+
+**Trade-off:** wasted bandwidth on first sync (full list paginated, no incremental advantage on Plaud side). Acceptable: typical user has ≤ 1000 recordings, 1000/50 = 20 page fetches per first sync, then steady-state hourly diff is 0–5 new recordings → 1 page per sync. Future: if Plaud adds server-side filter, swap implementation behind same iterator interface.
+
+**Optimization:** Plaud appears to return desc by `start_time` (per `is_desc=1` typical client default). Iterator can `return` early when first older record encountered (not just `continue`).
+
+### Field aliases — defensive parsing
+
+`RecordingMeta.from_raw(raw_dict)` must handle aliases:
+
+| Field | Primary key | Aliases |
+|-------|-------------|---------|
+| ID | `id` | `file_id` |
+| Title | `file_name` | `filename`, `title` |
+| Start time | `start_time` (ms epoch) | derive `created_at` from this |
+| Duration | `duration_ms` | `duration_seconds` (× 1000) |
+| File size | `filesize` | `file_size` |
+| Folder | `filetag_id` | `tag_ids[0]` if `filetag_id` missing |
+
+Defensive pattern:
+
+```python
+@classmethod
+def from_raw(cls, raw: dict) -> "RecordingMeta":
+    plaud_id = raw.get("id") or raw.get("file_id")
+    title = raw.get("file_name") or raw.get("filename") or raw.get("title", "")
+    start_time_ms = raw.get("start_time")
+    if start_time_ms is None and "created_at" in raw:
+        start_time_ms = int(parse_iso(raw["created_at"]).timestamp() * 1000)
+    duration_ms = raw.get("duration_ms")
+    if duration_ms is None and "duration_seconds" in raw:
+        duration_ms = raw["duration_seconds"] * 1000
+    file_size = raw.get("filesize") or raw.get("file_size") or 0
+    plaud_folder = raw.get("filetag_id")
+    if not plaud_folder and raw.get("tag_ids"):
+        plaud_folder = raw["tag_ids"][0]
+    return cls(
+        plaud_id=plaud_id, title=title,
+        created_at=ms_to_iso(start_time_ms),
+        start_time_ms=start_time_ms,
+        duration_seconds=duration_ms // 1000 if duration_ms else 0,
+        file_size=file_size,
+        plaud_folder=plaud_folder or "_unknown",
+    )
+```
+
+### Rate limiting / retry
+
+- **No `X-RateLimit-*` headers documented** in any reference repo.
+- Reference clients use 3-attempt retry with exponential backoff (300 ms / 1000 ms / 2000 ms) on 5xx / network.
+- `urllib3.Retry` from auth layer suffices.
+
+### Trash / move endpoints (out of v0 scope)
+
+`POST /file/trash/`, `POST /file/update-tags`. Documented for completeness, not used in sync core.
+
+### Tag list endpoint (UNDISCOVERED)
+
+Display names for `filetag_id` UUIDs require an endpoint not present in any inspected client. **v0 ships UUIDs in `plaud_folder`**; v1 brainstorm extends `RecordingMeta` with resolved `plaud_folder_name` after pre-fetching `GET /tag/list` (or whatever is discovered).
+
+### Endpoint summary table
+
+| Endpoint | Method | Used in v0 | Confidence |
+|----------|--------|------------|------------|
+| `/file/simple/web?skip&limit&is_trash` | GET | ✅ list + region probe | High |
+| `/file/temp-url/{id}` | GET | ✅ download audio (returns S3 URL) | High |
+| `/file/detail/{id}` | GET | ❌ (transcript future) | High |
+| `/file/download/{id}` | GET | ❌ (fallback) | Medium |
+| `/auth/access-token` | POST | ❌ (manual paste) | Medium |
+| `/user/me` | GET | ❌ (irrelevant) | Low |
+| `/file/trash/` | POST | ❌ (out of scope) | Low |
+| `/file/update-tags` | POST | ❌ (out of scope) | Low |
+| `/tag/list` (hypothetical) | GET | ❌ (v1 — folder name resolution) | **Undiscovered** |
+
 ## Implementation plan
 
-→ `writing-plans` skill (další krok po user approvalu tohoto spec dokumentu).
-
-**První task writing-plans cyklu = endpoint discovery.** Výstup = appendix "API endpoints discovered" v tomto spec dokumentu s:
-
-- URL pattern + HTTP method pro: region probe / list / download audio / (volitelně) download transcript.
-- Query parametry pagination (`page_size`, `cursor` / `offset` / `since`).
-- Request body (pokud POST) / response body JSON shape (alespoň fields potřebná pro `RecordingMeta`).
-- Known constraints (např. transcript je separate endpoint / component embeded v listing response / …).
-- Pagination semantics (cursor-based vs offset vs since-timestamp).
-- Audio URL: direct (`/file/download/{id}`) vs redirect (`302 → S3 presigned`) vs streamed API.
-
-Bez appendixu writing-plans nemůže pokračovat do TDD (failing tests potřebují znát URL).
+→ `writing-plans` skill — endpoint discovery now embedded above; plan can proceed directly to TDD cycles.
 
 ## Revision history
 

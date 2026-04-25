@@ -4,6 +4,35 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-25 — Categorization + sync-core implementation plans written
+
+Two writing-plans outputs published:
+
+- `docs/superpowers/plans/2026-04-25-categorization.md` — 9 TDD tasks for single-layer regex classifier (~50–70 LoC src + ~150 LoC tests). Includes repo-wide cleanup (drop `anthropic`/`msal`/`deepeval`, remove `tests/evals/`, swap kill criterion #5 from LLM accuracy to regex coverage rate).
+- `docs/superpowers/plans/2026-04-25-sync-core.md` — 16 TDD tasks for sync core (8 new modules + 4 modifications). Pre-baked endpoint discovery appendix in sync-core spec (5 community Plaud clients reverse-engineered by Explore subagent).
+
+### Endpoint discovery (sync-core spec appendix)
+
+Reverse-engineered from `sergivalverde/plaud-toolkit`, `leonardsellem/plaud-sync-for-obsidian`, `iiAtlas/plaud-recording-downloader`, `arbuzmell/plaud-api`, `openplaud/openplaud`. Cross-validated High-confidence endpoints:
+
+- `GET /file/simple/web?skip=N&limit=50&is_trash=0` — listing + region probe (offset pagination).
+- `GET /file/temp-url/{id}` → JSON with `temp_url` (S3 presigned, no auth header on S3).
+
+Two material spec corrections from discovery:
+
+1. **`since` is client-side only** — Plaud listing has no server-side `since` param. Iterator stops early on first older record (Plaud returns desc by `start_time`).
+2. **`plaud_folder` is a UUID** (`filetag_id` / `tag_ids[0]`), not a display name. v0 ships UUIDs through path_resolver sanitization; v1 brainstorm resolves UUID → name via separate (un-discovered) `/tag/list` endpoint.
+
+### Plan execution order recommendation
+
+1. **Categorization plan** first (smaller, no external dependencies, repo cleanup unblocks subsequent work).
+2. **Sync-core plan** second (depends on categorization `ClassificationResult` + auth layer + portalocker).
+3. **UI plan** third (after Claude Design prototype + per-screen brainstorm cycles).
+
+Both plans use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` for execution.
+
+---
+
 ## 2026-04-25 — Cascade: per-project absolute paths
 
 User požadavek: každý projekt má vlastní lokální cílovou cestu, žádný společný kořen (např. ProjektAlfa na `C:\`, ProjektBeta na `D:\`). Tento požadavek vyšel najevo po obdržení Claude Design ZIP prototypu — Settings YAML editor potřeboval konkrétní schema.
