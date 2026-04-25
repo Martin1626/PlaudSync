@@ -45,6 +45,9 @@ _REDACTED_KEYS = frozenset(
         "participants",
         "attendees",
         "plaud_folder",
+        # Sync-core extensions:
+        "local_path",
+        "file_path",
     }
 )
 
