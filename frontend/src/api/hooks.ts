@@ -6,30 +6,40 @@ import {
 
 import {
   fetchConfig,
+  fetchSchedule,
   fetchState,
   postAuthVerify,
   postStartSync,
   putConfig,
+  putSchedule,
 } from "./client";
 import type {
   AuthVerifyResponse,
   ConfigResponse,
   ConfigSaveSuccess,
+  Schedule,
   StartSyncResponse,
   StateResponse,
 } from "./types";
 
 export const STATE_QUERY_KEY = ["state"] as const;
 export const CONFIG_QUERY_KEY = ["config"] as const;
+export const SCHEDULE_QUERY_KEY = ["schedule"] as const;
 
 export function useStateQuery() {
   return useQuery<StateResponse>({
     queryKey: STATE_QUERY_KEY,
     queryFn: fetchState,
     refetchInterval: (query) => {
+      // Pause polling když okno není visible (minimalizované / skryté)
+      // — WebView2 idle CPU klesne na ~0 %. Refresh při návratu fokusu
+      // pak interval znovu nastartuje (refetchOnWindowFocus níže).
+      if (typeof document !== "undefined" && document.hidden) return false;
       const data = query.state.data;
-      return data?.sync.status === "running" ? 1500 : 5000;
+      return data?.sync.status === "running" ? 1500 : 30000;
     },
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     placeholderData: (prev) => prev,
     retry: 3,
     retryDelay: (attempt) => 100 * 2 ** attempt,
@@ -71,5 +81,24 @@ export function useSaveConfig() {
 export function useVerifyAuth() {
   return useMutation<AuthVerifyResponse, Error, void>({
     mutationFn: postAuthVerify,
+  });
+}
+
+export function useSchedule() {
+  return useQuery<Schedule>({
+    queryKey: SCHEDULE_QUERY_KEY,
+    queryFn: fetchSchedule,
+    retry: 3,
+    retryDelay: (attempt) => 100 * 2 ** attempt,
+  });
+}
+
+export function useSaveSchedule() {
+  const qc = useQueryClient();
+  return useMutation<Schedule, Error, Schedule>({
+    mutationFn: putSchedule,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: SCHEDULE_QUERY_KEY });
+    },
   });
 }

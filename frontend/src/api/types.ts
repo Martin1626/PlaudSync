@@ -87,6 +87,23 @@ export interface ConfigSaveErrors {
   errors: ConfigParseError[];
 }
 
+// ---------------- Schedule ----------------
+
+export interface Schedule {
+  work_hours_interval_minutes: number;
+  off_hours_interval_minutes: number;
+  /** ISO weekdays: 1=Mon..7=Sun. */
+  work_days: number[];
+  /** "HH:MM" 24h, local time. */
+  work_from: string;
+  work_to: string;
+}
+
+export interface ScheduleSaveError {
+  /** Free-form field-level message returned by parse_schedule. */
+  message: string;
+}
+
 // ---------------- Sync trigger ----------------
 
 export interface StartSyncResponse {

@@ -3,6 +3,7 @@ import type {
   ConfigParseError,
   ConfigResponse,
   ConfigSaveSuccess,
+  Schedule,
   StartSyncResponse,
   StartSyncConflict,
   StateResponse,
@@ -34,6 +35,15 @@ export class ValidationError extends ApiHttpError {
   constructor(body: { ok: false; errors: ConfigParseError[] }) {
     super(422, body, "Configuration validation failed");
     this.name = "ValidationError";
+    this.errors = body.errors;
+  }
+}
+
+export class ScheduleValidationError extends ApiHttpError {
+  public readonly errors: string[];
+  constructor(body: { ok: false; errors: string[] }) {
+    super(422, body, "Schedule validation failed");
+    this.name = "ScheduleValidationError";
     this.errors = body.errors;
   }
 }
@@ -112,6 +122,33 @@ export async function putConfig(rawYaml: string): Promise<ConfigSaveSuccess> {
         raw && "detail" in raw && raw.detail ? raw.detail : (raw as { ok: false; errors: ConfigParseError[] } | null);
       if (payload && Array.isArray(payload.errors)) {
         throw new ValidationError(payload);
+      }
+    }
+    throw err;
+  }
+}
+
+export function fetchSchedule(): Promise<Schedule> {
+  return fetchJson<Schedule>("/api/schedule");
+}
+
+export async function putSchedule(schedule: Schedule): Promise<Schedule> {
+  try {
+    return await fetchJson<Schedule>("/api/schedule", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(schedule),
+    });
+  } catch (err) {
+    if (err instanceof ApiHttpError && err.status === 422) {
+      const raw = err.body as
+        | { detail?: { ok: false; errors: string[] } }
+        | { ok: false; errors: string[] }
+        | null;
+      const payload =
+        raw && "detail" in raw && raw.detail ? raw.detail : (raw as { ok: false; errors: string[] } | null);
+      if (payload && Array.isArray(payload.errors)) {
+        throw new ScheduleValidationError(payload);
       }
     }
     throw err;

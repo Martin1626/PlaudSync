@@ -2,6 +2,7 @@ import { useConfig } from "@/api/hooks";
 
 import ConfigPanel from "./ConfigPanel";
 import ConnectionPanel from "./ConnectionPanel";
+import SchedulePanel from "./SchedulePanel";
 
 export default function Settings() {
   const { data, isPending, error } = useConfig();
@@ -9,6 +10,7 @@ export default function Settings() {
   return (
     <div className="space-y-5">
       <ConnectionPanel />
+      <SchedulePanel />
       {isPending && !data ? (
         <div className="flex items-center justify-center py-12 bg-white rounded-lg border border-gray-200 shadow-sm">
           <svg

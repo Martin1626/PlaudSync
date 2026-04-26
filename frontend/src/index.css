@@ -70,7 +70,7 @@
 }
 
 @layer utilities {
-  /* YAML editor: line numbers + textarea share metrics */
+  /* YAML editor: line numbers + textarea + overlay <pre> share metrics. */
   .yaml-line-numbers,
   .yaml-textarea {
     font-family:
@@ -83,8 +83,54 @@
   .yaml-textarea {
     caret-color: #2563eb;
   }
-  .yaml-textarea::selection {
-    background: #dbeafe;
+  /* Transparent text on top, syntax-highlighted <pre> below. */
+  .yaml-textarea-transparent {
+    color: transparent;
+    background: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+  .yaml-textarea-transparent::selection {
+    /* Lower alpha so the highlighted text underneath stays legible. */
+    background: rgba(59, 130, 246, 0.28);
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+  .yaml-overlay {
+    color: #1f2937; /* fallback */
+    background: transparent;
+  }
+  /* YAML token colors — calm "GitHub light"-ish palette. */
+  .yh-key {
+    color: #6f42c1;
+    font-weight: 500;
+  }
+  .yh-string {
+    color: #032f62;
+  }
+  .yh-number {
+    color: #b35900;
+  }
+  .yh-bool,
+  .yh-null {
+    color: #d73a49;
+    font-weight: 500;
+  }
+  .yh-var {
+    color: #0a7d3b;
+    background: #f0fdf4;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  .yh-comment {
+    color: #6a737d;
+    font-style: italic;
+  }
+  .yh-punct,
+  .yh-dash {
+    color: #6a737d;
+  }
+  .yh-plain {
+    color: #1f2937;
   }
 }
 

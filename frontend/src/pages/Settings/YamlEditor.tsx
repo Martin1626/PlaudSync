@@ -2,6 +2,7 @@ import { useRef, type KeyboardEvent, type UIEvent } from "react";
 
 import type { ConfigParseError } from "@/api/types";
 import { classNames } from "@/utils/format";
+import { highlightYaml } from "@/utils/yamlHighlight";
 
 import InlineConfigErrors from "./InlineConfigErrors";
 
@@ -25,11 +26,16 @@ export default function YamlEditor({
 }: Props) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const lineNumsRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLPreElement>(null);
   const lines = value.split("\n");
 
   const onScroll = (e: UIEvent<HTMLTextAreaElement>) => {
-    if (lineNumsRef.current) {
-      lineNumsRef.current.scrollTop = e.currentTarget.scrollTop;
+    const top = e.currentTarget.scrollTop;
+    const left = e.currentTarget.scrollLeft;
+    if (lineNumsRef.current) lineNumsRef.current.scrollTop = top;
+    if (overlayRef.current) {
+      overlayRef.current.scrollTop = top;
+      overlayRef.current.scrollLeft = left;
     }
   };
 
@@ -111,6 +117,7 @@ export default function YamlEditor({
       : -1;
 
   const hasError = errors.length > 0;
+  const highlighted = highlightYaml(value);
 
   return (
     <div
@@ -140,17 +147,26 @@ export default function YamlEditor({
             </div>
           ))}
         </div>
-        <textarea
-          ref={taRef}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onScroll={onScroll}
-          onKeyDown={onKeyDown}
-          spellCheck={false}
-          aria-label="Konfigurace YAML"
-          className="yaml-textarea flex-1 py-3 px-3 outline-none resize-none text-gray-800 bg-white"
-          style={{ height: 400 }}
-        />
+        <div className="relative flex-1" style={{ height: 400 }}>
+          <pre
+            ref={overlayRef}
+            aria-hidden="true"
+            className="yaml-textarea yaml-overlay absolute inset-0 py-3 px-3 m-0 overflow-hidden whitespace-pre pointer-events-none"
+            // highlightYaml escapes user content; only token <span> tags are injected.
+            dangerouslySetInnerHTML={{ __html: highlighted }}
+          />
+          <textarea
+            ref={taRef}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onScroll={onScroll}
+            onKeyDown={onKeyDown}
+            spellCheck={false}
+            aria-label="Konfigurace YAML"
+            className="yaml-textarea yaml-textarea-transparent absolute inset-0 py-3 px-3 outline-none resize-none bg-transparent"
+            style={{ height: 400, width: "100%" }}
+          />
+        </div>
       </div>
       <InlineConfigErrors
         errors={errors}
