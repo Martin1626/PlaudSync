@@ -88,3 +88,17 @@ def test_resolve_unclassified_uses_sanitized_plaud_folder(tmp_path: Path) -> Non
     target = resolve_target_path(result, plaud_folder="Inbox/Misc",
                                   config=config, filename="rec.mp3")
     assert target == tmp_path / "Unclassified" / "Inbox_Misc" / "rec.mp3"
+
+
+def test_resolve_matched_case_insensitive_in_config(tmp_path: Path) -> None:
+    """Title token 'Alza' (Title-case) must resolve against config key 'ALZA' (uppercase)."""
+    config = Config(
+        unclassified_dir=tmp_path / "Unclassified",
+        projects={"ALZA": tmp_path / "ALZA"},
+    )
+    result = ClassificationResult(
+        status="matched", project="Alza", matched_date=date(2026, 4, 26)
+    )
+    target = resolve_target_path(result, plaud_folder="any",
+                                  config=config, filename="rec.mp3")
+    assert target == tmp_path / "ALZA" / "rec.mp3"
