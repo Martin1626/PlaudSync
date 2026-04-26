@@ -18,6 +18,14 @@ if not exist ".env" (
     exit /b 1
 )
 
+REM Pokud .env neobsahuje neprazdny PLAUDSYNC_STATE_ROOT, dopln default.
+findstr /B /R "PLAUDSYNC_STATE_ROOT=." .env >nul 2>&1
+if errorlevel 1 (
+    echo [info] PLAUDSYNC_STATE_ROOT v .env chybi, doplnuji default C:\PlaudSync
+    >>.env echo.
+    >>.env echo PLAUDSYNC_STATE_ROOT=C:\PlaudSync
+)
+
 REM Build frontend, pokud chybi static\index.html nebo se zmenil zdroj.
 if not exist "src\plaudsync\ui\static\index.html" (
     echo [info] frontend bundle chybi, buildim...
@@ -43,3 +51,4 @@ if not exist "src\plaudsync\ui\static\index.html" (
 )
 
 .venv\Scripts\python.exe -m plaudsync ui
+pause
