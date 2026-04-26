@@ -102,9 +102,32 @@ def _read_recordings(conn: sqlite3.Connection) -> list[RecordingRowPayload]:
     return payload
 
 
-def read_state_snapshot(conn: sqlite3.Connection) -> StateResponsePayload:
+def _read_progress_for_running(
+    state_root: Path | None, running: tuple[str, str] | None,
+) -> SyncProgressPayload | None:
+    """Return progress payload only when a sync_run is open AND progress.json
+    exists. Stale files (no open run) are ignored to handle subprocess crashes.
+    """
+    if state_root is None or running is None:
+        return None
+    from plaudsync.progress import read_progress
+    payload = read_progress(state_root)
+    if payload is None:
+        return None
+    return {
+        "phase": payload.get("phase"),
+        "processed_count": payload.get("processed_count"),
+        "total_count": payload.get("total_count"),
+    }
+
+
+def read_state_snapshot(
+    conn: sqlite3.Connection,
+    state_root: Path | None = None,
+) -> StateResponsePayload:
     running = _read_running(conn)
     last_finished = _read_last_finished(conn)
+    progress = _read_progress_for_running(state_root, running)
 
     if running:
         started_at, trigger = running
@@ -116,7 +139,7 @@ def read_state_snapshot(conn: sqlite3.Connection) -> StateResponsePayload:
             "last_run_outcome": _outcome_for_exit_code(last_finished[1]) if last_finished else None,
             "last_run_exit_code": last_finished[1] if last_finished else None,
             "last_error_summary": None,
-            "progress": None,
+            "progress": progress,
         }
     else:
         sync = {

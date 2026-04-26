@@ -173,7 +173,7 @@ def create_app(state_root: Path) -> FastAPI:
 
     @app.get("/api/state", response_model=StateResponse)
     def get_state() -> dict:
-        return read_state_snapshot(app.state.db)
+        return read_state_snapshot(app.state.db, state_root=app.state.state_root)
 
     @app.post("/api/auth/verify", response_model=AuthVerifyResponse)
     def auth_verify() -> AuthVerifyResponse:
