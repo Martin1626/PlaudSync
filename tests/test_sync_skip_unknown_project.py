@@ -78,3 +78,76 @@ def test_unknown_project_is_skipped_not_downloaded(tmp_path: Path) -> None:
     assert row[2] == "UNKNOWN"
 
     conn.close()
+
+
+class _ClientNoListing:
+    """Returns no new recordings on listing, but supports download_audio
+    when retry pass calls it for previously-skipped rows."""
+
+    def __init__(self, audio_bytes: dict[str, bytes]) -> None:
+        self._audio = audio_bytes
+        self.download_calls: list[str] = []
+
+    def list_recordings(self, since=None):
+        return iter([])
+
+    def download_audio(self, plaud_id: str):
+        self.download_calls.append(plaud_id)
+        yield self._audio[plaud_id]
+
+
+def test_skipped_recording_retried_after_config_update(tmp_path: Path) -> None:
+    """After sync 1 skips UNKNOWN, user adds UNKNOWN to config; sync 2 must
+    download and classify the previously-skipped recording."""
+    alza_dir = tmp_path / "ALZA"
+    alza_dir.mkdir()
+    unclassified = tmp_path / "Unclassified"
+    unclassified.mkdir()
+
+    config_v1 = Config(
+        unclassified_dir=unclassified,
+        projects={"ALZA": alza_dir},
+    )
+    conn = open_state(tmp_path)
+
+    meta = _MetaStub(
+        plaud_id="rec-retry-1",
+        title="04-26 UNKNOWN: bar",
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    client_v1 = _ClientWithOneUnknownProject(meta)
+
+    exit_v1 = run_sync(client_v1, CategorizationClassifier(), conn, config_v1, "manual")
+    assert exit_v1 == 0
+    assert client_v1.download_calls == []
+
+    row_v1 = conn.execute(
+        "SELECT status FROM recordings WHERE plaud_id = 'rec-retry-1'"
+    ).fetchone()
+    assert row_v1[0] == "skipped_unknown_project"
+
+    unknown_dir = tmp_path / "UNKNOWN"
+    unknown_dir.mkdir()
+    config_v2 = Config(
+        unclassified_dir=unclassified,
+        projects={"ALZA": alza_dir, "UNKNOWN": unknown_dir},
+    )
+    client_v2 = _ClientNoListing({"rec-retry-1": b"the-audio-bytes"})
+
+    exit_v2 = run_sync(client_v2, CategorizationClassifier(), conn, config_v2, "manual")
+    assert exit_v2 == 0
+    assert client_v2.download_calls == ["rec-retry-1"]
+
+    mp3s = list(unknown_dir.glob("*.mp3"))
+    assert len(mp3s) == 1, f"expected 1 mp3 in UNKNOWN/, found: {mp3s}"
+    assert mp3s[0].read_bytes() == b"the-audio-bytes"
+
+    row_v2 = conn.execute(
+        "SELECT status, local_path, classifier_label "
+        "FROM recordings WHERE plaud_id = 'rec-retry-1'"
+    ).fetchone()
+    assert row_v2[0] == "downloaded"
+    assert Path(row_v2[1]) == mp3s[0]
+    assert row_v2[2] == "UNKNOWN"
+
+    conn.close()
