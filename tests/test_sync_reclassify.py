@@ -148,3 +148,144 @@ def test_reclassify_moves_unclassified_in_window(tmp_path: Path) -> None:
     assert file_4.exists()
 
     conn.close()
+
+
+def test_reclassify_skips_missing_source_file(tmp_path: Path) -> None:
+    """If the source file in _unknown/ has been manually deleted, reclassify
+    must log warning and continue without crashing."""
+    alza_dir = tmp_path / "ALZA"
+    unclassified = tmp_path / "Unclassified" / "_unknown"
+    alza_dir.mkdir()
+    unclassified.mkdir(parents=True)
+
+    config = Config(
+        unclassified_dir=tmp_path / "Unclassified",
+        projects={"ALZA": alza_dir},
+    )
+    conn = open_state(tmp_path)
+    seed_run_id = start_sync_run(conn, "manual")
+
+    now = datetime.now(timezone.utc)
+    ghost_path = unclassified / "deleted.mp3"
+    # NOTE: do NOT create the file — simulating user-deleted scenario.
+    _seed_unclassified_row(
+        conn,
+        plaud_id="ghost",
+        title="04-26 Alza: deleted-on-disk",
+        created_at=(now - timedelta(hours=1)).isoformat(),
+        downloaded_at=(now - timedelta(hours=1)).isoformat(),
+        local_path=str(ghost_path),
+        run_id=seed_run_id,
+    )
+
+    exit_code = run_sync(_EmptyClient(), CategorizationClassifier(), conn, config, "manual")
+    assert exit_code == 0  # no crash, no failed_count bump
+
+    # Row untouched: still _unclassified, local_path unchanged.
+    row = conn.execute(
+        "SELECT classifier_label, local_path FROM recordings WHERE plaud_id = 'ghost'"
+    ).fetchone()
+    assert row[0] == "_unclassified"
+    assert Path(row[1]) == ghost_path
+
+    conn.close()
+
+
+def test_reclassify_skips_when_target_path_exists(tmp_path: Path) -> None:
+    """If target path is already occupied, reclassify must skip (idempotent)."""
+    alza_dir = tmp_path / "ALZA"
+    unclassified = tmp_path / "Unclassified" / "_unknown"
+    alza_dir.mkdir()
+    unclassified.mkdir(parents=True)
+
+    config = Config(
+        unclassified_dir=tmp_path / "Unclassified",
+        projects={"ALZA": alza_dir},
+    )
+    conn = open_state(tmp_path)
+    seed_run_id = start_sync_run(conn, "manual")
+
+    now = datetime.now(timezone.utc)
+    src = unclassified / "row.mp3"
+    src.write_bytes(b"src-content")
+    blocker = alza_dir / "row.mp3"
+    blocker.write_bytes(b"blocker-content")
+
+    _seed_unclassified_row(
+        conn,
+        plaud_id="collide",
+        title="04-26 Alza: collide",
+        created_at=(now - timedelta(hours=1)).isoformat(),
+        downloaded_at=(now - timedelta(hours=1)).isoformat(),
+        local_path=str(src),
+        run_id=seed_run_id,
+    )
+
+    exit_code = run_sync(_EmptyClient(), CategorizationClassifier(), conn, config, "manual")
+    assert exit_code == 0
+
+    # Source preserved (no move happened).
+    assert src.exists()
+    assert src.read_bytes() == b"src-content"
+    # Blocker preserved.
+    assert blocker.read_bytes() == b"blocker-content"
+    # DB row unchanged.
+    row = conn.execute(
+        "SELECT classifier_label, local_path FROM recordings WHERE plaud_id = 'collide'"
+    ).fetchone()
+    assert row[0] == "_unclassified"
+    assert Path(row[1]) == src
+
+    conn.close()
+
+
+def test_reclassify_failed_rename_increments_failed_count(tmp_path: Path) -> None:
+    """An unexpected exception in the per-row block must bump failed_count
+    (exit_code=4) and Sentry-tag the error_kind."""
+    from unittest.mock import patch
+
+    alza_dir = tmp_path / "ALZA"
+    unclassified = tmp_path / "Unclassified" / "_unknown"
+    alza_dir.mkdir()
+    unclassified.mkdir(parents=True)
+
+    config = Config(
+        unclassified_dir=tmp_path / "Unclassified",
+        projects={"ALZA": alza_dir},
+    )
+    conn = open_state(tmp_path)
+    seed_run_id = start_sync_run(conn, "manual")
+
+    now = datetime.now(timezone.utc)
+    src = unclassified / "boom.mp3"
+    src.write_bytes(b"boom")
+    _seed_unclassified_row(
+        conn,
+        plaud_id="boom",
+        title="04-26 Alza: boom",
+        created_at=(now - timedelta(hours=1)).isoformat(),
+        downloaded_at=(now - timedelta(hours=1)).isoformat(),
+        local_path=str(src),
+        run_id=seed_run_id,
+    )
+
+    # Patch Path.rename to raise IOError.
+    original_rename = Path.rename
+
+    def _boom_rename(self, target):
+        if "ALZA" in str(target):
+            raise OSError("simulated IO error")
+        return original_rename(self, target)
+
+    with patch.object(Path, "rename", _boom_rename):
+        exit_code = run_sync(_EmptyClient(), CategorizationClassifier(), conn, config, "manual")
+
+    assert exit_code == 4  # failed_count > 0
+
+    # Row unchanged — DB update happens AFTER successful rename.
+    row = conn.execute(
+        "SELECT classifier_label, local_path FROM recordings WHERE plaud_id = 'boom'"
+    ).fetchone()
+    assert row[0] == "_unclassified"
+
+    conn.close()
