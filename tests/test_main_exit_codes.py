@@ -32,11 +32,17 @@ def _setup_sync_pipeline_mocks(
 
     monkeypatch.setattr("plaudsync.locking.SyncLock", _noop_lock)
 
-    # Patch open_state to return a throwaway in-memory SQLite connection.
-    monkeypatch.setattr(
-        "plaudsync.state.open_state",
-        lambda _root: sqlite3.connect(":memory:"),
-    )
+    # Patch open_state to return a throwaway in-memory SQLite connection
+    # WITH schema bootstrap so it mirrors production contract (real open_state
+    # runs CREATE IF NOT EXISTS). Schedule gating peek queries sync_runs and
+    # would raise OperationalError on a bare :memory: db.
+    def _open_state_mock(_root: Path) -> sqlite3.Connection:
+        from plaudsync.state import _SCHEMA  # noqa: PLC0415
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(_SCHEMA)
+        return conn
+
+    monkeypatch.setattr("plaudsync.state.open_state", _open_state_mock)
 
 
 def test_main_exits_2_on_token_expired(

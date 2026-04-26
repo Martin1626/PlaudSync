@@ -75,12 +75,20 @@ def _detect_trigger() -> str:
 
 
 def run_sync_pipeline() -> int:
+    from datetime import datetime
+
     from plaudsync.auth import load_token
     from plaudsync.classifier import DefaultBucketClassifier
     from plaudsync.config import ConfigValidationError, load_config
     from plaudsync.locking import SyncLock, SyncLockHeld
     from plaudsync.plaud_client import PlaudClient, PlaudRegionProbeFailed
-    from plaudsync.state import open_state
+    from plaudsync.schedule import (
+        applicable_interval_minutes,
+        is_within_work_hours,
+        load_schedule,
+        should_run_now,
+    )
+    from plaudsync.state import last_successful_sync, open_state
     from plaudsync.sync import run_sync as orchestrate_sync
 
     state_root_str = os.getenv("PLAUDSYNC_STATE_ROOT")
@@ -99,6 +107,29 @@ def run_sync_pipeline() -> int:
         _capture_sentry(e, fingerprint="config_validation_error", kind="config_validation_error")
         raise SystemExit(7) from e
 
+    trigger = _detect_trigger()
+
+    # Schedule gating — only for unattended Task Scheduler ticks. Manual /
+    # UI-initiated runs always proceed (the user is explicitly asking).
+    if trigger == "task_scheduler":
+        schedule = load_schedule(state_root)
+        # Short-lived peek for last_successful_sync; the real write
+        # connection opens later inside the lock. open_state() bootstraps
+        # schema with CREATE IF NOT EXISTS, so empty result == no prior run.
+        peek = open_state(state_root)
+        try:
+            last_iso = last_successful_sync(peek)
+        finally:
+            peek.close()
+        now_local = datetime.now().astimezone()
+        if not should_run_now(schedule, now=now_local, last_success_iso=last_iso):
+            logger.info(
+                "skipping run per schedule (work_hours={wh}, interval={iv}min)",
+                wh=is_within_work_hours(schedule, now_local),
+                iv=applicable_interval_minutes(schedule, now_local),
+            )
+            raise SystemExit(5)
+
     lock_path = state_root / ".plaudsync" / "sync.lock"
     try:
         with SyncLock(lock_path):
@@ -108,7 +139,7 @@ def run_sync_pipeline() -> int:
                 with PlaudClient(token) as client:
                     return orchestrate_sync(
                         client, DefaultBucketClassifier(), conn, config,
-                        trigger=_detect_trigger(),
+                        trigger=trigger,
                     )
             finally:
                 conn.close()

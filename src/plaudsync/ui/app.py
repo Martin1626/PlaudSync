@@ -26,6 +26,12 @@ from plaudsync.auth import (
     mask_token,
 )
 from plaudsync.plaud_client import PlaudClient, PlaudRegionProbeFailed
+from plaudsync.schedule import (
+    ScheduleValidationError,
+    load_schedule,
+    parse_schedule,
+    save_schedule,
+)
 from plaudsync.ui.config_io import (
     maybe_seed_default,
     read_config_payload,
@@ -128,6 +134,14 @@ class StartSyncResponse(BaseModel):
     started_at: str
 
 
+class ScheduleModel(BaseModel):
+    work_hours_interval_minutes: int
+    off_hours_interval_minutes: int
+    work_days: list[int]
+    work_from: str
+    work_to: str
+
+
 def create_app(state_root: Path) -> FastAPI:
     """Build a FastAPI app bound to the given state_root.
 
@@ -225,6 +239,22 @@ def create_app(state_root: Path) -> FastAPI:
             "connect-src 'self'"
         )
         return response
+
+    @app.get("/api/schedule", response_model=ScheduleModel)
+    def get_schedule() -> dict:
+        return load_schedule(app.state.state_root).to_dict()
+
+    @app.put("/api/schedule", response_model=ScheduleModel)
+    def put_schedule(req: ScheduleModel) -> dict:
+        try:
+            schedule = parse_schedule(req.model_dump())
+        except ScheduleValidationError as e:
+            raise HTTPException(
+                status_code=422,
+                detail={"ok": False, "errors": list(e.args[0])},
+            )
+        save_schedule(app.state.state_root, schedule)
+        return schedule.to_dict()
 
     @app.post("/api/sync/start", status_code=202, response_model=StartSyncResponse)
     def start_sync() -> StartSyncResponse:
