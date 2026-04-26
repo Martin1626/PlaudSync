@@ -173,3 +173,53 @@ def test_sync_partial_failure_exits_4(tmp_path: Path) -> None:
     row = conn.execute("SELECT recordings_new, recordings_failed FROM sync_runs").fetchone()
     assert row == (1, 1)
     conn.close()
+
+
+def test_sync_routes_matched_title_to_project_folder(tmp_path: Path) -> None:
+    """Recording with title matching regex + project in config (case-insensitive)
+    must land in configured project folder, not Unclassified."""
+    from plaudsync.classifier import CategorizationClassifier
+    from plaudsync.state import open_state
+
+    project_dir = tmp_path / "ALZA"
+    unclassified = tmp_path / "Unclassified"
+    project_dir.mkdir()
+    unclassified.mkdir()
+    config = Config(
+        unclassified_dir=unclassified,
+        projects={"ALZA": project_dir},
+    )
+    conn = open_state(tmp_path)
+
+    class _FakeClient:
+        def list_recordings(self, since=None):
+            class _M:
+                plaud_id = "rec_alza_1"
+                title = "04-26 Alza: kickoff"
+                created_at = "2026-04-26T14:31:14+00:00"
+                start_time_ms = 1745675474000
+                duration_seconds = 60
+                file_size = 16
+                plaud_folder = "Klienti"
+            yield _M()
+
+        def download_audio(self, _):
+            yield b"AAAA" * 4  # exactly 16 bytes — matches file_size
+
+    exit_code = run_sync(_FakeClient(), CategorizationClassifier(), conn, config, "manual")
+    assert exit_code == 0
+
+    # File MUST be in ALZA, not Unclassified.
+    alza_files = list(project_dir.rglob("*.mp3"))
+    unclassified_files = list(unclassified.rglob("*.mp3"))
+    assert len(alza_files) == 1, f"expected 1 file in ALZA, got: {alza_files}"
+    assert unclassified_files == [], f"unexpected files in Unclassified: {unclassified_files}"
+
+    # DB has correct label.
+    row = conn.execute(
+        "SELECT classifier_label, local_path FROM recordings WHERE plaud_id = ?",
+        ("rec_alza_1",),
+    ).fetchone()
+    assert row[0] == "Alza"  # adapter returns title-case as captured
+    assert str(project_dir) in row[1]
+    conn.close()
