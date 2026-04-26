@@ -94,6 +94,19 @@ def load_config(state_root: Path) -> Config:
         if not sub_errors:
             projects[name] = Path(path_str)
 
+    # Reject duplicate casefold keys (ambiguous for Config.lookup_project).
+    seen_casefolds: dict[str, str] = {}
+    for key in projects:
+        cf = key.casefold()
+        if cf in seen_casefolds:
+            errors.append(ConfigParseError(
+                0,
+                f"projects: duplicate casefold key '{cf}' "
+                f"(both {seen_casefolds[cf]!r} and {key!r})",
+            ))
+        else:
+            seen_casefolds[cf] = key
+
     if errors:
         raise ConfigValidationError(errors)
 
