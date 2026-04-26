@@ -1,14 +1,9 @@
-"""Process-level orchestration for `python -m plaudsync ui [--dev]`.
+"""Process-level orchestration for `python -m plaudsync ui` and tray-spawned UI window.
 
-PyWebView main thread + uvicorn daemon thread + browser fallback.
-
-- Production: uvicorn binds to 127.0.0.1:0 (OS-assigned), threading.Event
-  hands the resolved port back to main thread, PyWebView opens
-  http://127.0.0.1:<port>/.
-- Dev: uvicorn still binds locally for /api/* but PyWebView opens the Vite
-  dev server at http://127.0.0.1:5173/ (Vite proxies /api/* to uvicorn).
-- WebView2 missing / window crash: stderr message + uvicorn keeps running
-  in foreground until Ctrl+C (UI architecture spec A7).
+Split into 3 helpers:
+- start_uvicorn_thread(app, port) — start uvicorn in daemon thread, return (server, port).
+- open_webview(url) — blocking PyWebView call on main thread.
+- main_ui(dev) — orchestrates both for standalone `python -m plaudsync ui`.
 """
 from __future__ import annotations
 
@@ -20,6 +15,44 @@ from pathlib import Path
 import uvicorn
 import webview
 from loguru import logger
+
+
+def start_uvicorn_thread(app, port: int = 0) -> tuple[uvicorn.Server, int]:
+    """Start uvicorn in a daemon thread; return (server, resolved_port).
+
+    Blocks calling thread until uvicorn signals it accepts connections (max 5 s).
+    Caller is responsible for `server.should_exit = True` on shutdown.
+    """
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+        access_log=False,
+    )
+    server = uvicorn.Server(config)
+    started = threading.Event()
+    port_holder: dict[str, int] = {}
+
+    def serve() -> None:
+        original_startup = server.startup
+
+        async def startup_with_signal(*args, **kwargs):
+            await original_startup(*args, **kwargs)
+            try:
+                resolved = server.servers[0].sockets[0].getsockname()[1]
+            except (IndexError, AttributeError):
+                resolved = port or 0
+            port_holder["port"] = resolved
+            started.set()
+
+        server.startup = startup_with_signal  # type: ignore[method-assign]
+        asyncio.run(server.serve())
+
+    threading.Thread(target=serve, daemon=True).start()
+    if not started.wait(timeout=5.0):
+        raise RuntimeError("uvicorn failed to start within 5 s")
+    return server, port_holder["port"]
 
 
 def _browser_fallback_wait() -> None:
@@ -36,6 +69,31 @@ def _browser_fallback_wait() -> None:
         return
 
 
+def open_webview(url: str, title: str = "PlaudSync") -> int:
+    """Blocking call: open PyWebView window on URL. Return 0 on clean exit, 1 on failure.
+
+    On WebView2 missing / window crash, prints fallback hint and blocks until Ctrl+C.
+    """
+    try:
+        webview.create_window(
+            title,
+            url,
+            width=1100,
+            height=750,
+            resizable=True,
+        )
+        webview.start(
+            debug=os.getenv("PLAUDSYNC_UI_DEBUG") == "1",
+        )
+        return 0
+    except Exception:
+        logger.exception("PyWebView failed; backend kept running for browser fallback")
+        print(f"PyWebView unavailable. Open {url} in your browser. Ctrl+C to exit.",
+              flush=True)
+        _browser_fallback_wait()
+        return 1
+
+
 def main_ui(dev: bool = False) -> int:
     state_root_str = os.getenv("PLAUDSYNC_STATE_ROOT")
     if not state_root_str:
@@ -47,67 +105,19 @@ def main_ui(dev: bool = False) -> int:
 
     app = create_app(state_root)
 
-    # Dev mode: fixed port (frontend Vite proxies /api/* to it)
-    if dev:
-        listen_port = int(os.getenv("PLAUDSYNC_DEV_PORT", "8765"))
-    else:
-        listen_port = 0  # OS-assigned
-
-    config = uvicorn.Config(
-        app,
-        host="127.0.0.1",
-        port=listen_port,
-        log_level="warning",
-        access_log=False,
-    )
-    server = uvicorn.Server(config)
-    started = threading.Event()
-    port_holder: dict[str, int] = {}
-
-    def serve() -> None:
-        original_startup = server.startup
-
-        async def startup_with_signal(*args, **kwargs):
-            await original_startup(*args, **kwargs)
-            try:
-                resolved = server.servers[0].sockets[0].getsockname()[1]
-            except (IndexError, AttributeError):
-                resolved = listen_port or 0
-            port_holder["port"] = resolved
-            started.set()
-
-        server.startup = startup_with_signal  # type: ignore[method-assign]
-        asyncio.run(server.serve())
-
-    threading.Thread(target=serve, daemon=True).start()
-    if not started.wait(timeout=5.0):
-        logger.error("uvicorn failed to start within 5 s")
+    listen_port = int(os.getenv("PLAUDSYNC_DEV_PORT", "8765")) if dev else 0
+    try:
+        server, backend_port = start_uvicorn_thread(app, port=listen_port)
+    except RuntimeError:
+        logger.exception("uvicorn failed to start")
         return 1
 
-    backend_port = port_holder["port"]
-    # In dev mode the webview points at Vite (5173); uvicorn at backend_port
-    # serves only /api/*. In prod, both are the same uvicorn port.
     target_port = 5173 if dev else backend_port
     target_url = f"http://127.0.0.1:{target_port}/"
 
     logger.info("uvicorn ready on port {p}; opening {u}", p=backend_port, u=target_url)
 
-    try:
-        webview.create_window(
-            "PlaudSync",
-            target_url,
-            width=1100,
-            height=750,
-            resizable=True,
-        )
-        webview.start(
-            debug=os.getenv("PLAUDSYNC_UI_DEBUG") == "1",
-        )
-    except Exception:
-        logger.exception("PyWebView failed; backend kept running for browser fallback")
-        print(f"PyWebView unavailable. Open {target_url} in your browser. Ctrl+C to exit.",
-              flush=True)
-        _browser_fallback_wait()
+    open_webview(target_url)
 
     server.should_exit = True
     return 0
