@@ -183,6 +183,20 @@ def _process_recording(
     run_id: int,
 ) -> None:
     label = classifier.classify(meta)
+
+    # BL-3 gate: regex matched a project, but it is not in config.yaml.
+    # Skip download — record metadata for audit + 14d retry pass.
+    if label != "_unclassified" and config.lookup_project(label) is None:
+        record_recording(
+            conn, meta, status="skipped_unknown_project",
+            local_path="", run_id=run_id,
+            classifier_label=label,
+        )
+        logger.bind(recording_id=meta.plaud_id, project=label).info(
+            "skipped: project not in config"
+        )
+        return
+
     if label == "_unclassified":
         result = ClassificationResult(status="unclassified", project=None, matched_date=None)
     else:

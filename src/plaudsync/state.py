@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS recordings (
     downloaded_at     TEXT NOT NULL,
     local_path        TEXT NOT NULL,
     classifier_label  TEXT NOT NULL,
-    status            TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped')),
+    status            TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped','skipped_unknown_project')),
     sync_run_id       INTEGER REFERENCES sync_runs(run_id)
 );
 
@@ -126,11 +126,45 @@ def record_recording(
     conn.commit()
 
 
+def _migrate_status_check_constraint(conn: sqlite3.Connection) -> None:
+    """Rebuild `recordings` table when its CHECK constraint pre-dates BL-3.
+
+    SQLite cannot ALTER a CHECK constraint in place. Detect old definition
+    via sqlite_master.sql and rebuild via temp-table copy.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='recordings'"
+    ).fetchone()
+    if row is None or "skipped_unknown_project" in row[0]:
+        return
+    conn.executescript(
+        """
+        BEGIN;
+        CREATE TABLE recordings_new (
+            plaud_id          TEXT PRIMARY KEY,
+            title             TEXT NOT NULL,
+            created_at_plaud  TEXT NOT NULL,
+            downloaded_at     TEXT NOT NULL,
+            local_path        TEXT NOT NULL,
+            classifier_label  TEXT NOT NULL,
+            status            TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped','skipped_unknown_project')),
+            sync_run_id       INTEGER REFERENCES sync_runs(run_id)
+        );
+        INSERT INTO recordings_new SELECT * FROM recordings;
+        DROP TABLE recordings;
+        ALTER TABLE recordings_new RENAME TO recordings;
+        CREATE INDEX IF NOT EXISTS idx_recordings_downloaded_at ON recordings(downloaded_at DESC);
+        COMMIT;
+        """
+    )
+
+
 def open_state(state_root: Path) -> sqlite3.Connection:
     db_dir = state_root / ".plaudsync"
     db_dir.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_dir / "state.db")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_SCHEMA)
+    _migrate_status_check_constraint(conn)
     conn.commit()
     return conn
