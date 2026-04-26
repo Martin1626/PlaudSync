@@ -76,3 +76,6 @@ src/plaudsync/ui/static/
 # src/plaudsync/ui/static/). Kept tracked in git for design-history reference.
 # If a future contributor adds a new static mount, exclude _prototype/ first —
 # the HTML loads CDN-hosted React/Babel/Tailwind at runtime, breaking CSP.
+
+# Git worktrees (subagent-driven-development isolated workspaces)
+.worktrees/
