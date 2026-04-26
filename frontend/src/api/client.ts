@@ -101,9 +101,17 @@ export async function putConfig(rawYaml: string): Promise<ConfigSaveSuccess> {
     });
   } catch (err) {
     if (err instanceof ApiHttpError && err.status === 422) {
-      const body = err.body as { ok: false; errors: ConfigParseError[] } | null;
-      if (body && Array.isArray(body.errors)) {
-        throw new ValidationError(body);
+      // FastAPI HTTPException(detail={...}) wraps the payload as
+      // { detail: { ok, errors } }. Backwards-compatible: also accept the
+      // unwrapped shape if a future handler returns the body directly.
+      const raw = err.body as
+        | { detail?: { ok: false; errors: ConfigParseError[] } }
+        | { ok: false; errors: ConfigParseError[] }
+        | null;
+      const payload =
+        raw && "detail" in raw && raw.detail ? raw.detail : (raw as { ok: false; errors: ConfigParseError[] } | null);
+      if (payload && Array.isArray(payload.errors)) {
+        throw new ValidationError(payload);
       }
     }
     throw err;

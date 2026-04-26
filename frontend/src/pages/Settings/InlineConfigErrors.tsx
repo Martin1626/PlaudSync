@@ -39,7 +39,13 @@ export default function InlineConfigErrors({
           <path d="M12 8v4M12 16h.01" />
         </svg>
         <span className="flex-1">
-          <span className="font-mono font-semibold">Řádek {current.line}:</span>{" "}
+          {current.line > 0 && (
+            <>
+              <span className="font-mono font-semibold">
+                Řádek {current.line}:
+              </span>{" "}
+            </>
+          )}
           {current.message}
         </span>
         {remaining > 0 && (
@@ -69,9 +75,13 @@ export default function InlineConfigErrors({
                     : "text-red-800",
                 )}
               >
-                <span className="font-mono font-semibold">
-                  Řádek {err.line}:
-                </span>{" "}
+                {err.line > 0 && (
+                  <>
+                    <span className="font-mono font-semibold">
+                      Řádek {err.line}:
+                    </span>{" "}
+                  </>
+                )}
                 {err.message}
               </button>
             </li>

@@ -73,10 +73,14 @@ def _read_last_finished(conn: sqlite3.Connection) -> tuple[str, int] | None:
 
 
 def _read_recordings(conn: sqlite3.Connection) -> list[RecordingRowPayload]:
+    # Newest recording on top: order by Plaud-side creation time (when the user
+    # actually recorded). downloaded_at is a tie-breaker for batches whose
+    # created_at_plaud is identical or missing.
     rows = conn.execute(
         "SELECT plaud_id, title, created_at_plaud, downloaded_at, "
         "local_path, classifier_label, status "
-        "FROM recordings ORDER BY downloaded_at DESC LIMIT 50"
+        "FROM recordings ORDER BY created_at_plaud DESC, downloaded_at DESC "
+        "LIMIT 50"
     ).fetchall()
     payload: list[RecordingRowPayload] = []
     for r in rows:

@@ -64,7 +64,7 @@ export default function ConfigPanel({ config }: { config: ConfigResponse }) {
           const first = err.errors[0];
           pushToast(
             "error",
-            first
+            first && first.line > 0
               ? `Konfigurace je neplatná — řádek ${first.line}`
               : "Konfigurace je neplatná",
           );
