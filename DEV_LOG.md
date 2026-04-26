@@ -4,6 +4,36 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-26 — BL-3 implementace: skip unknown project codes
+
+**Spec:** [docs/superpowers/specs/2026-04-26-bl3-skip-unknown-projects-design.md](docs/superpowers/specs/2026-04-26-bl3-skip-unknown-projects-design.md).
+**Plan:** [docs/superpowers/plans/2026-04-26-bl3-skip-unknown-projects.md](docs/superpowers/plans/2026-04-26-bl3-skip-unknown-projects.md).
+
+**Implementováno (commits 07f76c7, ede71ff, 22ee81e):**
+- Pre-download gate v `_process_recording`: regex match + `config.lookup_project(label) is None` → DB row `status='skipped_unknown_project'`, žádný download. Eliminuje vznik `_unmapped_<Project>/` složek pro náhodné project kódy z titulů.
+- `_retry_skipped_unknown_project` pass v `run_sync` (před `_reclassify_recent`): SELECT skipped rows mladší 14 dnů, re-evaluate proti current configu, downloaduje matched. 14d rolling window odpovídá DEV_LOG BL-3 specu.
+- `record_recording` extended UPSERT: `skipped_unknown_project → downloaded` upgrade allowed (vedle `failed → downloaded`).
+- Schema migration `_migrate_status_check_constraint`: rebuild `recordings` tabulky pro existující DBs (CHECK constraint nešel ALTER, rebuild via temp-table copy). Plan-defect zachycený při běhu prvního testu — fix bez eskalace per `feedback_plan_literal_vs_reviewer`.
+
+**Test coverage (3 nové integration testy v `tests/test_sync_skip_unknown_project.py`):**
+- `test_unknown_project_is_skipped_not_downloaded` — gate funguje (no download, DB row, no MP3).
+- `test_skipped_recording_retried_after_config_update` — retry pass downloaduje po doplnění configu.
+- `test_skipped_recording_outside_14d_window_not_retried` — cutoff respektován.
+
+Plná suite: 222 passed.
+
+**Kill criteria check:**
+- `#5` (regex coverage <90 %): BL-3 zužuje "matched" definici — záznamy s neznámým project kódem se teď počítají jako "skipped_unknown_project", ne jako "matched". Watch monitoring metric po nasazení.
+- `#18` (Sentry scrubbing): nové tagy `error_kind='skipped_unknown_project'` (info-level, no capture) a `error_kind='retry_skipped_failed'` (capture s fingerprint). Project label posíláno přes `logger.bind(project=...)`, ne v message — per CLAUDE.md privacy rules.
+
+**Follow-ups:**
+- Cleanup helper / one-off skript pro existující `_unmapped_<Project>/` složky z období před BL-3 (samostatný ticket — manuální `mv` + DB UPDATE, nebo dedicated CLI subcommand).
+- UI badge "skipped: N" v tray menu pro audit (samostatný ticket).
+- Stale title race v retry passu (DB title se neaktualizuje při Plaud-side rename) — pre-existing pattern stejný jako `_reclassify_recent`, neřešíme teď.
+- `/review` + `/security-review` + manual smoke v tray UI — gates k uživatelskému spuštění před merge na main (jsme už na main, ale BL-3 commits jsou unpushed pro review).
+
+---
+
 ## 2026-04-26 — Backlog: 5 nových položek k implementaci
 
 Poznámky z uživatelského review. Žádná není blokující pro v0; zařadit do Phase 3 / Phase 4 sprintů.
