@@ -78,7 +78,7 @@ def run_sync_pipeline() -> int:
     from datetime import datetime
 
     from plaudsync.auth import load_token
-    from plaudsync.classifier import DefaultBucketClassifier
+    from plaudsync.classifier import CategorizationClassifier
     from plaudsync.config import ConfigValidationError, load_config
     from plaudsync.locking import SyncLock, SyncLockHeld
     from plaudsync.plaud_client import PlaudClient, PlaudRegionProbeFailed
@@ -138,7 +138,7 @@ def run_sync_pipeline() -> int:
             try:
                 with PlaudClient(token) as client:
                     return orchestrate_sync(
-                        client, DefaultBucketClassifier(), conn, config,
+                        client, CategorizationClassifier(), conn, config,
                         trigger=trigger,
                     )
             finally:

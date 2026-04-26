@@ -57,8 +57,9 @@ def resolve_target_path(
     """
     if result.status == "matched":
         assert result.project is not None  # invariant from ClassificationResult
-        if result.project in config.projects:
-            return config.projects[result.project] / filename
+        configured_path = config.lookup_project(result.project)
+        if configured_path is not None:
+            return configured_path / filename
         # Soft fallback: project not in config
         logger.bind(plaud_folder=plaud_folder).warning(
             "project unmapped — soft fallback into unclassified_dir"

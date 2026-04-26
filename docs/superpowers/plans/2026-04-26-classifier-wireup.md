@@ -1,5 +1,7 @@
 # Classifier wire-up + rolling re-classify Implementation Plan
 
+> **Status:** completed 2026-04-26. Tasks 1-9 verified green; production sync run confirmed re-classify behavior — 2 mis-routed recordings physically moved to `ALZA/` and `FHB/`, DB labels updated. See [DEV_LOG.md](../../../DEV_LOG.md) entry "2026-04-26 — Classifier wire-up + 14d rolling re-classify" for postmortem + 7 follow-up items from code review.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Napojit `categorization.classify()` do sync hot pathy přes adapter, zavést case-insensitive project lookup v `Config`, přidat 14denní rolling re-classify pass v `run_sync()` pro auto-opravu existujících `_unclassified` rows v DB.

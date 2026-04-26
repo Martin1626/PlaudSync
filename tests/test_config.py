@@ -72,3 +72,53 @@ def test_load_config_raises_validation_error(
     assert any(error_substr.lower() in e.message.lower() for e in errors), (
         f"expected error containing {error_substr!r}, got: {[e.message for e in errors]}"
     )
+
+
+@pytest.mark.parametrize(
+    "lookup_name,expected_key",
+    [
+        ("ALZA", "ALZA"),       # exact match
+        ("alza", "ALZA"),       # lowercase → uppercase config key
+        ("Alza", "ALZA"),       # title-case → uppercase config key
+        ("aLZa", "ALZA"),       # mixed case
+    ],
+    ids=["exact", "lower", "title", "mixed"],
+)
+def test_lookup_project_case_insensitive(tmp_path: Path, lookup_name: str, expected_key: str) -> None:
+    config = Config(
+        unclassified_dir=tmp_path / "U",
+        projects={"ALZA": tmp_path / "ALZA", "FHB": tmp_path / "FHB"},
+    )
+    result = config.lookup_project(lookup_name)
+    assert result == config.projects[expected_key]
+
+
+def test_lookup_project_returns_none_when_no_match(tmp_path: Path) -> None:
+    config = Config(
+        unclassified_dir=tmp_path / "U",
+        projects={"ALZA": tmp_path / "ALZA"},
+    )
+    assert config.lookup_project("Foo") is None
+    assert config.lookup_project("") is None
+
+
+def test_load_config_rejects_duplicate_casefold_keys(tmp_path: Path) -> None:
+    """projects with keys differing only by case (e.g. ALZA + Alza) are
+    ambiguous for lookup_project. Reject at load time."""
+    project_a = tmp_path / "A"
+    project_b = tmp_path / "B"
+    project_a.mkdir()
+    project_b.mkdir()
+    _write_config(tmp_path, f"""
+unclassified_dir: {tmp_path / "U"}
+projects:
+  ALZA: {project_a}
+  Alza: {project_b}
+""")
+    with pytest.raises(ConfigValidationError) as exc_info:
+        load_config(tmp_path)
+    errors = exc_info.value.args[0]
+    assert any("duplicate" in e.message.lower() and "casefold" in e.message.lower()
+               for e in errors), (
+        f"expected duplicate casefold error, got: {[e.message for e in errors]}"
+    )

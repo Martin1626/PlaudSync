@@ -4,6 +4,39 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-26 — Classifier wire-up + 14d rolling re-classify
+
+**Symptom:** 2 recordings staženy 2026-04-26 (`04-26 Alza: test1`, `2026-04-26 FHB: test2`) skončily v `Unclassified/_unknown/` přesto, že title formát match-uje regex a project klíče v `config.yaml` (`ALZA`, `FHB`) by byly rozpoznatelné case-insensitive.
+
+**Layer (per `sync-debug` skill):** Layer 4 — categorization. Layers 1-3 byly clean.
+
+**Root cause:** `__main__.py:141` injectoval `DefaultBucketClassifier()` (placeholder vracející `_unclassified` vždy), ne reálný `categorization.classify()`. Sekundárně: `path_resolver` indexoval `config.projects[project]` literálně, takže i po wire-up by `project='Alza'` vs. `config_key='ALZA'` skončilo v `_unmapped_Alza/`.
+
+**Fix:**
+1. `CategorizationClassifier` adapter v `classifier.py` zabaluje `categorization.classify()` do `Classifier` Protocol shape.
+2. `Config.lookup_project(name)` provádí casefold-based lookup; `path_resolver` přechází na metodu; `load_config` odmítá duplicit casefold klíče.
+3. `_reclassify_recent()` pass v `run_sync()` před hlavní download loop — re-klasifikuje rows s `classifier_label='_unclassified'` a `downloaded_at >= now-14d`, fyzicky přesouvá soubory + updatuje DB. Edge cases: missing source / target collision → warning + skip; IO error → Sentry capture + failed_count++.
+
+**Spec:** [docs/superpowers/specs/2026-04-26-classifier-wireup-design.md](docs/superpowers/specs/2026-04-26-classifier-wireup-design.md).
+**Plan:** [docs/superpowers/plans/2026-04-26-classifier-wireup.md](docs/superpowers/plans/2026-04-26-classifier-wireup.md).
+
+**Kill criteria check:**
+- `#5` (regex coverage <90 %): teprve s tímto fixem se začne reálně měřit. 30-day window monitoring stále není implementovaný — watch item.
+- `#18` (Sentry scrubbing): re-classify pass přidává `recording_id` tag, použité scrubbing rules ho pokryjí (existující pattern, žádný nový exposure).
+
+**Follow-ups (z code review, plan-suboptimal stick s plánem během execution):**
+- `load_config` guard against non-string YAML project keys (Task 2 review I-1).
+- `path_resolver` module docstring add case-insensitive note (Task 3 review M1).
+- Drop `replace("Z", "+00:00")` across 5 sites — Python 3.11 `fromisoformat` handles Z natively (Task 4 review M1).
+- Drop unused `run_id` param in `_reclassify_recent` + add `logger.info` reclassify summary (Task 6 review I-1, I-2).
+- `SimpleNamespace` instead of `class _MetaLike: pass` inline (Task 6 review M-1).
+- Explicit Sentry-tag assertion test for `reclassify_failed` error_kind (Task 7 review M2).
+- Extract `_make_reclassify_env` fixture when test file > 6 tests (Task 7 review M3).
+
+**Verifikace dnešních 2 souborů:** automaticky se přesunou při příštím `python -m plaudsync` běhu (Task Scheduler tick nebo manual). Task 9 plánu provede manuální production run.
+
+---
+
 ## 2026-04-26 — v0 production-ready: Schedule + Phase 2 smoke + security review + Task Scheduler installer
 
 Single-session batch wrapping v0 to shippable. 4 commits to origin/main.

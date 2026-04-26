@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import sentry_sdk
@@ -36,6 +36,95 @@ def _slugify(title: str, max_len: int = 60) -> str:
     return slug[:max_len] or "untitled"
 
 
+def _reclassify_recent(
+    conn: sqlite3.Connection,
+    classifier: Classifier,
+    config: Config,
+    run_id: int,
+    *,
+    days: int = 14,
+) -> tuple[int, int]:
+    """Re-classify recordings with classifier_label='_unclassified' and
+    downloaded_at within the last `days` days. Move physical files to new
+    target paths and update DB. Returns (moved_count, failed_count).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    rows = conn.execute(
+        "SELECT plaud_id, title, created_at_plaud, local_path "
+        "FROM recordings "
+        "WHERE classifier_label = '_unclassified' "
+        "AND status = 'downloaded' "
+        "AND downloaded_at >= ?",
+        (cutoff,),
+    ).fetchall()
+
+    moved = 0
+    failed = 0
+    for plaud_id, title, created_at, old_local_path in rows:
+        try:
+            class _MetaLike:
+                pass
+            meta_like = _MetaLike()
+            meta_like.title = title  # type: ignore[attr-defined]
+            meta_like.created_at = created_at  # type: ignore[attr-defined]
+
+            label = classifier.classify(meta_like)
+            if label == "_unclassified":
+                continue
+
+            old_path = Path(old_local_path)
+            if not old_path.exists():
+                logger.bind(recording_id=plaud_id).warning(
+                    "reclassify skipped: source file missing"
+                )
+                continue
+
+            result = ClassificationResult(
+                status="matched", project=label, matched_date=None,
+            )
+            new_path = resolve_target_path(
+                result,
+                plaud_folder="(reclassify)",
+                config=config,
+                filename=old_path.name,
+            )
+            if new_path == old_path:
+                # Path unchanged — just update label.
+                conn.execute(
+                    "UPDATE recordings SET classifier_label = ? WHERE plaud_id = ?",
+                    (label, plaud_id),
+                )
+                conn.commit()
+                continue
+
+            if new_path.exists():
+                logger.bind(recording_id=plaud_id).warning(
+                    "reclassify skipped: target path already exists"
+                )
+                continue
+
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            old_path.rename(new_path)
+            conn.execute(
+                "UPDATE recordings SET classifier_label = ?, local_path = ? "
+                "WHERE plaud_id = ?",
+                (label, str(new_path), plaud_id),
+            )
+            conn.commit()
+            moved += 1
+        except Exception as e:  # noqa: BLE001
+            logger.bind(recording_id=plaud_id).exception("reclassify failed")
+            with sentry_sdk.new_scope() as scope:
+                scope.set_tag("error_kind", "reclassify_failed")
+                scope.set_tag("recording_id", plaud_id)
+                scope.fingerprint = ["reclassify_failed", type(e).__name__]
+                sentry_sdk.capture_exception(e)
+            failed += 1
+
+    return moved, failed
+
+
 def run_sync(
     client,
     classifier: Classifier,
@@ -44,11 +133,19 @@ def run_sync(
     trigger: str = "task_scheduler",
 ) -> int:
     run_id = start_sync_run(conn, trigger=trigger)
+
+    # Rolling re-classify pass: re-evaluate recent _unclassified rows against
+    # current config (e.g. user added a project, or fixed a typo). Failures
+    # roll into failed_count via exit_code semantics.
+    reclassify_moved, reclassify_failed = _reclassify_recent(
+        conn, classifier, config, run_id, days=14,
+    )
+
     since = last_successful_sync(conn)
 
     new_count = 0
     skipped_count = 0
-    failed_count = 0
+    failed_count = reclassify_failed
 
     for meta in client.list_recordings(since=since):
         if recording_exists_and_downloaded(conn, meta.plaud_id):
