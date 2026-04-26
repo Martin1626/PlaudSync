@@ -98,7 +98,6 @@ def _run_tray(state_root: Path) -> int:
     def _ensure_uvicorn() -> int:
         if uvicorn_holder["server"] is None:
             app = create_app(state_root)
-            os.environ.setdefault("PLAUDSYNC_TRIGGER", "ui")
             server, port = start_uvicorn_thread(app, port=0)
             uvicorn_holder["server"] = server
             uvicorn_holder["port"] = port
@@ -124,10 +123,11 @@ def _run_tray(state_root: Path) -> int:
 
     def on_toggle_pause() -> None:
         new = toggle_paused(state_root)
-        on_status_change(TrayStatus(kind="paused" if new else "idle"))
+        prev_iso = get_status().last_sync_iso
+        on_status_change(TrayStatus(kind="paused" if new else "idle", last_sync_iso=prev_iso))
 
     def on_open_log() -> None:
-        log_path = Path(os.getenv("PLAUDSYNC_LOG_PATH", state_root / "plaudsync.log"))
+        log_path = Path(os.getenv("PLAUDSYNC_LOG_PATH") or state_root / "plaudsync.log")
         try:
             os.startfile(str(log_path))  # type: ignore[attr-defined]  # Windows-only
         except Exception:

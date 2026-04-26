@@ -57,6 +57,7 @@ class SchedulerThread(threading.Thread):
         self._skip_schedule_gate = skip_schedule_gate
         self._stop_event = threading.Event()
         self._sync_now_event = threading.Event()
+        self._last_sync_iso: Optional[str] = None
 
     def request_sync_now(self) -> None:
         self._sync_now_event.set()
@@ -100,9 +101,13 @@ class SchedulerThread(threading.Thread):
             logger.exception("SchedulerThread: pipeline raised uncaught exception")
             exit_code = 1
         self._on_complete(exit_code)
-        if exit_code in (0, 5):
+        if exit_code == 0:
             now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
+            self._last_sync_iso = now_iso
             self._on_status(TrayStatus(kind="idle", last_sync_iso=now_iso))
+        elif exit_code == 5:
+            # schedule gate skipped the run — preserve last successful sync time
+            self._on_status(TrayStatus(kind="idle", last_sync_iso=self._last_sync_iso))
         else:
             self._on_status(TrayStatus(kind="error", error_kind=_kind_for(exit_code)))
 
