@@ -151,3 +151,63 @@ def test_skipped_recording_retried_after_config_update(tmp_path: Path) -> None:
     assert row_v2[2] == "UNKNOWN"
 
     conn.close()
+
+
+def _seed_skipped_row(
+    conn: sqlite3.Connection,
+    *,
+    plaud_id: str,
+    title: str,
+    created_at: str,
+    classifier_label: str,
+) -> None:
+    from plaudsync.state import start_sync_run
+    run_id = start_sync_run(conn, "manual")
+    conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
+        "downloaded_at, local_path, classifier_label, status, sync_run_id) "
+        "VALUES (?, ?, ?, ?, '', ?, 'skipped_unknown_project', ?)",
+        (plaud_id, title, created_at, created_at, classifier_label, run_id),
+    )
+    conn.commit()
+
+
+def test_skipped_recording_outside_14d_window_not_retried(tmp_path: Path) -> None:
+    """Row with created_at_plaud older than 14d must NOT be retried even
+    when config now has the project."""
+    unknown_dir = tmp_path / "UNKNOWN"
+    unknown_dir.mkdir()
+    unclassified = tmp_path / "Unclassified"
+    unclassified.mkdir()
+
+    config = Config(
+        unclassified_dir=unclassified,
+        projects={"UNKNOWN": unknown_dir},
+    )
+    conn = open_state(tmp_path)
+
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=15)).isoformat()
+    _seed_skipped_row(
+        conn,
+        plaud_id="rec-old-1",
+        title="04-09 UNKNOWN: ancient",
+        created_at=old_ts,
+        classifier_label="UNKNOWN",
+    )
+
+    client = _ClientNoListing({"rec-old-1": b"should-never-be-fetched"})
+    exit_code = run_sync(client, CategorizationClassifier(), conn, config, "manual")
+
+    assert exit_code == 0
+    assert client.download_calls == [], "must NOT call download for >14d row"
+
+    mp3s = list(unknown_dir.glob("*.mp3"))
+    assert mp3s == [], "no file must be written for old row"
+
+    row = conn.execute(
+        "SELECT status, local_path FROM recordings WHERE plaud_id = 'rec-old-1'"
+    ).fetchone()
+    assert row[0] == "skipped_unknown_project"
+    assert row[1] == ""
+
+    conn.close()
