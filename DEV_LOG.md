@@ -4,6 +4,38 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-27 — BL-1 + BL-2 implementace: sync progress UI + sync_only_foldered
+
+**Spec:** [docs/superpowers/specs/2026-04-27-bl1-bl2-progress-foldered-design.md](docs/superpowers/specs/2026-04-27-bl1-bl2-progress-foldered-design.md).
+
+**BL-2 (commit e2a105b):**
+- Nový optional bool klíč `sync_only_foldered` v `config.yaml` (default `false`).
+- Pre-classifier gate v `_process_recording`: `if config.sync_only_foldered and meta.plaud_folder == "_unknown": return`. Žádný DB write, žádný download — server-side změna (uživatel zařadí záznam do složky na Plaud) se přirozeně objeví v dalším syncu.
+- 3 integration testy: skips_unfoldered, passes_foldered, default_false_regression.
+
+**BL-1 (commits 5904beb, 6b5ad9e, b5be498):**
+- Nový modul `plaudsync.progress` — atomický file-based progress tracking. `write_progress` / `read_progress` / `clear_progress` / `progress_path`. Atomicita přes `tempfile.mkstemp` + `os.replace`. Windows specifika: retry loop na `PermissionError` (concurrent reader-writer collision na téže cestě).
+- `run_sync` rozšířen o optional `state_root` parametr (None → no-op; backward-compat). Emituje 3 fáze: `listing` (retry/reclassify/Plaud listing), `downloading` (n/total, total = `len(materialized_listing)`), `finalizing`. Listing je nově materializován do `list()` před hlavní smyčkou kvůli `total_count`.
+- `state_reader.read_state_snapshot` rozšířen o optional `state_root`. Cross-check: progress se vrací jen když existuje open `sync_run`. Stale progress.json (subprocess crash) se ignoruje.
+- `ui/app.py` `/api/state` propaguje `app.state.state_root` do readeru.
+- 7 + 3 + 4 testy: `test_progress.py` (concurrent stress test 200 writes vs reader thread, no partial JSON observed), `test_sync_progress_phases.py`, `test_state_reader_progress.py`.
+
+**Plná suite: 244 passed (před BL-1+BL-2: 227, +17 nových testů).**
+
+**Kill criteria check:**
+- `#5` (regex coverage): BL-2 změna dále zužuje "matched" set — recordings bez Plaud složky se nepočítají vůbec. Watch při post-deployment monitoring.
+- `#18` (Sentry scrubbing): BL-2 nemá nové log/Sentry surfaces. BL-1 progress.json obsahuje jen `sync_run_id` (interní int), `phase` (enum), counts, ISO timestamp — žádné PII, žádné business labely.
+
+**Frontend integration (mimo scope tohoto plánu):**
+- React production code už v `SyncStatePayload` má `progress` field; pokud existující polling flow ho ještě nerenderuje, je to drobný frontend ticket. Backend shape je hotový.
+
+**Follow-ups:**
+- Frontend wire-up + manual smoke test v tray UI (klik "Sync Now" → progress bar viditelně tikati per recording).
+- Visibility do retry/reclassify pass počtů (dnes spadají pod `listing`, akceptováno — typicky 0-2 položky).
+- Dokumentace BL-2 v README / config example.
+
+---
+
 ## 2026-04-26 — BL-3 implementace: skip unknown project codes
 
 **Spec:** [docs/superpowers/specs/2026-04-26-bl3-skip-unknown-projects-design.md](docs/superpowers/specs/2026-04-26-bl3-skip-unknown-projects-design.md).
