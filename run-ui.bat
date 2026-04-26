@@ -51,4 +51,3 @@ if not exist "src\plaudsync\ui\static\index.html" (
 )
 
 .venv\Scripts\python.exe -m plaudsync ui
-pause
