@@ -82,12 +82,14 @@ def test_resolve_matched_not_in_config_sanitizes_project_name(tmp_path: Path) ->
     assert target.parent.parent == config.unclassified_dir
 
 
-def test_resolve_unclassified_uses_sanitized_plaud_folder(tmp_path: Path) -> None:
+def test_resolve_unclassified_writes_directly_to_unclassified_dir(tmp_path: Path) -> None:
+    """Unclassified files land directly in unclassified_dir — no per-folder
+    subdivision. plaud_folder is informational only (logged, not pathed)."""
     config = _make_config(tmp_path)
     result = ClassificationResult(status="unclassified", project=None, matched_date=None)
     target = resolve_target_path(result, plaud_folder="Inbox/Misc",
                                   config=config, filename="rec.mp3")
-    assert target == tmp_path / "Unclassified" / "Inbox_Misc" / "rec.mp3"
+    assert target == tmp_path / "Unclassified" / "rec.mp3"
 
 
 def test_resolve_matched_case_insensitive_in_config(tmp_path: Path) -> None:
