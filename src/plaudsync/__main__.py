@@ -159,13 +159,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     ui_parser = subparsers.add_parser(
         "ui",
-        help="Open PlaudSync UI (FastAPI + PyWebView).",
+        help="Open PlaudSync UI standalone (FastAPI + PyWebView).",
     )
     ui_parser.add_argument(
         "--dev",
         action="store_true",
         help="Dev mode: point webview at Vite dev server (port 5173); uvicorn binds PLAUDSYNC_DEV_PORT.",
     )
+
+    subparsers.add_parser("tray", help="Run PlaudSync as tray-resident engine.")
+
+    uw_parser = subparsers.add_parser(
+        "ui-window",
+        help="(internal) Open PyWebView window on http://127.0.0.1:<port>/ ; spawned by tray.",
+    )
+    uw_parser.add_argument("port", type=int, help="uvicorn port already running.")
 
     # No-argument invocation defaults to sync.
     return parser.parse_args(argv)
@@ -212,6 +220,13 @@ def main() -> int:
         if args.command == "ui":
             from plaudsync.ui import runner
             raise SystemExit(runner.main_ui(dev=args.dev))
+        if args.command == "tray":
+            from plaudsync.tray.app import main_tray
+            raise SystemExit(main_tray())
+        if args.command == "ui-window":
+            from plaudsync.ui.runner import open_webview
+            url = f"http://127.0.0.1:{args.port}/"
+            raise SystemExit(open_webview(url))
         # Default: run sync pipeline
         return run_sync_pipeline()
     except PlaudTokenExpired as e:
