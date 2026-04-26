@@ -98,7 +98,7 @@ class SchedulerThread(threading.Thread):
         # Temporarily set trigger so sync_runner skips the gate.
         _prev_trigger = os.environ.get("PLAUDSYNC_TRIGGER")
         if manual:
-            os.environ["PLAUDSYNC_TRIGGER"] = "ui"
+            os.environ["PLAUDSYNC_TRIGGER"] = "ui_sync_now"
         try:
             exit_code = self._run_pipeline()
         except SystemExit as e:

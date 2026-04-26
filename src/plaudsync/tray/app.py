@@ -106,16 +106,17 @@ def _run_tray(state_root: Path) -> int:
 
     def on_open_ui() -> None:
         port = _ensure_uvicorn()
-        # Spawn ui-window subprocess. pythonw na Windows = no console.
+        # Spawn ui-window subprocess. Use python.exe (not pythonw) so that
+        # loguru stderr output is captured in the log file below.
         python_exe = sys.executable
-        if os.name == "nt" and python_exe.lower().endswith("python.exe"):
-            pythonw = Path(python_exe).with_name("pythonw.exe")
-            if pythonw.exists():
-                python_exe = str(pythonw)
-        subprocess.Popen(
-            [python_exe, "-m", "plaudsync", "ui-window", str(port)],
-            close_fds=True,
-        )
+        ui_log = state_root / ".plaudsync" / "ui-window.log"
+        with open(ui_log, "a", encoding="utf-8") as fh:
+            subprocess.Popen(
+                [python_exe, "-m", "plaudsync", "ui-window", str(port)],
+                close_fds=True,
+                stdout=fh,
+                stderr=fh,
+            )
         logger.info("spawned ui-window subprocess on port {p}", p=port)
 
     def on_sync_now() -> None:
