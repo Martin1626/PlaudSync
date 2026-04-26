@@ -130,7 +130,8 @@ def _run_tray(state_root: Path) -> int:
     def on_open_log() -> None:
         log_path = Path(os.getenv("PLAUDSYNC_LOG_PATH") or state_root / ".plaudsync" / "plaudsync.log")
         try:
-            os.startfile(str(log_path))  # type: ignore[attr-defined]  # Windows-only
+            # .log has no default app on most systems; open with notepad explicitly.
+            subprocess.Popen(["notepad.exe", str(log_path)], close_fds=True)
         except Exception:
             logger.exception("failed to open log file")
 
