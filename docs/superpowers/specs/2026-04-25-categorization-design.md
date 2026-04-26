@@ -13,7 +13,7 @@ PlaudSync potřebuje rozhodnout, do **kterého projektu** patří každá staže
 2. **Bez LLM** — uživatel nechce platit tokeny pro per-recording klasifikaci.
 3. **Pure regex na titulek** — Plaud titulek má dohodnutý formát `(YYYY-)?MM-DD <oddělovač> <Projekt>: <zbytek>`.
 4. **Pre-filter na Plaud složky** — sync engine stahuje **jen** nahrávky, které uživatel ručně zařadil do nějaké Plaud složky (Inbox = ignorováno). Plaud složky **neodpovídají 1:1 projektovým složkám** — slouží jen jako sync whitelist.
-5. **Soft fallback** — když title nematchne pattern, nebo se title-matched project name nenajde v YAML configu, nahrávka pokračuje do unclassified bucketu (per-Plaud-folder subdivize) bez hard-failu. Path resolution (převod project labelu na absolutní cestu na disku) **není zodpovědnost této vrstvy** — sync-core spec, `path_resolver.py`.
+5. **Soft fallback** — když title nematchne pattern, nebo se title-matched project name nenajde v YAML configu, nahrávka pokračuje do unclassified bucketu (flat layout od 2026-04-26 — viz Decision #5) bez hard-failu. Path resolution (převod project labelu na absolutní cestu na disku) **není zodpovědnost této vrstvy** — sync-core spec, `path_resolver.py`.
 
 ## Scope (v této feature)
 
@@ -70,15 +70,17 @@ Sync engine, který volá classify(), je povinen po každém volání nastavit `
 
 **Proč:** dodržuje CLAUDE.md "Privacy / observability rules" — žádný business label (project name, plaud_folder) se nesmí dostat do free-text exception messages ani log strings, jen do strukturovaných tagů, které scrubber zachytí. `_REDACTED_KEYS` v `observability.py` musíme rozšířit o `plaud_folder`.
 
-### 5. Soft fallback do unclassified bucketu (per-Plaud-folder subdivize)
+### 5. Soft fallback do unclassified bucketu (flat layout od 2026-04-26)
 
 Categorization vrstva vrací `ClassificationResult` se status="matched" + project (pokud title parsoval) nebo status="unclassified" + project=None. **Path resolution + fallback logiku** (kam to fyzicky uložit) řeší sync-core `path_resolver.py`. Pro úplnost zde popsaná logika sync-core path resolveru:
 
-- **Title nematchne** (status="unclassified") → `${config.unclassified_dir}/<sanitized_plaud_folder>/<filename>`.
+- **Title nematchne** (status="unclassified") → `${config.unclassified_dir}/<filename>` (flat — žádná subdivize).
 - **Title matchne, project je v `config.projects`** → `${config.projects[name]}/<filename>`.
 - **Title matchne, project NENÍ v `config.projects`** (typo / chybějící config entry) → soft fallback `${config.unclassified_dir}/_unmapped_${project}/<filename>`. Loguru warning, sentry tag `error_kind=project_unmapped`.
 
-**Proč ne flat `unclassified/`:** uživatel chce udržet kontext, ze které Plaud složky nahrávka pochází (pro title-no-match) nebo který project label chybí v configu (pro project-not-mapped). Když pak prochází review queue, vidí seskupení podle Plaud workflow nebo podle missing config entries.
+**Proč flat `unclassified/` (revidováno 2026-04-26):** v0 (2026-04-25) měl per-Plaud-folder subdivize (`unclassified_dir/<sanitized_plaud_folder>/`) s argumentem "udržet kontext odkud nahrávka pochází". V praxi uživatel typicky pracuje s 1–2 aktivními Plaud složkami → subdivize jen přidávala zbytečnou vrstvu (`_unknown/`, `Inbox/`) a všechny mis-routed nahrávky stejně končily v jednom subfolderu. Flat layout je jednodušší, surfaces všechno v jednom místě pro quick review. Plaud folder context je stále zachován ve strukturovaných logech (Loguru `bind(plaud_folder=...)`) a Sentry tazích.
+
+**Proč _unmapped_<project>/ subfolder zůstává:** title-matched + project-not-in-config je jiný failure mode (typo v configu nebo chybějící entry) než title-no-match. Subdivize pomáhá uživateli okamžitě vidět, který project label v configu chybí — bez čtení titulku každého souboru. Per-project fallback je smysluplnější než per-Plaud-folder.
 
 **Proč ne hard-fail bez ukládání:** preference fail-soft — je lepší stáhnout do "neřazeno" a logovat, než neřazené nahrávky úplně propást nebo blokovat sync run kvůli typo v configu.
 

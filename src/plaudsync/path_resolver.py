@@ -71,6 +71,7 @@ def resolve_target_path(
         safe_project = _sanitize_folder_name(result.project)
         return config.unclassified_dir / f"_unmapped_{safe_project}" / filename
 
-    # status == "unclassified"
-    sanitized = _sanitize_folder_name(plaud_folder)
-    return config.unclassified_dir / sanitized / filename
+    # status == "unclassified" — flat layout: write directly into unclassified_dir.
+    # plaud_folder is informational only (surfaced via structured logs),
+    # not part of the filesystem path.
+    return config.unclassified_dir / filename

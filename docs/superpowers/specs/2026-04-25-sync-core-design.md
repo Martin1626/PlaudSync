@@ -387,7 +387,8 @@ def resolve_target_path(
           ${config.unclassified_dir}/_unmapped_${project}/{filename}
           + logger.warning + sentry tag error_kind=project_unmapped
     - status=="unclassified":
-          ${config.unclassified_dir}/${sanitized_plaud_folder}/{filename}
+          ${config.unclassified_dir}/{filename}
+          (flat layout — revidováno 2026-04-26; viz categorization-design.md Decision #5)
     """
 
 # locking.py
