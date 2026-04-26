@@ -114,7 +114,7 @@ def record_recording(
             (plaud_id, title, created_at, _now_iso(), local_path,
              classifier_label, status, run_id),
         )
-    elif existing[0] == "failed" and status == "downloaded":
+    elif existing[0] in ("failed", "skipped_unknown_project") and status == "downloaded":
         conn.execute(
             "UPDATE recordings SET title = ?, created_at_plaud = ?, "
             "downloaded_at = ?, local_path = ?, classifier_label = ?, "

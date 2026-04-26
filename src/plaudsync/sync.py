@@ -125,6 +125,86 @@ def _reclassify_recent(
     return moved, failed
 
 
+def _retry_skipped_unknown_project(
+    conn: sqlite3.Connection,
+    client,
+    classifier: Classifier,
+    config: Config,
+    run_id: int,
+    *,
+    days: int = 14,
+) -> tuple[int, int]:
+    """Re-evaluate rows with status='skipped_unknown_project' and
+    created_at_plaud within the last `days` days. If the project is now
+    present in config, download the audio and update the row.
+    Returns (downloaded_count, failed_count).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    rows = conn.execute(
+        "SELECT plaud_id, title, created_at_plaud "
+        "FROM recordings "
+        "WHERE status = 'skipped_unknown_project' "
+        "AND created_at_plaud >= ?",
+        (cutoff,),
+    ).fetchall()
+
+    downloaded = 0
+    failed = 0
+    for plaud_id, title, created_at in rows:
+        try:
+            class _MetaLike:
+                pass
+            meta_like = _MetaLike()
+            meta_like.plaud_id = plaud_id  # type: ignore[attr-defined]
+            meta_like.title = title  # type: ignore[attr-defined]
+            meta_like.created_at = created_at  # type: ignore[attr-defined]
+
+            label = classifier.classify(meta_like)
+            if label == "_unclassified" or config.lookup_project(label) is None:
+                continue
+
+            result = ClassificationResult(
+                status="matched", project=label, matched_date=None,
+            )
+            date_prefix = created_at[:10]
+            filename = f"{date_prefix}_{_slugify(title)}.mp3"
+            target_path = resolve_target_path(
+                result, plaud_folder="(retry)", config=config, filename=filename,
+            )
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            bytes_written = 0
+            try:
+                with open(target_path, "wb") as f:
+                    for chunk in client.download_audio(plaud_id):
+                        f.write(chunk)
+                        bytes_written += len(chunk)
+            except Exception:
+                target_path.unlink(missing_ok=True)
+                raise
+
+            conn.execute(
+                "UPDATE recordings SET status = 'downloaded', "
+                "local_path = ?, classifier_label = ?, downloaded_at = ?, "
+                "sync_run_id = ? WHERE plaud_id = ?",
+                (str(target_path), label,
+                 datetime.now(timezone.utc).isoformat(), run_id, plaud_id),
+            )
+            conn.commit()
+            downloaded += 1
+        except Exception as e:  # noqa: BLE001
+            logger.bind(recording_id=plaud_id).exception("retry_skipped failed")
+            with sentry_sdk.new_scope() as scope:
+                scope.set_tag("error_kind", "retry_skipped_failed")
+                scope.set_tag("recording_id", plaud_id)
+                scope.fingerprint = ["retry_skipped_failed", type(e).__name__]
+                sentry_sdk.capture_exception(e)
+            failed += 1
+
+    return downloaded, failed
+
+
 def run_sync(
     client,
     classifier: Classifier,
@@ -133,6 +213,12 @@ def run_sync(
     trigger: str = "task_scheduler",
 ) -> int:
     run_id = start_sync_run(conn, trigger=trigger)
+
+    # Rolling retry pass for previously-skipped rows whose project may now
+    # be in config. BL-3 — see specs/2026-04-26-bl3-skip-unknown-projects-design.md.
+    retry_downloaded, retry_failed = _retry_skipped_unknown_project(
+        conn, client, classifier, config, run_id, days=14,
+    )
 
     # Rolling re-classify pass: re-evaluate recent _unclassified rows against
     # current config (e.g. user added a project, or fixed a typo). Failures
@@ -143,9 +229,9 @@ def run_sync(
 
     since = last_successful_sync(conn)
 
-    new_count = 0
+    new_count = retry_downloaded
     skipped_count = 0
-    failed_count = reclassify_failed
+    failed_count = reclassify_failed + retry_failed
 
     for meta in client.list_recordings(since=since):
         if recording_exists_and_downloaded(conn, meta.plaud_id):
