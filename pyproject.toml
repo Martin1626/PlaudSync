@@ -28,6 +28,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "pywebview>=5.3",
+    # Tray runtime: pystray icon + Pillow image rendering
+    "pystray>=0.19,<1",
+    "Pillow>=10.0,<12",
 ]
 
 [project.optional-dependencies]
