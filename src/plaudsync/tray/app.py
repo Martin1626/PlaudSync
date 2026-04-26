@@ -90,7 +90,7 @@ def _run_tray(state_root: Path) -> int:
             current_status["value"] = s
         ic = icon_holder["icon"]
         if ic is not None:
-            ic.icon = make_icon_image(s.kind if s.kind in ("idle", "running", "error") else "idle")
+            ic.icon = make_icon_image(s.kind if s.kind in ("idle", "running", "error", "paused") else "idle")
 
     def on_run_complete(exit_code: int) -> None:
         notifier.notify(exit_code, now=datetime.now().astimezone())

@@ -17,6 +17,7 @@ Status reporting:
 """
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -93,6 +94,11 @@ class SchedulerThread(threading.Thread):
 
     def _do_run(self, *, manual: bool) -> None:
         self._on_status(TrayStatus(kind="running"))
+        # Manual "Sync Now" bypasses schedule gate (work-hours / interval).
+        # Temporarily set trigger so sync_runner skips the gate.
+        _prev_trigger = os.environ.get("PLAUDSYNC_TRIGGER")
+        if manual:
+            os.environ["PLAUDSYNC_TRIGGER"] = "ui"
         try:
             exit_code = self._run_pipeline()
         except SystemExit as e:
@@ -100,6 +106,12 @@ class SchedulerThread(threading.Thread):
         except Exception:
             logger.exception("SchedulerThread: pipeline raised uncaught exception")
             exit_code = 1
+        finally:
+            if manual:
+                if _prev_trigger is None:
+                    os.environ.pop("PLAUDSYNC_TRIGGER", None)
+                else:
+                    os.environ["PLAUDSYNC_TRIGGER"] = _prev_trigger
         self._on_complete(exit_code)
         if exit_code == 0:
             now_iso = datetime.now().astimezone().isoformat(timespec="seconds")
