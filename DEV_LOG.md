@@ -4,6 +4,57 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-26 — Backlog: 5 nových položek k implementaci
+
+Poznámky z uživatelského review. Žádná není blokující pro v0; zařadit do Phase 3 / Phase 4 sprintů.
+
+### BL-1 — UI: progress bar při manuální synchronizaci
+
+**Popis:** Po stisku tlačítka „Synchronizovat" v UI se nezobrazuje progress bar, přestože je navržen v prototypu [`frontend/_prototype/PlaudSync UI.html`](frontend/_prototype/PlaudSync%20UI.html). Uživatel nevidí průběh operace.
+
+**Co je potřeba:** Propojit existující WebSocket/SSE stream ze sync backendu s progress komponentou ve frontendu. Prototype HTML obsahuje referenční design.
+
+---
+
+### BL-2 — Nastavení: synchronizovat pouze záznamy zařazené do složky na Plaude
+
+**Popis:** Nová volba v `config.yaml` (nebo UI Settings) — `sync_only_foldered: true`. Záznamy, které na straně Plaude nejsou zařazené do žádné složky, se při synchronizaci přeskočí.
+
+**Co je potřeba:** Analyzovat Plaud API response strukturu pro příznak složky; přidat config key + filtr v sync smyčce; doplnit test cassette.
+
+---
+
+### BL-3 — Kategorizace: ignorovat neznámé project kódy z názvu záznamu
+
+**Popis:** Záznamy s tituly ve formátu `kod_projektu: ...` se mají kategorizovat pouze pokud `kod_projektu` je již definovaný v `config.yaml` pod `projects:`. Neznámé kódy se NEPŘIDÁVAJÍ automaticky — záznam jde do `Unclassified`. Toto omezení se vztahuje na starší záznamy maximálně za posledních 14 dní (rolling window).
+
+**Co je potřeba:** Upravit `categorization.py` — po regex match ověřit `Config.lookup_project(code)` a při `None` fallback na `_unclassified`; 14d window pro starší záznamy (analogie `_reclassify_recent`). Napsat failing test jako první.
+
+---
+
+### BL-4 — Stahování přepisů, osnov, mluvčích a sumarizací (nejen MP3)
+
+**Popis:** Vedle audio souboru (MP3) stahovat také textový obsah záznamu: transkript, osnova, identifikace mluvčích, sumarizace. Plaud API pravděpodobně poskytuje více typů sumarizací (krátká, detailní, action items…) — tyto varianty je potřeba nejdříve zmapovat.
+
+**Analýza potřebná před implementací:**
+1. Zdokumentovat všechny dostupné `note_type` / content fields v Plaud API response.
+2. Navrhnout config volby: které typy stahovat per-projekt nebo globálně.
+3. Rozhodnout formát ukládání (vedle MP3 jako `{stem}.transcript.txt`, `{stem}.summary.json` apod.).
+
+**Co je potřeba:** Spike → API analýza → spec → TDD implementace.
+
+---
+
+### BL-5 — Synchronizace změn transkripce (lokální update při změně na Plaude)
+
+**Popis:** Pokud se transkript nebo jiný textový obsah záznamu na Plaude změní po prvotním stažení, lokální soubory se mají aktualizovat. Pravděpodobně bude potřeba časové omezení (např. kontrolovat jen záznamy mladší N dní nebo porovnávat `updated_at`).
+
+**Závislost:** Navazuje na BL-4 (stahování přepisů).
+
+**Co je potřeba:** Přidat `transcript_updated_at` (nebo ekvivalent) do DB state; v sync smyčce porovnat s lokálně uloženou hodnotou; při rozdílu přepsat soubory. Definovat časové okno v konfiguraci.
+
+---
+
 ## 2026-04-26 — Classifier wire-up + 14d rolling re-classify
 
 **Symptom:** 2 recordings staženy 2026-04-26 (`04-26 Alza: test1`, `2026-04-26 FHB: test2`) skončily v `Unclassified/_unknown/` přesto, že title formát match-uje regex a project klíče v `config.yaml` (`ALZA`, `FHB`) by byly rozpoznatelné case-insensitive.
