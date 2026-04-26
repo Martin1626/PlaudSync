@@ -142,7 +142,7 @@ def _retry_skipped_unknown_project(
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     rows = conn.execute(
-        "SELECT plaud_id, title, created_at_plaud "
+        "SELECT plaud_id, title, created_at_plaud, file_size "
         "FROM recordings "
         "WHERE status = 'skipped_unknown_project' "
         "AND created_at_plaud >= ?",
@@ -151,7 +151,7 @@ def _retry_skipped_unknown_project(
 
     downloaded = 0
     failed = 0
-    for plaud_id, title, created_at in rows:
+    for plaud_id, title, created_at, expected_size in rows:
         try:
             class _MetaLike:
                 pass
@@ -183,6 +183,13 @@ def _retry_skipped_unknown_project(
             except Exception:
                 target_path.unlink(missing_ok=True)
                 raise
+
+            if expected_size and bytes_written != expected_size:
+                target_path.unlink(missing_ok=True)
+                raise PlaudDownloadCorrupted(
+                    f"size mismatch on retry: expected={expected_size}, "
+                    f"written={bytes_written}"
+                )
 
             conn.execute(
                 "UPDATE recordings SET status = 'downloaded', "

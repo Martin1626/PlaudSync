@@ -211,3 +211,49 @@ def test_skipped_recording_outside_14d_window_not_retried(tmp_path: Path) -> Non
     assert row[1] == ""
 
     conn.close()
+
+
+def test_retry_detects_size_mismatch(tmp_path: Path) -> None:
+    """If file_size was persisted at skip time and the retry download yields
+    fewer bytes than expected, the retry must fail (corruption protection)."""
+    unknown_dir = tmp_path / "UNKNOWN"
+    unknown_dir.mkdir()
+    unclassified = tmp_path / "Unclassified"
+    unclassified.mkdir()
+
+    config_v1 = Config(unclassified_dir=unclassified, projects={})
+    conn = open_state(tmp_path)
+
+    meta = _MetaStub(
+        plaud_id="rec-truncated",
+        title="04-26 UNKNOWN: trunc",
+        created_at=datetime.now(timezone.utc).isoformat(),
+        file_size=100,
+    )
+    client_v1 = _ClientWithOneUnknownProject(meta)
+    run_sync(client_v1, CategorizationClassifier(), conn, config_v1, "manual")
+
+    persisted_size = conn.execute(
+        "SELECT file_size FROM recordings WHERE plaud_id = 'rec-truncated'"
+    ).fetchone()[0]
+    assert persisted_size == 100
+
+    config_v2 = Config(unclassified_dir=unclassified,
+                       projects={"UNKNOWN": unknown_dir})
+    client_v2 = _ClientNoListing({"rec-truncated": b"only-30-bytes-not-100--padding"})
+
+    exit_code = run_sync(client_v2, CategorizationClassifier(), conn,
+                         config_v2, "manual")
+
+    assert exit_code != 0, "retry must fail when bytes_written != file_size"
+
+    mp3s = list(unknown_dir.glob("*.mp3"))
+    assert mp3s == [], "partial file must be removed on size mismatch"
+
+    row = conn.execute(
+        "SELECT status FROM recordings WHERE plaud_id = 'rec-truncated'"
+    ).fetchone()
+    assert row[0] == "skipped_unknown_project", \
+        "row must remain skipped after failed retry"
+
+    conn.close()

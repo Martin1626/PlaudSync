@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS recordings (
     local_path        TEXT NOT NULL,
     classifier_label  TEXT NOT NULL,
     status            TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped','skipped_unknown_project')),
-    sync_run_id       INTEGER REFERENCES sync_runs(run_id)
+    sync_run_id       INTEGER REFERENCES sync_runs(run_id),
+    file_size         INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -86,7 +87,7 @@ def recording_exists_and_downloaded(conn: sqlite3.Connection, plaud_id: str) -> 
 
 def record_recording(
     conn: sqlite3.Connection,
-    meta: object,  # duck-typed: needs .plaud_id, .title, .created_at
+    meta: object,  # duck-typed: needs .plaud_id, .title, .created_at; .file_size optional
     status: str,
     local_path: str,
     run_id: int,
@@ -95,12 +96,14 @@ def record_recording(
     """UPSERT semantics: never overwrite a 'downloaded' row.
 
     - If row absent: INSERT.
-    - If row present with status='failed' and incoming status='downloaded': UPDATE.
+    - If row present with status='failed' or 'skipped_unknown_project' and
+      incoming status='downloaded': UPDATE.
     - Otherwise: noop (downloaded → anything is rejected to honor immutability).
     """
     plaud_id = getattr(meta, "plaud_id")
     title = getattr(meta, "title")
     created_at = getattr(meta, "created_at")
+    file_size = getattr(meta, "file_size", None) or None
 
     existing = conn.execute(
         "SELECT status FROM recordings WHERE plaud_id = ?", (plaud_id,)
@@ -109,18 +112,19 @@ def record_recording(
     if existing is None:
         conn.execute(
             "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
-            "downloaded_at, local_path, classifier_label, status, sync_run_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "downloaded_at, local_path, classifier_label, status, sync_run_id, "
+            "file_size) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (plaud_id, title, created_at, _now_iso(), local_path,
-             classifier_label, status, run_id),
+             classifier_label, status, run_id, file_size),
         )
     elif existing[0] in ("failed", "skipped_unknown_project") and status == "downloaded":
         conn.execute(
             "UPDATE recordings SET title = ?, created_at_plaud = ?, "
             "downloaded_at = ?, local_path = ?, classifier_label = ?, "
-            "status = ?, sync_run_id = ? WHERE plaud_id = ?",
+            "status = ?, sync_run_id = ?, file_size = ? WHERE plaud_id = ?",
             (title, created_at, _now_iso(), local_path, classifier_label,
-             status, run_id, plaud_id),
+             status, run_id, file_size, plaud_id),
         )
     # else: existing.status == 'downloaded' → noop (immutable per Decision #5)
     conn.commit()
@@ -148,15 +152,30 @@ def _migrate_status_check_constraint(conn: sqlite3.Connection) -> None:
             local_path        TEXT NOT NULL,
             classifier_label  TEXT NOT NULL,
             status            TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped','skipped_unknown_project')),
-            sync_run_id       INTEGER REFERENCES sync_runs(run_id)
+            sync_run_id       INTEGER REFERENCES sync_runs(run_id),
+            file_size         INTEGER
         );
-        INSERT INTO recordings_new SELECT * FROM recordings;
+        INSERT INTO recordings_new (plaud_id, title, created_at_plaud, downloaded_at, local_path, classifier_label, status, sync_run_id)
+            SELECT plaud_id, title, created_at_plaud, downloaded_at, local_path, classifier_label, status, sync_run_id FROM recordings;
         DROP TABLE recordings;
         ALTER TABLE recordings_new RENAME TO recordings;
         CREATE INDEX IF NOT EXISTS idx_recordings_downloaded_at ON recordings(downloaded_at DESC);
         COMMIT;
         """
     )
+
+
+def _migrate_add_file_size_column(conn: sqlite3.Connection) -> None:
+    """Add nullable file_size column to recordings for existing DBs.
+
+    SQLite's ALTER TABLE ADD COLUMN is idempotent in practice via try/except —
+    OperationalError fires when the column already exists (new DBs from current
+    schema, or post-migration runs).
+    """
+    try:
+        conn.execute("ALTER TABLE recordings ADD COLUMN file_size INTEGER")
+    except sqlite3.OperationalError:
+        pass
 
 
 def open_state(state_root: Path) -> sqlite3.Connection:
@@ -166,5 +185,6 @@ def open_state(state_root: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_SCHEMA)
     _migrate_status_check_constraint(conn)
+    _migrate_add_file_size_column(conn)
     conn.commit()
     return conn
