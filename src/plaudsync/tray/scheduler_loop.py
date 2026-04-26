@@ -58,7 +58,21 @@ class SchedulerThread(threading.Thread):
         self._skip_schedule_gate = skip_schedule_gate
         self._stop_event = threading.Event()
         self._sync_now_event = threading.Event()
-        self._last_sync_iso: Optional[str] = None
+        self._last_sync_iso: Optional[str] = self._load_last_sync_from_db()
+
+    def _load_last_sync_from_db(self) -> Optional[str]:
+        """Read most recent successful sync from state.db. Returns None if DB or row absent."""
+        try:
+            import sqlite3
+            from plaudsync.state import last_successful_sync
+            db_path = self._state_root / ".plaudsync" / "state.db"
+            if not db_path.exists():
+                return None
+            with sqlite3.connect(str(db_path)) as conn:
+                return last_successful_sync(conn)
+        except Exception:
+            logger.exception("failed to load last sync time from state.db")
+            return None
 
     def request_sync_now(self) -> None:
         self._sync_now_event.set()
@@ -88,9 +102,9 @@ class SchedulerThread(threading.Thread):
 
     def _emit_idle_or_paused(self) -> None:
         if is_paused(self._state_root):
-            self._on_status(TrayStatus(kind="paused"))
+            self._on_status(TrayStatus(kind="paused", last_sync_iso=self._last_sync_iso))
         else:
-            self._on_status(TrayStatus(kind="idle"))
+            self._on_status(TrayStatus(kind="idle", last_sync_iso=self._last_sync_iso))
 
     def _do_run(self, *, manual: bool) -> None:
         self._on_status(TrayStatus(kind="running"))

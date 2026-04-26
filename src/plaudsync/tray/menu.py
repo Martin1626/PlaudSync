@@ -64,7 +64,7 @@ def build_menu(
             enabled=False,
         ),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Open UI", lambda icon, item: on_open_ui()),
+        pystray.MenuItem("Open UI", lambda icon, item: on_open_ui(), default=True),
         pystray.MenuItem("Sync Now", lambda icon, item: on_sync_now()),
         pystray.MenuItem(
             lambda item: "Resume sync" if is_paused_fn() else "Pause sync",

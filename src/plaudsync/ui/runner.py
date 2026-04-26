@@ -88,9 +88,11 @@ def open_webview(url: str, title: str = "PlaudSync") -> int:
             height=750,
             resizable=True,
         )
-        webview.start(
-            debug=os.getenv("PLAUDSYNC_UI_DEBUG") == "1",
-        )
+        icon_path = Path(__file__).with_name("icon.ico")
+        start_kwargs: dict = {"debug": os.getenv("PLAUDSYNC_UI_DEBUG") == "1"}
+        if icon_path.exists():
+            start_kwargs["icon"] = str(icon_path)
+        webview.start(**start_kwargs)
         return 0
     except Exception:
         logger.exception("PyWebView failed; backend kept running for browser fallback")
