@@ -127,7 +127,7 @@ def _run_tray(state_root: Path) -> int:
         on_status_change(TrayStatus(kind="paused" if new else "idle", last_sync_iso=prev_iso))
 
     def on_open_log() -> None:
-        log_path = Path(os.getenv("PLAUDSYNC_LOG_PATH") or state_root / "plaudsync.log")
+        log_path = Path(os.getenv("PLAUDSYNC_LOG_PATH") or state_root / ".plaudsync" / "plaudsync.log")
         try:
             os.startfile(str(log_path))  # type: ignore[attr-defined]  # Windows-only
         except Exception:

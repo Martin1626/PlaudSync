@@ -19,7 +19,13 @@ from loguru import logger
 
 
 def _configure_logging() -> None:
-    log_path = Path(os.getenv("PLAUDSYNC_LOG_PATH", "plaudsync.log"))
+    state_root_str = os.getenv("PLAUDSYNC_STATE_ROOT")
+    default_log = (
+        str(Path(state_root_str) / ".plaudsync" / "plaudsync.log")
+        if state_root_str
+        else "plaudsync.log"
+    )
+    log_path = Path(os.getenv("PLAUDSYNC_LOG_PATH", default_log))
     logger.remove()
     logger.add(
         sys.stderr,
