@@ -997,4 +997,22 @@ Po každé task v Claude Code poznamenej: task id, počet mých "no/přepiš/to 
 **Migration pro existing users:** `git pull && pip install -e .[dev] && powershell scripts/install-task-scheduler.ps1 && logout && login`.
 
 **Manual smoke 2026-04-26:**
-- (To be filled during manual smoke test execution)
+- Tray icon visible in systray (rounded-square + sync-arrows glyph). ✅
+- Quit ends process cleanly. ✅
+- Open UI: spawns ui-window subprocess; PyWebView opens window with PlaudSync icon. ✅
+- Double-click on tray icon = Open UI (default action). ✅
+- Sync Now: bypasses schedule gate, runs pipeline (after `trigger='ui_sync_now'` fix for DB CHECK constraint). ✅
+- Pause sync: gray icon + "Pause/Resume" toggle in menu. ✅
+- Open log file: opens log via `notepad.exe` (os.startfile silently failed when .log had no default app). ✅
+- "Last sync" in menu title reflects state.db `MAX(finished_at)` even after tray restart. ✅
+
+**Production fixes applied during smoke:**
+- `_allocate_port()`: pre-allocate uvicorn port via socket.bind(0) — `server.servers[0].sockets[0].getsockname()` was unreliable post-startup, fallback to port=0 caused ERR_CONNECTION_REFUSED in ui-window subprocess.
+- `_configure_logging`: default log path now `state_root/.plaudsync/plaudsync.log` (was CWD/plaudsync.log → on_open_log looked at wrong path).
+- `on_open_log`: switched from `os.startfile` to `subprocess.Popen([notepad.exe, log])` — .log has no default app on this machine.
+- `_do_run(manual=True)`: temporarily sets `PLAUDSYNC_TRIGGER=ui_sync_now` so manual Sync Now bypasses schedule gate (was `"ui"` → DB CHECK constraint violation).
+- `on_status_change`: `paused` added to valid icon states (was falling back to idle blue).
+- Subprocess stdout/stderr now captured to `state_root/.plaudsync/ui-window.log` (was discarded → silent crash diagnosis impossible).
+- ui-window subprocess uses `python.exe` (not pythonw) to retain stderr capture; trade-off: brief console flash at launch.
+
+**Polished icons:** rounded-square background + state-specific glyph (sync-arrows / pause-bars / exclamation), running adds yellow pulse dot. `.ico` (multi-res 16/24/32/48/64) bundled at `src/plaudsync/ui/icon.ico` for window title bar.
