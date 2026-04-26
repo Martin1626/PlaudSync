@@ -1,6 +1,6 @@
 # PlaudSync — Specification
 
-> **Status:** draft v0.2 (2026-04-25, post per-project absolute paths cascade). One-page anchor artifact per průzkum kolo 1.
+> **Status:** draft v0.3 (2026-04-26, post tray pivot). One-page anchor artifact per průzkum kolo 1.
 > Actualizuj při každém scope pivotu. `git log SPEC.md` nepohnutý > 4 týdny = kill criterion trigger (viz memory `project_plaud_dev_workflow.md` #3).
 
 ## Problem
@@ -18,6 +18,7 @@ Plaud AI nahrávky se nesynchronizují automaticky s lokální stanicí ani s pr
 - CLI entry point (`python -m plaudsync`) pro Task Scheduler headless běh.
 - Provoz: periodic hourly run via Windows Task Scheduler.
 - Observability: Loguru rotating file log + Sentry error alerting (scrubbed).
+- **Tray runtime (v0.3 pivot):** primární execution model je tray-resident proces (`pythonw -m plaudsync tray`) spuštěný Task Schedulerem při loginu. Sync engine + UI launcher v jednom procesu. Periodic tick replaced in-process SchedulerThread.
 
 ### UI vrstva (přidáno 2026-04-24 pivot)
 
@@ -31,7 +32,6 @@ Plaud AI nahrávky se nesynchronizují automaticky s lokální stanicí ani s pr
 ## Out of scope (v0)
 
 - Re-processing existing recordings (jen forward-sync od install).
-- Tray icon, auto-start with Windows, live bubble notifications (plánováno v1.1+).
 - Heat mapa aktivity, advanced filtry, vyhledávání v historii (v1.1+).
 - Daemon / Windows Service architecture, REST API pro external integrations, remote UI.
 - Multi-user nebo team sharing.
@@ -63,6 +63,8 @@ Plaud AI nahrávky se nesynchronizují automaticky s lokální stanicí ani s pr
 5. **Observability:** každý neúspěšný sync triggeruje alert do < 5 min (email nebo push).
 6. **UI cold start:** `python -m plaudsync ui` po viditelné okno PyWebView ≤ 3 s. Jinak UX degradace → vyšetřit bundle size / startup.
 7. **Sync Now latence:** klik na tlačítko → CLI subprocess spuštěný ≤ 2 s (cold Python start je cca 200 ms; 2 s je strop s marginou).
+8. **Tray crash recovery:** po Task Scheduler restartu < 90 s od failure (ověřitelné `Get-WinEvent -LogName Microsoft-Windows-TaskScheduler/Operational`).
+9. **Notification debounce:** stejný error_kind v 30 min okně jen 1× toast.
 
 ## Architectural decisions
 
@@ -76,6 +78,7 @@ Rozhodnuty v kolech 1–4 průzkumu, detaily v memory:
 - **Auth vrstva (2026-04-24):** manual token paste do `.env` + pre-flight + reactive 401 handling. Detaily: [docs/superpowers/specs/2026-04-24-plaud-auth-design.md](docs/superpowers/specs/2026-04-24-plaud-auth-design.md).
 - **Categorization (2026-04-25 v0.2):** single-layer regex, ne waterfall. Detaily: [docs/superpowers/specs/2026-04-25-categorization-design.md](docs/superpowers/specs/2026-04-25-categorization-design.md).
 - **Sync core (2026-04-25 v0.2):** per-project absolutní cesty, žádný společný kořen. YAML config v `${PLAUDSYNC_STATE_ROOT}/config.yaml`. Detaily: [docs/superpowers/specs/2026-04-25-sync-core-design.md](docs/superpowers/specs/2026-04-25-sync-core-design.md).
+- **Tray runtime (2026-04-26 pivot):** pystray + threading.Thread scheduler, in-process sync engine, Task Scheduler degradován na At-log-on launcher s restart-on-failure. Detaily: [docs/superpowers/specs/2026-04-26-tray-design.md](docs/superpowers/specs/2026-04-26-tray-design.md).
 
 ## Kill criteria (summary — fully detailed v memory files)
 
@@ -90,6 +93,7 @@ Rozhodnuty v kolech 1–4 průzkumu, detaily v memory:
 
 ## Revision history
 
+- **2026-04-26 (v0.3):** tray pivot — tray + auto-start z `Out of scope` do core scope. `pythonw -m plaudsync tray` jako primary execution model. Task Scheduler trigger z 15-min repetition na At-log-on. Nové deps pystray + Pillow. Detaily: [docs/superpowers/specs/2026-04-26-tray-design.md](docs/superpowers/specs/2026-04-26-tray-design.md).
 - **2026-04-25 (v0.2):** per-project absolutní cesty (žádný společný kořen). Env var `PLAUDSYNC_LOCAL_ROOT` → `PLAUDSYNC_STATE_ROOT` (jen state, ne recordings). Cílová struktura per-project z `${PLAUDSYNC_STATE_ROOT}/config.yaml`. Single-layer regex klasifikace (M365/LLM waterfall vyřazen). Success criterion #2 z "LLM accuracy" na "regex coverage rate". Anthropic + M365 odstraněny z paid deps. Cascade z categorization v0.2 + sync-core v0.2 + ui-architecture v0.2 + .env.example update.
 - **2026-04-24 (v0.1):** SPEC pivot — UI přesunuto z out-of-scope do core scope. MVP A (Dashboard + Sync Now + Settings). Stack FastAPI + React + PyWebView, on-demand lifecycle. Detaily brainstorm procesu v `DEV_LOG.md` záznam "SPEC pivot". Auth vrstva spec zapsán do `docs/superpowers/specs/2026-04-24-plaud-auth-design.md`.
 - **2026-04-24 (v0):** v0 draft, založeno po průzkumech kol 1–4.

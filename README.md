@@ -52,25 +52,36 @@ This opens the PyWebView window. In Nastavení (Settings):
 3. Edit Schedule to set work-hours window + intervals (default: Mon-Fri 8:00-16:00, 15-min interval during work hours, 60-min off-hours).
 4. Click Synchronizovat to trigger an immediate sync from the Dashboard.
 
-### Production go-live — Task Scheduler
+## Production setup (Windows 11)
 
-```powershell
-.\scripts\install-task-scheduler.ps1
-```
+1. **Clone + install:**
+   ```bash
+   git clone https://github.com/.../PlaudSync.git
+   cd PlaudSync
+   python -m venv .venv
+   .venv\Scripts\pip install -e .[dev]
+   ```
 
-Registers a per-user task that ticks every 15 minutes while you're logged on. The schedule.py gating logic decides on each tick whether the sync pipeline actually runs based on the work-hours window and elapsed time since last successful sync.
+2. **Configure secrets:** copy `.env.example` → `.env`, fill `PLAUD_API_TOKEN` and `PLAUDSYNC_STATE_ROOT`.
 
-To override defaults:
+3. **Build UI bundle:**
+   ```bash
+   cd frontend && npm install && npm run build && cd ..
+   ```
 
-```powershell
-.\scripts\install-task-scheduler.ps1 -TaskName "PlaudSync" -IntervalMinutes 15
-```
+4. **Register tray runtime as auto-start:**
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts/install-task-scheduler.ps1
+   ```
 
-To remove:
+5. **Logout + login.** Tray ikona "PlaudSync" se objeví v notification area. Klik → Open UI / Sync Now / Pause / Quit.
 
-```powershell
-Unregister-ScheduledTask -TaskName "PlaudSync" -Confirm:$false
-```
+To remove: `powershell -File scripts/uninstall-task-scheduler.ps1`.
+
+**Manual / dev fallbacks:**
+- `python -m plaudsync` — headless sync (CI / debug).
+- `python -m plaudsync ui` — UI okno bez tray (dev / fallback když tray crashne).
+- `run-ui.bat` — totéž co `ui` subcommand, dvojklik launcher.
 
 ## How it works
 

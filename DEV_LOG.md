@@ -980,3 +980,21 @@ Po každé task v Claude Code poznamenej: task id, počet mých "no/přepiš/to 
 | Date | Task | Corrections | Notes |
 |------|------|-------------|-------|
 | — | — | — | — |
+
+---
+
+## 2026-04-26 — Tray runtime pivot (SPEC v0.2 → v0.3)
+
+**Brainstorm:** 5 otázek — Tray vs. Task Scheduler vztah (A: tray nahradí), auto-start (A: Task Scheduler At-log-on + restart), proces layout (B: tray + uvicorn one proces, UI okno subprocess), scheduler tech (B: threading.Thread + Event.wait smyčka), tray menu (A modified: Title + Open UI + Sync Now + Pause + Open log + Quit, 3-state ikona, toast jen errors s 30 min debounce).
+
+**Spec:** [docs/superpowers/specs/2026-04-26-tray-design.md](docs/superpowers/specs/2026-04-26-tray-design.md)
+**Plan:** [docs/superpowers/plans/2026-04-26-tray-runtime.md](docs/superpowers/plans/2026-04-26-tray-runtime.md)
+
+**Reasoning:** v0 SPEC pivot — periodic Task Scheduler tick + manual `run-ui.bat` šel kolem viditelnosti stavu pro běžícího uživatele. Tray = single proces s viditelnou prezencí, instant "Sync Now", toast notifikace pro errors. Trade-off (sync stojí když tray neběží) mitigated Task Scheduler restart-on-failure.
+
+**Watch items:** W-U6 (pystray+PyWebView coexistence neověřena na produkční mašině), W-U7 (subprocess cold start ≤ 3 s na pomalém disku — měřit success criterion #5), W-U8 (Task Scheduler At-log-on fast-logon edge — `-Delay PT30S` možný fallback).
+
+**Migration pro existing users:** `git pull && pip install -e .[dev] && powershell scripts/install-task-scheduler.ps1 && logout && login`.
+
+**Manual smoke 2026-04-26:**
+- (To be filled during manual smoke test execution)
