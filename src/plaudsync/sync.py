@@ -275,6 +275,12 @@ def _process_recording(
     conn: sqlite3.Connection,
     run_id: int,
 ) -> None:
+    # BL-2 gate: sync_only_foldered=true skips recordings without a Plaud
+    # folder. No DB write — server-side change (user files the recording)
+    # naturally surfaces it on next sync.
+    if config.sync_only_foldered and meta.plaud_folder == "_unknown":
+        return
+
     label = classifier.classify(meta)
 
     # BL-3 gate: regex matched a project, but it is not in config.yaml.

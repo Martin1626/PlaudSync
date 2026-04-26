@@ -22,6 +22,7 @@ class ConfigParseError:
 class Config:
     unclassified_dir: Path
     projects: dict[str, Path]
+    sync_only_foldered: bool = False
 
     def lookup_project(self, name: str) -> Path | None:
         """Case-insensitive project name → absolute path lookup.
@@ -107,10 +108,17 @@ def load_config(state_root: Path) -> Config:
         else:
             seen_casefolds[cf] = key
 
+    sync_only_foldered_raw = data.get("sync_only_foldered", False)
+    if not isinstance(sync_only_foldered_raw, bool):
+        errors.append(ConfigParseError(
+            0, f"sync_only_foldered must be a boolean, got: {type(sync_only_foldered_raw).__name__}"
+        ))
+
     if errors:
         raise ConfigValidationError(errors)
 
     return Config(
         unclassified_dir=Path(unclassified_dir_str),
         projects=projects,
+        sync_only_foldered=bool(sync_only_foldered_raw),
     )
