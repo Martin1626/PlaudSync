@@ -19,6 +19,7 @@ from plaudsync.path_resolver import resolve_target_path
 from plaudsync.plaud_client import (
     PlaudDownloadCorrupted,
 )
+from plaudsync.progress import clear_progress, write_progress
 from plaudsync.state import (
     finish_sync_run,
     last_successful_sync,
@@ -218,53 +219,79 @@ def run_sync(
     conn: sqlite3.Connection,
     config: Config,
     trigger: str = "task_scheduler",
+    state_root: Path | None = None,
 ) -> int:
     run_id = start_sync_run(conn, trigger=trigger)
 
-    # Rolling retry pass for previously-skipped rows whose project may now
-    # be in config. BL-3 — see specs/2026-04-26-bl3-skip-unknown-projects-design.md.
-    retry_downloaded, retry_failed = _retry_skipped_unknown_project(
-        conn, client, classifier, config, run_id, days=14,
-    )
+    def _emit(phase: str, processed: int | None, total: int | None) -> None:
+        if state_root is None:
+            return
+        write_progress(
+            state_root,
+            sync_run_id=run_id,
+            phase=phase,  # type: ignore[arg-type]
+            processed_count=processed,
+            total_count=total,
+        )
 
-    # Rolling re-classify pass: re-evaluate recent _unclassified rows against
-    # current config (e.g. user added a project, or fixed a typo). Failures
-    # roll into failed_count via exit_code semantics.
-    reclassify_moved, reclassify_failed = _reclassify_recent(
-        conn, classifier, config, run_id, days=14,
-    )
+    try:
+        _emit("listing", None, None)
 
-    since = last_successful_sync(conn)
+        # Rolling retry pass for previously-skipped rows whose project may now
+        # be in config. BL-3 — see specs/2026-04-26-bl3-skip-unknown-projects-design.md.
+        retry_downloaded, retry_failed = _retry_skipped_unknown_project(
+            conn, client, classifier, config, run_id, days=14,
+        )
 
-    new_count = retry_downloaded
-    skipped_count = 0
-    failed_count = reclassify_failed + retry_failed
+        # Rolling re-classify pass: re-evaluate recent _unclassified rows against
+        # current config (e.g. user added a project, or fixed a typo). Failures
+        # roll into failed_count via exit_code semantics.
+        reclassify_moved, reclassify_failed = _reclassify_recent(
+            conn, classifier, config, run_id, days=14,
+        )
 
-    for meta in client.list_recordings(since=since):
-        if recording_exists_and_downloaded(conn, meta.plaud_id):
-            skipped_count += 1
-            continue
-        try:
-            _process_recording(meta, client, classifier, config, conn, run_id)
-            new_count += 1
-        except Exception as e:  # noqa: BLE001 — wide on purpose, we re-raise into Sentry
-            logger.bind(recording_id=meta.plaud_id).exception("recording failed")
-            with sentry_sdk.new_scope() as scope:
-                scope.set_tag("error_kind", "recording_failed")
-                scope.set_tag("recording_id", meta.plaud_id)
-                scope.fingerprint = ["recording_failed", type(e).__name__]
-                sentry_sdk.capture_exception(e)
-            record_recording(conn, meta, status="failed",
-                             local_path="", run_id=run_id)
-            failed_count += 1
+        since = last_successful_sync(conn)
+        metas = list(client.list_recordings(since=since))
 
-    exit_code = 4 if failed_count > 0 else 0
-    finish_sync_run(
-        conn, run_id, exit_code=exit_code,
-        recordings_new=new_count, recordings_skipped=skipped_count,
-        recordings_failed=failed_count,
-    )
-    return exit_code
+        new_count = retry_downloaded
+        skipped_count = 0
+        failed_count = reclassify_failed + retry_failed
+        total = len(metas)
+
+        _emit("downloading", 0, total)
+
+        for i, meta in enumerate(metas):
+            if recording_exists_and_downloaded(conn, meta.plaud_id):
+                skipped_count += 1
+                _emit("downloading", i + 1, total)
+                continue
+            try:
+                _process_recording(meta, client, classifier, config, conn, run_id)
+                new_count += 1
+            except Exception as e:  # noqa: BLE001 — wide on purpose, we re-raise into Sentry
+                logger.bind(recording_id=meta.plaud_id).exception("recording failed")
+                with sentry_sdk.new_scope() as scope:
+                    scope.set_tag("error_kind", "recording_failed")
+                    scope.set_tag("recording_id", meta.plaud_id)
+                    scope.fingerprint = ["recording_failed", type(e).__name__]
+                    sentry_sdk.capture_exception(e)
+                record_recording(conn, meta, status="failed",
+                                 local_path="", run_id=run_id)
+                failed_count += 1
+            _emit("downloading", i + 1, total)
+
+        _emit("finalizing", None, None)
+
+        exit_code = 4 if failed_count > 0 else 0
+        finish_sync_run(
+            conn, run_id, exit_code=exit_code,
+            recordings_new=new_count, recordings_skipped=skipped_count,
+            recordings_failed=failed_count,
+        )
+        return exit_code
+    finally:
+        if state_root is not None:
+            clear_progress(state_root)
 
 
 def _process_recording(

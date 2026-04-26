@@ -101,7 +101,7 @@ def run_sync_pipeline() -> int:
                 with PlaudClient(token) as client:
                     return orchestrate_sync(
                         client, CategorizationClassifier(), conn, config,
-                        trigger=trigger,
+                        trigger=trigger, state_root=state_root,
                     )
             finally:
                 conn.close()
