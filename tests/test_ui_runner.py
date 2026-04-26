@@ -51,6 +51,7 @@ def test_main_ui_resolves_port_and_passes_to_webview(
     import plaudsync.ui.runner as runner_module
     monkeypatch.setattr(runner_module, "webview", fake_webview)
     monkeypatch.setattr(runner_module.uvicorn, "Server", lambda config: fake_server)
+    monkeypatch.setattr(runner_module, "_allocate_port", lambda: 51234)
 
     # webview.start triggers fake_server shutdown so the daemon thread exits
     def stop_fake_server(*args, **kwargs):

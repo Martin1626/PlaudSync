@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
 import threading
 from pathlib import Path
 
@@ -17,12 +18,23 @@ import webview
 from loguru import logger
 
 
+def _allocate_port() -> int:
+    """Bind a socket to port 0, let the OS assign a free port, then release it."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def start_uvicorn_thread(app, port: int = 0) -> tuple[uvicorn.Server, int]:
     """Start uvicorn in a daemon thread; return (server, resolved_port).
 
     Blocks calling thread until uvicorn signals it accepts connections (max 5 s).
     Caller is responsible for `server.should_exit = True` on shutdown.
     """
+    if port == 0:
+        port = _allocate_port()
+
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
@@ -32,18 +44,12 @@ def start_uvicorn_thread(app, port: int = 0) -> tuple[uvicorn.Server, int]:
     )
     server = uvicorn.Server(config)
     started = threading.Event()
-    port_holder: dict[str, int] = {}
 
     def serve() -> None:
         original_startup = server.startup
 
         async def startup_with_signal(*args, **kwargs):
             await original_startup(*args, **kwargs)
-            try:
-                resolved = server.servers[0].sockets[0].getsockname()[1]
-            except (IndexError, AttributeError):
-                resolved = port or 0
-            port_holder["port"] = resolved
             started.set()
 
         server.startup = startup_with_signal  # type: ignore[method-assign]
@@ -52,7 +58,7 @@ def start_uvicorn_thread(app, port: int = 0) -> tuple[uvicorn.Server, int]:
     threading.Thread(target=serve, daemon=True).start()
     if not started.wait(timeout=5.0):
         raise RuntimeError("uvicorn failed to start within 5 s")
-    return server, port_holder["port"]
+    return server, port
 
 
 def _browser_fallback_wait() -> None:
