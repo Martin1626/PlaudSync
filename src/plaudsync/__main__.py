@@ -27,11 +27,13 @@ def _configure_logging() -> None:
     )
     log_path = Path(os.getenv("PLAUDSYNC_LOG_PATH", default_log))
     logger.remove()
-    logger.add(
-        sys.stderr,
-        level=os.getenv("PLAUDSYNC_LOG_LEVEL", "INFO"),
-        enqueue=True,
-    )
+    # pythonw.exe sets sys.stderr to None — skip the stderr sink in that case.
+    if sys.stderr is not None:
+        logger.add(
+            sys.stderr,
+            level=os.getenv("PLAUDSYNC_LOG_LEVEL", "INFO"),
+            enqueue=True,
+        )
     logger.add(
         log_path,
         level="DEBUG",
