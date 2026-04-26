@@ -23,6 +23,20 @@ class Config:
     unclassified_dir: Path
     projects: dict[str, Path]
 
+    def lookup_project(self, name: str) -> Path | None:
+        """Case-insensitive project name → absolute path lookup.
+
+        Returns the configured Path for the first projects key whose casefold
+        matches `name.casefold()`. Returns None when nothing matches.
+        Duplicate casefold keys are rejected at load_config time, so the
+        first match here is unambiguous.
+        """
+        target = name.casefold()
+        for key, path in self.projects.items():
+            if key.casefold() == target:
+                return path
+        return None
+
 
 class ConfigValidationError(Exception):
     """Raised by load_config on YAML syntax error or schema violation.
