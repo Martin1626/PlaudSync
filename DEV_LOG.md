@@ -4,6 +4,67 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-26 — v0 production-ready: Schedule + Phase 2 smoke + security review + Task Scheduler installer
+
+Single-session batch wrapping v0 to shippable. 4 commits to origin/main.
+
+### Schedule feature merged
+
+`feat(schedule): work-hours/off-hours sync gating + UI endpoint` (`aa8d4dc`):
+- `src/plaudsync/schedule.py` (270 LoC) + 26 tests (`test_schedule.py` 22 + `test_ui_schedule_endpoint.py` 4) — all green.
+- `__main__.py` schedule gating block, exit 5 on skip (same as SyncLockHeld for benign alerting).
+- `ui/app.py` GET/PUT `/api/schedule` endpoints with 422 validation.
+
+`feat(ui/settings): Schedule panel + YAML syntax highlight` (`317e58d`):
+- SchedulePanel.tsx (271 LoC) + yamlHighlight.ts (136 LoC; Settings spec Gap 5 deferred → shipped).
+- YamlEditor overlay rendering with `escapeHtml` first (XSS-safe `dangerouslySetInnerHTML`).
+
+### Code review (subagent) — 3 must-fix applied pre-commit
+
+- **C1:** dropped dead `try/except sqlite3.OperationalError` in `__main__` (open_state has CREATE IF NOT EXISTS).
+- **I1:** removed unused `timezone` import.
+- **I2:** `save_schedule` now atomic via `os.replace` — prevents UI/CLI race producing torn JSON read.
+- **Test mock parity:** `_setup_sync_pipeline_mocks` now bootstraps `_SCHEMA` in `:memory:` connection (regression fixed).
+
+After fixes: 155/155 tests green, bandit 0 H / 0 M / 3 L (subprocess intentional).
+
+### Phase 2 backend smoke PASS
+
+`python -m plaudsync ui --dev` against tmp `PLAUDSYNC_STATE_ROOT`:
+
+| Endpoint | Status | Verified |
+|---|---|---|
+| `/api/healthz` | 200 | `{"status":"ok"}` |
+| `/api/state` | 200 | sync=idle, recordings=[] |
+| `/api/config` | 200 | UI-seeded DEFAULT_YAML (lifespan auto-seed works) |
+| `/api/schedule` | 200 | defaults: 15min work / 60min off, Mon-Fri 8-16 |
+
+Lifespan handler auto-created `config.yaml`, `.plaudsync/state.db` (+ WAL + shm).
+
+### `/security-review` — clean
+
+`superpowers:code-reviewer` reviewed all 3 commits. **No HIGH-CONFIDENCE findings.** Verified: dangerouslySetInnerHTML is XSS-safe (escapeHtml + closed Cls union + CSP defense), `/api/schedule` PUT validates Pydantic shape + range, `save_schedule` writes fixed path, `load_schedule` uses `json.loads` (safe), schedule gating bypass only for `task_scheduler` trigger.
+
+### Production go-live artifacts
+
+`docs(production): Task Scheduler installer + README setup quickstart` (`ed089fc`):
+- `scripts/install-task-scheduler.ps1` — PowerShell helper, idempotent, per-user Limited token, 15-min ticks.
+- `README.md` — quickstart, Plaud token recipe, Task Scheduler one-liner, data flow diagram, ops triage table.
+
+### Pending user actions for full go-live
+
+1. `.\scripts\install-task-scheduler.ps1` (per-user, no admin).
+2. Wait 15 min OR `Start-ScheduledTask -TaskName "PlaudSync"`. Verify `<STATE_ROOT>\plaudsync.log` + Sentry.
+3. Tune Schedule via UI Settings if 15-min default needs adjusting.
+
+### Status
+
+**v0 shippable end-to-end.** Auth + sync core + categorization + UI backend + frontend + schedule gating live on `main`. 155 tests green, bandit clean, Sentry scrubbing verified, CSP locked, no security findings.
+
+**v1.1 backlog:** Dashboard `_unmapped_<project>` badge variant, log viewer modal, Plaud `filetag_id` UUID → display name resolution, click-row drill-down detail.
+
+---
+
 ## 2026-04-25 — UI frontend Phase 1 smoke (mock data) PASS
 
 Branch `feat/ui-frontend` complete: 15 plan tasks + 4 follow-up fix
