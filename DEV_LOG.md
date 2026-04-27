@@ -4,6 +4,22 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-27 — Log spam: schedule-skip downgrade INFO → DEBUG
+
+**Symptom:** Aktivní `state_root/.plaudsync/plaudsync.log` rostl o ~1 440 řádků/den mimo pracovní hodiny. Každý záznam: `sync_runner:run_sync_pipeline:88 - skipping run per schedule (work_hours=False, interval=60min)`.
+
+**Root cause:** `SchedulerThread` tickuje každých 60 s (`tick_seconds=60.0`) a delegate-uje work-hours/interval gate na `run_sync_pipeline`. Pipeline ho vyhodnotí, vyhodí `SystemExit(5)`, ale nejdřív zaloguje INFO. Mimo work hours = INFO log per minutu.
+
+**Fix:** `sync_runner.py:88` `logger.info` → `logger.debug`. Schedule skip není aktivovatelná událost (audit přes `sync_runs` tabulku, kde se skipy stejně neukládají). Při potřebě debugu lze přepnout `PLAUDSYNC_LOG_LEVEL=DEBUG`.
+
+**Související legacy artefakt:** smazán `C:/GitHub/PlaudSync/plaudsync.log` (8,9 MB, gitignored). Vznikl historicky předtím, než `_configure_logging` defaultoval na `state_root/.plaudsync/plaudsync.log` (commit `4fbb65b`).
+
+**Anomálie v logu, které byly už opraveny v aktuálním kódu (potvrzeno z git historie):**
+- `tray.app:on_open_log` `FileNotFoundError` — `40fa7d0` (`os.startfile` → `subprocess.Popen(notepad)`).
+- `SchedulerThread: pipeline raised uncaught` `IntegrityError CHECK constraint trigger='ui'` — `d23b57f` (`"ui"` → `"ui_sync_now"`).
+
+---
+
 ## 2026-04-27 — BL-1 + BL-2 implementace: sync progress UI + sync_only_foldered
 
 **Spec:** [docs/superpowers/specs/2026-04-27-bl1-bl2-progress-foldered-design.md](docs/superpowers/specs/2026-04-27-bl1-bl2-progress-foldered-design.md).

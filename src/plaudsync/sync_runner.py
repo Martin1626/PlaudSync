@@ -85,7 +85,7 @@ def run_sync_pipeline() -> int:
             peek.close()
         now_local = datetime.now().astimezone()
         if not should_run_now(schedule, now=now_local, last_success_iso=last_iso):
-            logger.info(
+            logger.debug(
                 "skipping run per schedule (work_hours={wh}, interval={iv}min)",
                 wh=is_within_work_hours(schedule, now_local),
                 iv=applicable_interval_minutes(schedule, now_local),
