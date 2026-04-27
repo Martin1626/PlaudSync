@@ -50,6 +50,24 @@ export function useStartSync() {
   const qc = useQueryClient();
   return useMutation<StartSyncResponse, Error, void>({
     mutationFn: postStartSync,
+    onSuccess: (data) => {
+      // Optimistic update: sync subprocess might not have inserted the
+      // sync_run row yet by the time we refetch /api/state. Force the cache
+      // to status="running" so the polling loop kicks into 1.5s cadence
+      // immediately and catches progress.json updates.
+      qc.setQueryData<StateResponse>(STATE_QUERY_KEY, (prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          sync: {
+            ...prev.sync,
+            status: "running",
+            started_at: data.started_at,
+            trigger: "ui_sync_now",
+          },
+        };
+      });
+    },
     onSettled: () => {
       // Always invalidate state — happy path picks up running stav,
       // 409 ConflictError still wants a fresh state read to show running.
