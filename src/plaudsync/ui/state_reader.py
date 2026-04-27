@@ -23,6 +23,9 @@ class SyncStatePayload(TypedDict):
     last_run_at: str | None
     last_run_outcome: Literal["success", "partial_failure", "failed"] | None
     last_run_exit_code: int | None
+    last_run_new_count: int | None
+    last_run_skipped_count: int | None
+    last_run_failed_count: int | None
     last_error_summary: str | None
     progress: SyncProgressPayload | None
 
@@ -64,12 +67,13 @@ def _read_running(conn: sqlite3.Connection) -> tuple[str, str] | None:
     return (row[0], row[1]) if row else None
 
 
-def _read_last_finished(conn: sqlite3.Connection) -> tuple[str, int] | None:
+def _read_last_finished(conn: sqlite3.Connection) -> tuple[str, int, int, int, int] | None:
     row = conn.execute(
-        "SELECT finished_at, exit_code FROM sync_runs "
+        "SELECT finished_at, exit_code, recordings_new, recordings_skipped, "
+        "recordings_failed FROM sync_runs "
         "WHERE finished_at IS NOT NULL ORDER BY started_at DESC LIMIT 1"
     ).fetchone()
-    return (row[0], row[1]) if row else None
+    return (row[0], row[1], row[2], row[3], row[4]) if row else None
 
 
 def _read_recordings(conn: sqlite3.Connection) -> list[RecordingRowPayload]:
@@ -129,6 +133,11 @@ def read_state_snapshot(
     last_finished = _read_last_finished(conn)
     progress = _read_progress_for_running(state_root, running)
 
+    last_counts = (
+        (last_finished[2], last_finished[3], last_finished[4])
+        if last_finished else (None, None, None)
+    )
+
     if running:
         started_at, trigger = running
         sync: SyncStatePayload = {
@@ -138,6 +147,9 @@ def read_state_snapshot(
             "last_run_at": last_finished[0] if last_finished else None,
             "last_run_outcome": _outcome_for_exit_code(last_finished[1]) if last_finished else None,
             "last_run_exit_code": last_finished[1] if last_finished else None,
+            "last_run_new_count": last_counts[0],
+            "last_run_skipped_count": last_counts[1],
+            "last_run_failed_count": last_counts[2],
             "last_error_summary": None,
             "progress": progress,
         }
@@ -149,6 +161,9 @@ def read_state_snapshot(
             "last_run_at": last_finished[0] if last_finished else None,
             "last_run_outcome": _outcome_for_exit_code(last_finished[1]) if last_finished else None,
             "last_run_exit_code": last_finished[1] if last_finished else None,
+            "last_run_new_count": last_counts[0],
+            "last_run_skipped_count": last_counts[1],
+            "last_run_failed_count": last_counts[2],
             "last_error_summary": None,
             "progress": None,
         }

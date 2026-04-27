@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Outlet } from "react-router-dom";
 
 import { useStateQuery } from "@/api/hooks";
@@ -20,9 +21,34 @@ const IDLE_SYNC: SyncState = {
   last_run_at: null,
   last_run_outcome: null,
   last_run_exit_code: null,
+  last_run_new_count: null,
+  last_run_skipped_count: null,
+  last_run_failed_count: null,
   last_error_summary: null,
   progress: null,
 };
+
+function buildSyncSummaryMessage(sync: SyncState): string | null {
+  if (sync.last_run_outcome === null) return null;
+  const newCount = sync.last_run_new_count ?? 0;
+  const skipped = sync.last_run_skipped_count ?? 0;
+  const failed = sync.last_run_failed_count ?? 0;
+
+  if (sync.last_run_outcome === "failed") {
+    return "Synchronizace selhala. Detail v logu.";
+  }
+  if (sync.last_run_outcome === "partial_failure") {
+    return `Synchronizace dokončena s chybami: ${newCount} nových, ${failed} selhalo.`;
+  }
+  // success
+  if (newCount === 0 && skipped === 0) {
+    return "Synchronizace dokončena. Nic nového.";
+  }
+  const parts: string[] = [];
+  if (newCount > 0) parts.push(`${newCount} ${newCount === 1 ? "nový" : "nových"}`);
+  if (skipped > 0) parts.push(`${skipped} přeskočeno`);
+  return `Synchronizace dokončena: ${parts.join(", ")}.`;
+}
 
 export default function AppShell() {
   const { data } = useStateQuery();
@@ -33,6 +59,24 @@ export default function AppShell() {
   const overlayVisible = (mockCtx?.showOverlay ?? false) || conn.visible;
 
   const sync = data?.sync ?? IDLE_SYNC;
+  const prevStatusRef = useRef<SyncState["status"] | null>(null);
+  const seenRunRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = sync.status;
+
+    if (prev !== "running" || sync.status !== "idle") return;
+    if (!sync.last_run_at) return;
+    // Avoid double-toast on re-renders for the same finished run.
+    if (seenRunRef.current === sync.last_run_at) return;
+    seenRunRef.current = sync.last_run_at;
+
+    const message = buildSyncSummaryMessage(sync);
+    if (!message) return;
+    const variant = sync.last_run_outcome === "failed" ? "error" : "success";
+    pushToast(variant, message);
+  }, [sync, pushToast]);
 
   const onBannerAction = (banner: { id: string; actionTarget?: "settings" }) => {
     if (banner.actionTarget === "settings") {

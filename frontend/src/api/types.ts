@@ -18,6 +18,9 @@ export interface SyncState {
   last_run_at: string | null;
   last_run_outcome: SyncOutcome | null;
   last_run_exit_code: number | null;
+  last_run_new_count: number | null;
+  last_run_skipped_count: number | null;
+  last_run_failed_count: number | null;
   last_error_summary: string | null;
   progress: SyncProgress | null;
 }

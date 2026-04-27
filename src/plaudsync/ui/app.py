@@ -81,6 +81,9 @@ class SyncState(BaseModel):
     last_run_at: str | None = None
     last_run_outcome: Literal["success", "partial_failure", "failed"] | None = None
     last_run_exit_code: int | None = None
+    last_run_new_count: int | None = None
+    last_run_skipped_count: int | None = None
+    last_run_failed_count: int | None = None
     last_error_summary: str | None = None
     progress: SyncProgress | None = None
 
