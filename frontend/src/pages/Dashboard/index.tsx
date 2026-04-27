@@ -1,10 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 
 import { ConflictError } from "@/api/client";
 import { useStartSync, useStateQuery } from "@/api/hooks";
-import type { SyncState } from "@/api/types";
 import { useBanners } from "@/context/BannersContext";
-import { useToasts } from "@/context/ToastsContext";
 
 import RecordingsList from "./RecordingsList";
 import SyncNowPanel from "./SyncNowPanel";
@@ -12,29 +10,14 @@ import SyncNowPanel from "./SyncNowPanel";
 export default function Dashboard() {
   const { data, isPending } = useStateQuery();
   const startSync = useStartSync();
-  const { pushToast } = useToasts();
   const { pushBanner, syncFromState } = useBanners();
 
-  // Push success toast on sync transition running -> idle + outcome=success.
-  // Track previous status in a ref so we fire exactly once per transition.
-  const prevStatusRef = useRef<SyncState["status"] | undefined>(undefined);
-
+  // Sync state → BannersContext (failed / partial_failure surface as banners).
+  // Post-sync toast lives in AppShell (always-mounted, single source of truth).
   useEffect(() => {
     if (!data) return;
     syncFromState(data.sync);
-    const prev = prevStatusRef.current;
-    if (prev === "running" && data.sync.status === "idle") {
-      if (data.sync.last_run_outcome === "success") {
-        const newCount = data.recordings.length;
-        pushToast(
-          "success",
-          `Synchronizace dokončena — ${newCount} nových nahrávek`,
-        );
-      }
-      // failed / partial_failure cases surface via syncFromState banner.
-    }
-    prevStatusRef.current = data.sync.status;
-  }, [data, syncFromState, pushToast]);
+  }, [data, syncFromState]);
 
   const handleSync = () => {
     startSync.mutate(undefined, {
