@@ -6,9 +6,11 @@ import {
 
 import {
   fetchConfig,
+  fetchFolders,
   fetchSchedule,
   fetchState,
   postAuthVerify,
+  postFoldersRefresh,
   postStartSync,
   putConfig,
   putSchedule,
@@ -17,6 +19,7 @@ import type {
   AuthVerifyResponse,
   ConfigResponse,
   ConfigSaveSuccess,
+  FoldersResponse,
   Schedule,
   StartSyncResponse,
   StateResponse,
@@ -25,6 +28,7 @@ import type {
 export const STATE_QUERY_KEY = ["state"] as const;
 export const CONFIG_QUERY_KEY = ["config"] as const;
 export const SCHEDULE_QUERY_KEY = ["schedule"] as const;
+export const FOLDERS_QUERY_KEY = ["folders"] as const;
 
 export function useStateQuery() {
   return useQuery<StateResponse>({
@@ -117,6 +121,30 @@ export function useSaveSchedule() {
     mutationFn: putSchedule,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: SCHEDULE_QUERY_KEY });
+    },
+  });
+}
+
+// ---------------- BL-X folder catalog ----------------
+
+export function useFolders() {
+  return useQuery<FoldersResponse>({
+    queryKey: FOLDERS_QUERY_KEY,
+    queryFn: fetchFolders,
+    retry: 2,
+    retryDelay: (attempt) => 200 * 2 ** attempt,
+    // No automatic refetch — UI Settings refresh button + 1h TTL on disk
+    // cache is sufficient. Stale flag from server signals when refresh is
+    // worth doing.
+  });
+}
+
+export function useRefreshFolders() {
+  const qc = useQueryClient();
+  return useMutation<FoldersResponse, Error, void>({
+    mutationFn: postFoldersRefresh,
+    onSuccess: (data) => {
+      qc.setQueryData<FoldersResponse>(FOLDERS_QUERY_KEY, data);
     },
   });
 }

@@ -1,11 +1,23 @@
-import { useConfig } from "@/api/hooks";
+import { useMemo } from "react";
 
+import { useConfig } from "@/api/hooks";
+import { coerceConfigV4 } from "@/utils/configYaml";
+
+import BlxSettingsPanel from "./BlxSettingsPanel";
 import ConfigPanel from "./ConfigPanel";
 import ConnectionPanel from "./ConnectionPanel";
 import SchedulePanel from "./SchedulePanel";
 
 export default function Settings() {
-  const { data, isPending, error } = useConfig();
+  const { data, isPending, error, refetch } = useConfig();
+
+  // Coerce parsed config into typed v0.4 shape for the structured form.
+  // Returns null when YAML is broken — in that case show only the raw
+  // editor so the user can fix the syntax error.
+  const v4 = useMemo(
+    () => (data?.parsed ? coerceConfigV4(data.parsed) : null),
+    [data?.parsed],
+  );
 
   return (
     <div className="space-y-5">
@@ -29,7 +41,17 @@ export default function Settings() {
           </span>
         </div>
       ) : data ? (
-        <ConfigPanel config={data} />
+        <>
+          {v4 && (
+            <BlxSettingsPanel
+              config={v4}
+              onSaved={() => {
+                void refetch();
+              }}
+            />
+          )}
+          <ConfigPanel config={data} />
+        </>
       ) : (
         <div className="bg-white rounded-lg border border-red-200 shadow-sm p-5 text-sm text-red-800">
           Konfiguraci se nepodařilo načíst.

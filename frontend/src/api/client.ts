@@ -3,6 +3,7 @@ import type {
   ConfigParseError,
   ConfigResponse,
   ConfigSaveSuccess,
+  FoldersResponse,
   Schedule,
   StartSyncResponse,
   StartSyncConflict,
@@ -92,6 +93,43 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+/**
+ * Variant that captures response headers — needed for BL-X soft warnings
+ * (X-Plaudsync-Warning) on PUT /api/config. Body must be JSON.
+ */
+async function fetchJsonWithHeaders<T>(
+  input: string,
+  init?: RequestInit,
+): Promise<{ body: T; headers: Headers }> {
+  let response: Response;
+  try {
+    response = await fetch(input, {
+      ...init,
+      headers: {
+        Accept: "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    throw new ApiNetworkError("Network request failed", err);
+  }
+
+  let body: unknown = null;
+  const text = await response.text();
+  if (text.length > 0) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = { raw: text };
+    }
+  }
+
+  if (!response.ok) {
+    throw new ApiHttpError(response.status, body);
+  }
+  return { body: body as T, headers: response.headers };
+}
+
 // ---------------- Endpoint methods ----------------
 
 export function fetchState(): Promise<StateResponse> {
@@ -104,11 +142,21 @@ export function fetchConfig(): Promise<ConfigResponse> {
 
 export async function putConfig(rawYaml: string): Promise<ConfigSaveSuccess> {
   try {
-    return await fetchJson<ConfigSaveSuccess>("/api/config", {
+    const { body, headers } = await fetchJsonWithHeaders<{
+      ok: true;
+      parsed: Record<string, unknown>;
+    }>("/api/config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ raw_yaml: rawYaml }),
     });
+    // BL-X soft warnings — comma-separated header values per spec §3.
+    const raw = headers.get("X-Plaudsync-Warning") ?? "";
+    const warnings = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return { ...body, warnings };
   } catch (err) {
     if (err instanceof ApiHttpError && err.status === 422) {
       // FastAPI HTTPException(detail={...}) wraps the payload as
@@ -126,6 +174,20 @@ export async function putConfig(rawYaml: string): Promise<ConfigSaveSuccess> {
     }
     throw err;
   }
+}
+
+// ---------------- Folder catalog (BL-X) ----------------
+
+export function fetchFolders(): Promise<FoldersResponse> {
+  return fetchJson<FoldersResponse>("/api/folders");
+}
+
+export function postFoldersRefresh(): Promise<FoldersResponse> {
+  return fetchJson<FoldersResponse>("/api/folders/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
 }
 
 export function fetchSchedule(): Promise<Schedule> {

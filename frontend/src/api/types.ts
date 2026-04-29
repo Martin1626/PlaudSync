@@ -72,9 +72,39 @@ export interface ConfigParseError {
   message: string;
 }
 
+/**
+ * Per-project entry shape (v0.4 — BL-4/BL-X). Backend serializes
+ * `projects[name]` as `{ path, plaud_folder_id }` since v0.4. Older
+ * single-string shape only appears in raw YAML the user typed manually
+ * (loader normalizes to dict on first save).
+ */
+export interface ProjectEntry {
+  path: string;
+  plaud_folder_id: string | null;
+}
+
+/**
+ * Typed projection of the parsed config. Mirrors plaudsync.ui.config_io
+ * `_config_to_dict` output shape (v0.4). All BL-X flags optional with
+ * defaults — read missing flags as their default to be tolerant against
+ * partial-write configs.
+ */
+export interface ConfigParsedV4 {
+  unclassified_dir: string;
+  projects: Record<string, ProjectEntry>;
+  download_audio?: boolean;
+  download_content?: boolean;
+  classify_by_name?: boolean;
+  classify_by_name_require_folder?: boolean;
+  classify_by_folder?: boolean;
+  sync_unclassified?: boolean;
+}
+
 export interface ConfigResponse {
   raw_yaml: string;
-  /** Schema-shaped: { unclassified_dir: string, projects: Record<string, string> }. */
+  /** Schema-shaped per ConfigParsedV4 — but typed as Record for tolerance to
+   * legacy single-string project values still on disk. Use parseConfigV4()
+   * helper to coerce to ConfigParsedV4. */
   parsed: Record<string, unknown> | null;
   /** Present when GET reads an existing-but-invalid config.yaml from disk. */
   parse_error: ConfigParseError | null;
@@ -83,11 +113,27 @@ export interface ConfigResponse {
 export interface ConfigSaveSuccess {
   ok: true;
   parsed: Record<string, unknown>;
+  /** X-Plaudsync-Warning header values (BL-X spec §3): 'no-artifacts',
+   * 'folder-not-in-catalog'. Empty array when no warnings. */
+  warnings: string[];
 }
 
 export interface ConfigSaveErrors {
   ok: false;
   errors: ConfigParseError[];
+}
+
+// ---------------- Folder catalog (BL-X) ----------------
+
+export interface FolderItem {
+  id: string;
+  name: string;
+}
+
+export interface FoldersResponse {
+  folders: FolderItem[];
+  fetched_at: string | null;
+  stale: boolean;
 }
 
 // ---------------- Schedule ----------------
