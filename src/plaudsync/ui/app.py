@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from loguru import logger
 from pydantic import BaseModel
@@ -41,6 +41,34 @@ from plaudsync.ui.config_io import (
 )
 from plaudsync.ui.state_reader import read_state_snapshot
 from plaudsync.ui.sync_starter import start_sync_subprocess
+
+
+def _config_soft_warnings(parsed: dict, state_root: Path) -> list[str]:
+    """Compute non-blocking warnings for PUT /api/config response header.
+
+    Per BL-X spec §3 validation table:
+    - 'no-artifacts'           — both download_audio + download_content off
+    - 'folder-not-in-catalog'  — any project's plaud_folder_id missing from
+                                 current filetag_cache.json
+    """
+    warnings: list[str] = []
+    if not parsed.get("download_audio", True) and not parsed.get("download_content", True):
+        warnings.append("no-artifacts")
+
+    project_folder_ids: set[str] = set()
+    for entry in (parsed.get("projects") or {}).values():
+        if isinstance(entry, dict) and entry.get("plaud_folder_id"):
+            project_folder_ids.add(entry["plaud_folder_id"])
+
+    if project_folder_ids:
+        from plaudsync.filetag_cache import FiletagCache
+
+        cache = FiletagCache(state_root)
+        cached = {f.id for f in (cache.load() or [])}
+        if project_folder_ids - cached:
+            warnings.append("folder-not-in-catalog")
+
+    return warnings
 
 
 def _open_ui_state(state_root: Path) -> sqlite3.Connection:
@@ -257,13 +285,20 @@ def create_app(state_root: Path) -> FastAPI:
         return read_config_payload(app.state.state_root)
 
     @app.put("/api/config", response_model=ConfigSaveSuccess)
-    def put_config(req: ConfigSaveRequest) -> ConfigSaveSuccess:
+    def put_config(req: ConfigSaveRequest, response: Response) -> ConfigSaveSuccess:
         result = save_config_payload(app.state.state_root, req.raw_yaml)
         if not result["ok"]:
             raise HTTPException(
                 status_code=422,
                 detail={"ok": False, "errors": result["errors"]},
             )
+        # Soft warnings (BL-X spec §3) — non-blocking, surfaced via response
+        # header so UI can render banner without blocking Save.
+        warnings = _config_soft_warnings(
+            result["parsed"], app.state.state_root,
+        )
+        if warnings:
+            response.headers["X-Plaudsync-Warning"] = ",".join(warnings)
         return ConfigSaveSuccess(parsed=result["parsed"])
 
     @app.get("/api/folders", response_model=FoldersResponse)
