@@ -1,0 +1,94 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.33.1
+      app-platform:
+      - web
+      authorization:
+      - <redacted>
+      edit-from:
+      - web
+    method: GET
+    uri: https://api.plaud.ai/file/simple/web?is_trash=0&limit=1&skip=0
+  response:
+    body:
+      string: '{"status":-302,"msg":"user region mismatch","data":{"domains":{"api":"https://api-euc1.plaud.ai"}}}'
+    headers:
+      CF-RAY:
+      - 9f40b857def84e5e-PRG
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 29 Apr 2026 19:30:14 GMT
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - <redacted>
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - DENY
+      X-XSS-Protection:
+      - 1; mode=block
+      cf-cache-status:
+      - DYNAMIC
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.33.1
+      app-platform:
+      - web
+      authorization:
+      - <redacted>
+      edit-from:
+      - web
+    method: GET
+    uri: https://api-euc1.plaud.ai/filetag/
+  response:
+    body:
+      string: "{\"status\":0,\"msg\":\"success\",\"request_id\":\"\",\"data_filetag_total\":12,\"data_filetag_list\":[{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\",\"name\":\"FolderName1\",\"icon\":\"e741\",\"color\":\"#46cf6c\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2\",\"name\":\"FolderName2\",\"icon\":\"e746\",\"color\":\"#4c8eff\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3\",\"name\":\"FolderName3\",\"icon\":\"e627\",\"color\":\"#c149eb\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4\",\"name\":\"FolderName4\",\"icon\":\"e60c\",\"color\":\"#000000\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5\",\"name\":\"FolderName5\",\"icon\":\"e627\",\"color\":\"#191919\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6\",\"name\":\"FolderName6\",\"icon\":\"e627\",\"color\":\"#3dc8c8\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7\",\"name\":\"FolderName7\",\"icon\":\"e627\",\"color\":\"#f9a251\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa8\",\"name\":\"Osobn\xED\",\"icon\":\"e741\",\"color\":\"#3dc8c8\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9\",\"name\":\"R\u016Fzn\xE9\",\"icon\":\"e627\",\"color\":\"#191919\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"FolderName10\",\"icon\":\"e627\",\"color\":\"#191919\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab\",\"name\":\"FolderName11\",\"icon\":\"e627\",\"color\":\"#191919\"},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac\",\"name\":\"\u0160kolen\xED\",\"icon\":\"e73d\",\"color\":\"#191919\"}]}"
+    headers:
+      CF-RAY:
+      - 9f40b85bce6d6e75-PRG
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 29 Apr 2026 19:30:15 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      cf-cache-status:
+      - DYNAMIC
+    status:
+      code: 200
+      message: OK
+version: 1

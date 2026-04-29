@@ -1,0 +1,203 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.33.1
+      app-platform:
+      - web
+      authorization:
+      - <redacted>
+      edit-from:
+      - web
+    method: GET
+    uri: https://api.plaud.ai/file/simple/web?is_trash=0&limit=1&skip=0
+  response:
+    body:
+      string: '{"status":-302,"msg":"user region mismatch","data":{"domains":{"api":"https://api-euc1.plaud.ai"}}}'
+    headers:
+      CF-RAY:
+      - 9f40b867cb4bf988-PRG
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 29 Apr 2026 19:30:17 GMT
+      Server:
+      - cloudflare
+      Set-Cookie:
+      - <redacted>
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - DENY
+      X-XSS-Protection:
+      - 1; mode=block
+      cf-cache-status:
+      - DYNAMIC
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.33.1
+      app-platform:
+      - web
+      authorization:
+      - <redacted>
+      edit-from:
+      - web
+    method: GET
+    uri: https://api-euc1.plaud.ai/file/simple/web?is_trash=0&limit=50&skip=0
+  response:
+    body:
+      string: '{"status":0,"msg":"success","request_id":"","data_file_total":50,"data_file_list":[{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1","filename":
+        "<redacted-title>","keywords":[],"filesize":13108736,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2","ori_ready":false,"version":1777468355,"version_ms":1777468355443,"edit_time":1777468355,"edit_from":"ai","is_trash":false,"start_time":1777464673820,"end_time":1777467745820,"duration":3072000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":[],"serial_number":"1777464673820","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":1},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3","filename":
+        "<redacted-title>","keywords":[],"filesize":31847936,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4","ori_ready":false,"version":1777469438,"version_ms":1777469438113,"edit_time":1777469438,"edit_from":"ai","is_trash":false,"start_time":1777456823520,"end_time":1777464287520,"duration":7464000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":[],"serial_number":"1777456823520","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5","filename":
+        "<redacted-title>","keywords":[],"filesize":1765376,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6","ori_ready":false,"version":1777452787,"version_ms":1777452787383,"edit_time":1777452787,"edit_from":"web","is_trash":false,"start_time":1777452024281,"end_time":1777452437281,"duration":413000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1777452024281","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa8","filename":
+        "<redacted-title>","keywords":[],"filesize":23109632,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa8.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9","ori_ready":false,"version":1777454456,"version_ms":1777454456309,"edit_time":1777454456,"edit_from":"web","is_trash":false,"start_time":1777445974644,"end_time":1777451390644,"duration":5416000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"serial_number":"1777445974644","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab","filename":
+        "<redacted-title>","keywords":[],"filesize":5785088,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac","ori_ready":false,"version":1777451714,"version_ms":1777451714506,"edit_time":1777451714,"edit_from":"ai","is_trash":false,"start_time":1777444079529,"end_time":1777445434529,"duration":1355000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":[],"serial_number":"1777444079529","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad","filename":
+        "<redacted-title>","keywords":[],"filesize":3379712,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaae","ori_ready":false,"version":1777444753,"version_ms":1777444753586,"edit_time":1777444753,"edit_from":"web","is_trash":false,"start_time":1777443263276,"end_time":1777444055276,"duration":792000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf"],"serial_number":"1777443263276","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0","filename":
+        "<redacted-title>","keywords":[],"filesize":38153216,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0.ogg","file_md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1","ori_ready":false,"version":1777400473,"version_ms":1777400473014,"edit_time":1777400473,"edit_from":"android","is_trash":false,"start_time":1777385475000,"end_time":1777394417000,"duration":8942000,"timezone":2,"zonemins":0,"scene":1,"filetag_id_list":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2"],"serial_number":"DEV0000000000000","is_trans":true,"is_summary":true,"is_markmemo":true,"wait_pull":0},{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb3","filename":
+        "<redacted-title>","keywords":[],"filesize":2373632,"filetype":"","fullname":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb3.ogg","file_md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb4","ori_ready":false,"version":1777410013,"version_ms":1777410013746,"edit_time":1777410013,"edit_from":"android","is_trash":false,"start_time":1777398331000,"end_time":1777398887000,"duration":556000,"timezone":2,"zonemins":0,"scene":1,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"DEV0000000000000","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb5","filename":
+        "<redacted-title>","keywords":[],"filesize":2186240,"filetype":"","fullname":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb5.ogg","file_md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb6","ori_ready":false,"version":1777385074,"version_ms":1777385074766,"edit_time":1777385074,"edit_from":"android","is_trash":false,"start_time":1777381165441,"end_time":1777381677441,"duration":512000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1777381165441","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb7","filename":
+        "<redacted-title>","keywords":[],"filesize":12025856,"filetype":"","fullname":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb7.ogg","file_md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb8","ori_ready":false,"version":1777381138,"version_ms":1777381138447,"edit_time":1777381138,"edit_from":"web","is_trash":false,"start_time":1777377668218,"end_time":1777380486218,"duration":2818000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1777377668218","is_trans":true,"is_summary":true,"is_markmemo":true,"wait_pull":0},{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb9","filename":
+        "<redacted-title>","keywords":[],"filesize":15033344,"filetype":"","fullname":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb9.ogg","file_md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbba","ori_ready":false,"version":1777398557,"version_ms":1777398557382,"edit_time":1777398557,"edit_from":"android","is_trash":false,"start_time":1777374134170,"end_time":1777377657170,"duration":3523000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"serial_number":"1777374134170","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc","filename":
+        "<redacted-title>","keywords":[],"filesize":15861248,"filetype":"","fullname":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc.ogg","file_md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbd","ori_ready":false,"version":1777374377,"version_ms":1777374377089,"edit_time":1777374377,"edit_from":"ai","is_trash":false,"start_time":1777370377562,"end_time":1777374094562,"duration":3717000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":[],"serial_number":"1777370377562","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbe","filename":
+        "<redacted-title>","keywords":[],"filesize":7553024,"filetype":"","fullname":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbe.ogg","file_md5":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbf","ori_ready":false,"version":1777367121,"version_ms":1777367121119,"edit_time":1777367121,"edit_from":"web","is_trash":false,"start_time":1777365086741,"end_time":1777366856741,"duration":1770000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":[],"serial_number":"1777365086741","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0","filename":
+        "<redacted-title>","keywords":[],"filesize":1467392,"filetype":"","fullname":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0.ogg","file_md5":"ccccccccccccccccccccccccccccccc1","ori_ready":false,"version":1777364925,"version_ms":1777364925704,"edit_time":1777364925,"edit_from":"web","is_trash":false,"start_time":1777364371852,"end_time":1777364714852,"duration":343000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf"],"serial_number":"1777364371852","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"ccccccccccccccccccccccccccccccc2","filename":
+        "<redacted-title>","keywords":[],"filesize":3633152,"filetype":"","fullname":"ccccccccccccccccccccccccccccccc2.ogg","file_md5":"ccccccccccccccccccccccccccccccc3","ori_ready":false,"version":1777364854,"version_ms":1777364854641,"edit_time":1777364854,"edit_from":"web","is_trash":false,"start_time":1777363256099,"end_time":1777364107099,"duration":851000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf"],"serial_number":"1777363256099","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"ccccccccccccccccccccccccccccccc4","filename":
+        "<redacted-title>","keywords":[],"filesize":7259648,"filetype":"","fullname":"ccccccccccccccccccccccccccccccc4.ogg","file_md5":"ccccccccccccccccccccccccccccccc5","ori_ready":false,"version":1777364896,"version_ms":1777364896579,"edit_time":1777364896,"edit_from":"web","is_trash":false,"start_time":1777361515748,"end_time":1777363216748,"duration":1701000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1777361515748","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"ccccccccccccccccccccccccccccccc6","filename":
+        "<redacted-title>","keywords":[],"filesize":8016896,"filetype":"","fullname":"ccccccccccccccccccccccccccccccc6.ogg","file_md5":"ccccccccccccccccccccccccccccccc7","ori_ready":false,"version":1777364889,"version_ms":1777364889189,"edit_time":1777364889,"edit_from":"web","is_trash":false,"start_time":1777359510223,"end_time":1777361388223,"duration":1878000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["ccccccccccccccccccccccccccccccc8"],"serial_number":"1777359510223","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"ccccccccccccccccccccccccccccccc9","filename":
+        "<redacted-title>","keywords":[],"filesize":5935616,"filetype":"","fullname":"ccccccccccccccccccccccccccccccc9.ogg","file_md5":"ccccccccccccccccccccccccccccccca","ori_ready":false,"version":1777359265,"version_ms":1777359265924,"edit_time":1777359265,"edit_from":"android","is_trash":false,"start_time":1777355967869,"end_time":1777357358869,"duration":1391000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1777355967869","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"cccccccccccccccccccccccccccccccb","filename":
+        "<redacted-title>","keywords":[],"filesize":8138168,"filetype":"","fullname":"cccccccccccccccccccccccccccccccb.mp3","file_md5":"cccccccccccccccccccccccccccccccc","ori_ready":false,"version":1777357200,"version_ms":1777357200574,"edit_time":1777357200,"edit_from":"web","is_trash":false,"start_time":1777312115000,"end_time":1777313272000,"duration":1157000,"timezone":2,"zonemins":0,"scene":1,"filetag_id_list":["cccccccccccccccccccccccccccccccd"],"serial_number":"DEV0000000000000-1777320242692","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"ccccccccccccccccccccccccccccccce","filename":
+        "<redacted-title>","keywords":[],"filesize":31422464,"filetype":"","fullname":"ccccccccccccccccccccccccccccccce.ogg","file_md5":"cccccccccccccccccccccccccccccccf","ori_ready":false,"version":1777357016,"version_ms":1777357016209,"edit_time":1777357016,"edit_from":"web","is_trash":false,"start_time":1777303909000,"end_time":1777311273000,"duration":7364000,"timezone":2,"zonemins":0,"scene":1,"filetag_id_list":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2"],"serial_number":"DEV0000000000000","is_trans":true,"is_summary":true,"is_markmemo":true,"wait_pull":0},{"id":"ccccccccccccccccccccccccccccccc0","filename":
+        "<redacted-title>","keywords":[],"filesize":26029568,"filetype":"","fullname":"ccccccccccccccccccccccccccccccc0.ogg","file_md5":"ddddddddddddddddddddddddddddddd1","ori_ready":false,"version":1777357056,"version_ms":1777357056242,"edit_time":1777357056,"edit_from":"web","is_trash":false,"start_time":1777291040468,"end_time":1777297140468,"duration":6100000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1777291040468","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"ddddddddddddddddddddddddddddddd2","filename":
+        "<redacted-title>","keywords":[],"filesize":7053824,"filetype":"","fullname":"ddddddddddddddddddddddddddddddd2.ogg","file_md5":"ddddddddddddddddddddddddddddddd3","ori_ready":false,"version":1777297472,"version_ms":1777297472847,"edit_time":1777297472,"edit_from":"web","is_trash":false,"start_time":1777287532459,"end_time":1777289185459,"duration":1653000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["ddddddddddddddddddddddddddddddd4"],"serial_number":"1777287532459","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"ddddddddddddddddddddddddddddddd5","filename":
+        "<redacted-title>","keywords":[],"filesize":13480448,"filetype":"","fullname":"ddddddddddddddddddddddddddddddd5.ogg","file_md5":"ddddddddddddddddddddddddddddddd6","ori_ready":false,"version":1777357084,"version_ms":1777357084467,"edit_time":1777357084,"edit_from":"web","is_trash":false,"start_time":1777275048977,"end_time":1777278207977,"duration":3159000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"serial_number":"1777275048977","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"ddddddddddddddddddddddddddddddd7","filename":
+        "<redacted-title>","keywords":[],"filesize":23424512,"filetype":"","fullname":"ddddddddddddddddddddddddddddddd7.ogg","file_md5":"ddddddddddddddddddddddddddddddd8","ori_ready":false,"version":1777357107,"version_ms":1777357107951,"edit_time":1777357107,"edit_from":"web","is_trash":false,"start_time":1777269526654,"end_time":1777275016654,"duration":5490000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["ccccccccccccccccccccccccccccccc8"],"serial_number":"1777269526654","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"ddddddddddddddddddddddddddddddd9","filename":
+        "<redacted-title>","keywords":[],"filesize":111104,"filetype":"","fullname":"ddddddddddddddddddddddddddddddd9.ogg","file_md5":"ddddddddddddddddddddddddddddddda","ori_ready":false,"version":1777269197,"version_ms":1777269197924,"edit_time":1777269197,"edit_from":"web","is_trash":false,"start_time":1777269121136,"end_time":1777269146136,"duration":25000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":[],"serial_number":"1777269121136","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"dddddddddddddddddddddddddddddddb","filename":
+        "<redacted-title>","keywords":[],"filesize":54272,"filetype":"","fullname":"dddddddddddddddddddddddddddddddb.ogg","file_md5":"dddddddddddddddddddddddddddddddc","ori_ready":false,"version":1777240169,"version_ms":1777240169337,"edit_time":1777240169,"edit_from":"web","is_trash":false,"start_time":1777240088956,"end_time":1777240100956,"duration":12000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":[],"serial_number":"1777240088956","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"dddddddddddddddddddddddddddddddd","filename":
+        "<redacted-title>","keywords":[],"filesize":146432,"filetype":"","fullname":"dddddddddddddddddddddddddddddddd.ogg","file_md5":"ddddddddddddddddddddddddddddddde","ori_ready":false,"version":1777240021,"version_ms":1777240021493,"edit_time":1777240021,"edit_from":"web","is_trash":false,"start_time":1777222944464,"end_time":1777222978464,"duration":34000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1777222944464","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"dddddddddddddddddddddddddddddddf","filename":
+        "<redacted-title>","keywords":[],"filesize":124928,"filetype":"","fullname":"dddddddddddddddddddddddddddddddf.ogg","file_md5":"ddddddddddddddddddddddddddddddd0","ori_ready":false,"version":1777214016,"version_ms":1777214016363,"edit_time":1777214016,"edit_from":"web","is_trash":false,"start_time":1777213961731,"end_time":1777213990731,"duration":29000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":[],"serial_number":"1777213961731","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1","filename":
+        "<redacted-title>","keywords":[],"filesize":84992,"filetype":"","fullname":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1.ogg","file_md5":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee2","ori_ready":false,"version":1777214038,"version_ms":1777214038383,"edit_time":1777214038,"edit_from":"web","is_trash":false,"start_time":1777213874631,"end_time":1777213893631,"duration":19000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["ccccccccccccccccccccccccccccccc8"],"serial_number":"1777213874631","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee3","filename":
+        "<redacted-title>","keywords":[],"filesize":963584,"filetype":"","fullname":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee3.ogg","file_md5":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee4","ori_ready":false,"version":1777152802,"version_ms":1777152802000,"edit_time":1777152802,"edit_from":"android","is_trash":false,"start_time":1777019584000,"end_time":1777019809000,"duration":225000,"timezone":2,"zonemins":0,"scene":1,"filetag_id_list":[],"serial_number":"DEV0000000000000","is_trans":false,"is_summary":false,"is_markmemo":false,"wait_pull":0},{"id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee5","filename":
+        "<redacted-title>","keywords":[],"filesize":28325888,"filetype":"","fullname":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee5.ogg","file_md5":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee6","ori_ready":false,"version":1777214179,"version_ms":1777214179836,"edit_time":1777214179,"edit_from":"web","is_trash":false,"start_time":1777140866000,"end_time":1777147504000,"duration":6638000,"timezone":2,"zonemins":0,"scene":1,"filetag_id_list":[],"serial_number":"DEV0000000000000","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7","filename":
+        "<redacted-title>","keywords":[],"filesize":9494528,"filetype":"","fullname":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7.ogg","file_md5":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee8","ori_ready":false,"version":1777030913,"version_ms":1777030913120,"edit_time":1777030913,"edit_from":"web","is_trash":false,"start_time":1777028342760,"end_time":1777030567760,"duration":2225000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee9"],"serial_number":"1777028342760","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea","filename":
+        "<redacted-title>","keywords":[],"filesize":14180864,"filetype":"","fullname":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea.ogg","file_md5":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeb","ori_ready":false,"version":1777030903,"version_ms":1777030903873,"edit_time":1777030903,"edit_from":"web","is_trash":false,"start_time":1777024849455,"end_time":1777028172455,"duration":3323000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["ccccccccccccccccccccccccccccccc8"],"serial_number":"1777024849455","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeec","filename":
+        "<redacted-title>","keywords":[],"filesize":12137984,"filetype":"","fullname":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeec.ogg","file_md5":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeed","ori_ready":false,"version":1777030938,"version_ms":1777030938213,"edit_time":1777030938,"edit_from":"web","is_trash":false,"start_time":1777016468215,"end_time":1777019312215,"duration":2844000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"serial_number":"1777016468215","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","filename":
+        "<redacted-title>","keywords":[],"filesize":628736,"filetype":"","fullname":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.ogg","file_md5":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeef","ori_ready":false,"version":1777030993,"version_ms":1777030993732,"edit_time":1777030993,"edit_from":"web","is_trash":false,"start_time":1777014156000,"end_time":1777014303000,"duration":147000,"timezone":2,"zonemins":0,"scene":1,"filetag_id_list":["cccccccccccccccccccccccccccccccd"],"serial_number":"DEV0000000000000","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee0","filename":
+        "<redacted-title>","keywords":[],"filesize":462848,"filetype":"","fullname":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee0.ogg","file_md5":"fffffffffffffffffffffffffffffff1","ori_ready":false,"version":1777030982,"version_ms":1777030982385,"edit_time":1777030982,"edit_from":"web","is_trash":false,"start_time":1777013376000,"end_time":1777013484000,"duration":108000,"timezone":2,"zonemins":0,"scene":1,"filetag_id_list":["cccccccccccccccccccccccccccccccd"],"serial_number":"DEV0000000000000","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"fffffffffffffffffffffffffffffff2","filename":
+        "<redacted-title>","keywords":[],"filesize":1069568,"filetype":"","fullname":"fffffffffffffffffffffffffffffff2.ogg","file_md5":"fffffffffffffffffffffffffffffff3","ori_ready":false,"version":1777013950,"version_ms":1777013950369,"edit_time":1777013950,"edit_from":"web","is_trash":false,"start_time":1777012927260,"end_time":1777013177260,"duration":250000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee9"],"serial_number":"1777012927260","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"fffffffffffffffffffffffffffffff4","filename":
+        "<redacted-title>","keywords":[],"filesize":2840576,"filetype":"","fullname":"fffffffffffffffffffffffffffffff4.ogg","file_md5":"fffffffffffffffffffffffffffffff5","ori_ready":false,"version":1776943669,"version_ms":1776943669883,"edit_time":1776943669,"edit_from":"android","is_trash":false,"start_time":1776941257849,"end_time":1776941922849,"duration":665000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"serial_number":"1776941257849","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"fffffffffffffffffffffffffffffff6","filename":
+        "<redacted-title>","keywords":[],"filesize":12055040,"filetype":"","fullname":"fffffffffffffffffffffffffffffff6.ogg","file_md5":"fffffffffffffffffffffffffffffff7","ori_ready":false,"version":1776943704,"version_ms":1776943704196,"edit_time":1776943704,"edit_from":"android","is_trash":false,"start_time":1776938409130,"end_time":1776941234130,"duration":2825000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["ccccccccccccccccccccccccccccccc8"],"serial_number":"1776938409130","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"fffffffffffffffffffffffffffffff8","filename":
+        "<redacted-title>","keywords":[],"filesize":5015552,"filetype":"","fullname":"fffffffffffffffffffffffffffffff8.ogg","file_md5":"fffffffffffffffffffffffffffffff9","ori_ready":false,"version":1776943781,"version_ms":1776943781140,"edit_time":1776943781,"edit_from":"android","is_trash":false,"start_time":1776935667592,"end_time":1776936842592,"duration":1175000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"serial_number":"1776935667592","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"fffffffffffffffffffffffffffffffa","filename":
+        "<redacted-title>","keywords":[],"filesize":10921472,"filetype":"","fullname":"fffffffffffffffffffffffffffffffa.ogg","file_md5":"fffffffffffffffffffffffffffffffb","ori_ready":false,"version":1776943905,"version_ms":1776943905727,"edit_time":1776943905,"edit_from":"android","is_trash":false,"start_time":1776933008792,"end_time":1776935567792,"duration":2559000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"serial_number":"1776933008792","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"fffffffffffffffffffffffffffffffc","filename":
+        "<redacted-title>","keywords":[],"filesize":7778816,"filetype":"","fullname":"fffffffffffffffffffffffffffffffc.ogg","file_md5":"fffffffffffffffffffffffffffffffd","ori_ready":false,"version":1776975129,"version_ms":1776975129516,"edit_time":1776975129,"edit_from":"web","is_trash":false,"start_time":1776931158831,"end_time":1776932981831,"duration":1823000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["fffffffffffffffffffffffffffffffe"],"serial_number":"1776931158831","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"ffffffffffffffffffffffffffffffff","filename":
+        "<redacted-title>","keywords":[],"filesize":5543936,"filetype":"","fullname":"ffffffffffffffffffffffffffffffff.ogg","file_md5":"fffffffffffffffffffffffffffffff0","ori_ready":false,"version":1776930905,"version_ms":1776930905792,"edit_time":1776930905,"edit_from":"web","is_trash":false,"start_time":1776929218672,"end_time":1776930517672,"duration":1299000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1776929218672","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1","filename":
+        "<redacted-title>","keywords":[],"filesize":10222592,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2","ori_ready":false,"version":1776932155,"version_ms":1776932155382,"edit_time":1776932155,"edit_from":"web","is_trash":false,"start_time":1776926712874,"end_time":1776929107874,"duration":2395000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1776926712874","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3","filename":
+        "<redacted-title>","keywords":[],"filesize":630272,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4","ori_ready":false,"version":1776867178,"version_ms":1776867178511,"edit_time":1776867178,"edit_from":"web","is_trash":false,"start_time":1776864998981,"end_time":1776865145981,"duration":147000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf"],"serial_number":"1776864998981","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5","filename":
+        "<redacted-title>","keywords":[],"filesize":18881024,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa6","ori_ready":false,"version":1776867130,"version_ms":1776867130461,"edit_time":1776867130,"edit_from":"web","is_trash":false,"start_time":1776860354498,"end_time":1776864779498,"duration":4425000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf"],"serial_number":"1776860354498","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7","filename":
+        "<redacted-title>","keywords":[],"filesize":20182016,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa8","ori_ready":false,"version":1777012250,"version_ms":1777012250688,"edit_time":1777012250,"edit_from":"web","is_trash":false,"start_time":1776855595173,"end_time":1776860325173,"duration":4730000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1776855595173","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9","filename":
+        "<redacted-title>","keywords":[],"filesize":13574144,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa9.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ori_ready":false,"version":1776867154,"version_ms":1776867154311,"edit_time":1776867154,"edit_from":"web","is_trash":false,"start_time":1776852218990,"end_time":1776855399990,"duration":3181000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["ccccccccccccccccccccccccccccccc8"],"serial_number":"1776852218990","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab","filename":
+        "<redacted-title>","keywords":[],"filesize":6321152,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac","ori_ready":false,"version":1776848459,"version_ms":1776848459946,"edit_time":1776848459,"edit_from":"web","is_trash":false,"start_time":1776845755267,"end_time":1776847236267,"duration":1481000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1776845755267","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0},{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad","filename":
+        "<redacted-title>","keywords":[],"filesize":18862592,"filetype":"","fullname":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad.ogg","file_md5":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaae","ori_ready":false,"version":1776849092,"version_ms":1776849092900,"edit_time":1776849092,"edit_from":"web","is_trash":false,"start_time":1776841264894,"end_time":1776845684894,"duration":4420000,"timezone":2,"zonemins":0,"scene":102,"filetag_id_list":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7"],"serial_number":"1776841264894","is_trans":true,"is_summary":true,"is_markmemo":false,"wait_pull":0}]}'
+    headers:
+      CF-RAY:
+      - 9f40b86c0d06b190-PRG
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 29 Apr 2026 19:30:17 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      cf-cache-status:
+      - DYNAMIC
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.33.1
+      app-platform:
+      - web
+      authorization:
+      - <redacted>
+      edit-from:
+      - web
+    method: GET
+    uri: https://api-euc1.plaud.ai/file/detail/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1
+  response:
+    body:
+      string: "{\"status\":0,\"msg\":\"success\",\"request_id\":\"\",\"data\":{\"file_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\",\"file_name\":
+        \"<redacted-title>\",\"file_version\":1777468355,\"duration\":3072000,\"is_trash\":false,\"start_time\":1777464673820,\"scene\":102,\"serial_number\":\"1777464673820\",\"session_id\":1777464673,\"wait_pull\":1,\"filetag_id_list\":[],\"content_list\":[{\"data_id\":\"source_transaction:262a9a04:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\",\"data_type\":\"transaction\",\"task_status\":1,\"err_code\":\"\",\"err_msg\":\"\",\"data_title\":\"\",\"data_tab_name\":\"\",\"data_link\":
+        \"<redacted-bl4>\",\"extra\":{\"task_id\":\"20260429130821-v3@9463b5dabbadbe1ee3eaa7\"}},{\"data_id\":\"source_outline:262a9a04:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\",\"data_type\":\"outline\",\"task_status\":1,\"err_code\":\"\",\"err_msg\":\"\",\"data_title\":\"\",\"data_tab_name\":\"\",\"data_link\":
+        \"<redacted-bl4>\",\"extra\":{\"task_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf\"}},{\"data_id\":\"auto_sum:262a9a04:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\",\"data_type\":\"auto_sum_note\",\"task_status\":1,\"err_code\":\"\",\"err_msg\":\"\",\"data_title\":\"Summary\",\"data_tab_name\":\"Summary\",\"data_link\":
+        \"<redacted-bl4>\",\"extra\":{\"summary_id\":\"20260429130954-v2@4d81b178dd7c065a4653a6-1\",\"summ_type\":\"MEETING\",\"summ_type_type\":\"system\",\"used_template\":{\"template_type\":\"official\",\"template_id\":\"MEETING\",\"template_version_id\":\"\",\"template_name\":\"Meeting
+        Note\",\"clickable\":true}}},{\"data_id\":\"sum_multi:262a9a04:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0\",\"data_type\":\"sum_multi_note\",\"task_status\":1,\"err_code\":\"\",\"err_msg\":\"\",\"data_title\":\"04-29
+        T\xFDdenn\xED sch\u016Fzka: Syst\xE9mov\xE1 logika a odpov\u011Bdnost za grupov\xE1n\xED
+        objedn\xE1vek\",\"data_tab_name\":\"Meeting Minutes\",\"data_link\": \"<redacted-bl4>\",\"extra\":{\"summary_id\":\"20260429130954-v2@4d81b178dd7c065a4653a6-2\",\"summ_type\":\"DIM-MEETING-DETAILS\",\"summ_type_type\":\"system\",\"used_template\":{\"template_type\":\"official\",\"template_id\":\"DIM-MEETING-DETAILS\",\"template_version_id\":\"\",\"template_name\":\"Meeting
+        Minutes\",\"clickable\":true}}},{\"data_id\":\"sum_multi:262a9a04:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1\",\"data_type\":\"sum_multi_note\",\"task_status\":1,\"err_code\":\"\",\"err_msg\":\"\",\"data_title\":\"04-29
+        T\xFDmov\xE9 shrnut\xED: Architektura rozhodov\xE1n\xED a produktov\xE9 hranice
+        ve WMS/WES\",\"data_tab_name\":\"Meeting Highlights\",\"data_link\": \"<redacted-bl4>\",\"extra\":{\"summary_id\":\"20260429130954-v2@4d81b178dd7c065a4653a6-3\",\"summ_type\":\"DIM-MEETING-HIGHLIGHTS\",\"summ_type_type\":\"system\",\"used_template\":{\"template_type\":\"official\",\"template_id\":\"DIM-MEETING-HIGHLIGHTS\",\"template_version_id\":\"\",\"template_name\":\"Meeting
+        Highlights\",\"clickable\":true}}}],\"embeddings\":{\"Speaker 1\":[],\"Speaker
+        2\":[],\"Speaker 3\":[],\"Speaker 4\":[]},\"download_path_mapping\":{},\"pre_download_content_list\":[{\"data_id\":\"auto_sum:262a9a04:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\",\"data_content\":
+        \"<redacted-bl4>\"}],\"extra_data\":{\"aiContentForm\":{},\"aiContentHeader\":{\"category\":
+        \"<redacted-bl4>\",\"headline\": \"<redacted-bl4>\",\"industry_category\":
+        \"<redacted-bl4>\",\"language_code\":\"cs\",\"original_category\": \"<redacted-bl4>\",\"recommend_questions\":
+        [],\"summary_id\":\"20260429130954-v2@4d81b178dd7c065a4653a6-1\",\"used_template\":{\"template_id\":\"MEETING\",\"template_type\":\"official\",\"template_version_id\":\"\"}},\"has_replaced_speaker\":false,\"last_trans_app_platform\":\"WEB\",\"last_trans_device_id\":\"[object
+        Object]\",\"model\":\"gpt-5\",\"task_id_info\":{\"outline_task_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf\",\"trans_task_id\":\"20260429130821-v3@9463b5dabbadbe1ee3eaa7\"},\"tranConfig\":{\"created_at\":\"2026-04-29T13:08:21.109000\",\"diarization\":1,\"language\":\"cs\",\"llm\":\"auto\",\"type\":\"AUTO-SELECT\",\"type_type\":\"system\"},\"used_template\":{\"template_id\":\"MEETING\",\"template_type\":\"official\",\"template_version_id\":\"\"}},\"has_thought_partner\":false}}"
+    headers:
+      CF-RAY:
+      - 9f40b86fdddaf96c-PRG
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Wed, 29 Apr 2026 19:30:18 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      cf-cache-status:
+      - DYNAMIC
+    status:
+      code: 200
+      message: OK
+version: 1
