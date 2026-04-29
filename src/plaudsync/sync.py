@@ -1,6 +1,8 @@
 """Sync pipeline orchestration.
 
-See docs/superpowers/specs/2026-04-25-sync-core-design.md.
+See docs/superpowers/specs/2026-04-25-sync-core-design.md (v0.3 baseline)
+and docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md
+(v0.4 — multi-layer waterfall + content artifacts).
 """
 from __future__ import annotations
 
@@ -8,12 +10,14 @@ import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import sentry_sdk
 from loguru import logger
 
 from plaudsync.categorization import ClassificationResult
-from plaudsync.classifier import Classifier
+from plaudsync.classifier import Classifier, ClassificationOutcome, WaterfallClassifier
+from plaudsync.classifiers.name import NameClassifier
 from plaudsync.config import Config
 from plaudsync.path_resolver import resolve_target_path
 from plaudsync.plaud_client import (
@@ -27,6 +31,31 @@ from plaudsync.state import (
     recording_exists_and_downloaded,
     start_sync_run,
 )
+
+
+def should_download_artifact(
+    kind: str,
+    meta: Any,
+    outcome: ClassificationOutcome,
+    config: Config,
+) -> bool:
+    """Per-artifact download gate (BL-4/BL-X spec §6 "Artifact gate").
+
+    Audio: ungated by classification — downloads if download_audio=true.
+    Content: hardcoded extra rules — only when classified (source != 'none')
+    AND has Plaud folder. These are safety policy, NOT user-configurable
+    (text without classification = privacy risk; per spec §10).
+    """
+    if kind == "audio" and not config.download_audio:
+        return False
+    if kind == "content" and not config.download_content:
+        return False
+    if kind == "content":
+        if outcome.source == "none":  # _unclassified catch-all
+            return False
+        if getattr(meta, "plaud_folder", "_unknown") == "_unknown":
+            return False
+    return True
 
 
 _SLUG_RE = re.compile(r"[^\w\-]+", re.UNICODE)
@@ -294,32 +323,73 @@ def run_sync(
             clear_progress(state_root)
 
 
+def _normalize_classifier_output(value: Any) -> ClassificationOutcome:
+    """Adapt either str (legacy CategorizationClassifier) or ClassificationOutcome
+    (WaterfallClassifier) into a uniform ClassificationOutcome.
+
+    Legacy str → source='name' for matched, source='none' for '_unclassified'.
+    The catch-all source='none' bypasses the new outright-skip semantic, so
+    legacy callers (tests, untouched call sites) preserve their pre-BL-X
+    behavior: every recording lands in DB, _unclassified ones go to
+    unclassified_dir.
+    """
+    if isinstance(value, ClassificationOutcome):
+        return value
+    label = str(value)
+    if label == "_unclassified":
+        return ClassificationOutcome(label=label, source="none")
+    return ClassificationOutcome(label=label, source="name")
+
+
 def _process_recording(
     meta,
     client,
-    classifier: Classifier,
+    classifier: Any,  # WaterfallClassifier OR legacy str-returning Classifier
     config: Config,
     conn: sqlite3.Connection,
     run_id: int,
 ) -> None:
-    # BL-2 gate: sync_only_foldered=true skips recordings without a Plaud
-    # folder. No DB write — server-side change (user files the recording)
-    # naturally surfaces it on next sync.
-    if config.sync_only_foldered and meta.plaud_folder == "_unknown":
+    """Process one recording: classify (waterfall) → gate → download MP3 → DB row.
+
+    Content (.md sourozenec) emit lives in the same flow but is gated
+    separately via should_download_artifact("content", ...). Pending
+    content_status writes are handled here; retry pass picks up later.
+    """
+    outcome = _normalize_classifier_output(classifier.classify(meta))
+
+    # No strategy matched + sync_unclassified=false → outright skip,
+    # no DB row written. Replaces pre-BL-X sync_only_foldered semantic.
+    if outcome.source == "skip":
         return
 
-    label = classifier.classify(meta)
+    label = outcome.label
+    assert label is not None  # invariant: source != 'skip' implies label is set
 
-    # BL-3 gate: regex matched a project, but it is not in config.yaml.
-    # Skip download — record metadata for audit + 14d retry pass.
-    if label != "_unclassified" and config.lookup_project(label) is None:
+    # BL-3 gate: matched-by-name but project not in config.yaml.
+    # Folder-classified recordings always have a config project (folder
+    # mapping comes from config), so this gate fires only for name-source.
+    if (outcome.source == "name"
+            and label != "_unclassified"
+            and config.lookup_project(label) is None):
         record_recording(
             conn, meta, status="skipped_unknown_project",
             local_path="", run_id=run_id,
             classifier_label=label,
+            classification_source=outcome.source,
         )
         logger.bind(recording_id=meta.plaud_id, project=label).info(
             "skipped: project not in config"
+        )
+        return
+
+    # Audio gate — when off, skip download but still record DB row so UI sees
+    # the recording (with status='skipped' marking artifact-level decline).
+    if not should_download_artifact("audio", meta, outcome, config):
+        record_recording(
+            conn, meta, status="skipped",
+            local_path="", run_id=run_id,
+            classifier_label=label,
+            classification_source=outcome.source,
         )
         return
 
@@ -363,4 +433,5 @@ def _process_recording(
         conn, meta, status="downloaded",
         local_path=str(target_path), run_id=run_id,
         classifier_label=label,
+        classification_source=outcome.source,
     )

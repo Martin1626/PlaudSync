@@ -40,7 +40,7 @@ def _capture_sentry(exc: BaseException, *, fingerprint: str, kind: str) -> None:
 
 def run_sync_pipeline() -> int:
     from plaudsync.auth import load_token
-    from plaudsync.classifier import CategorizationClassifier
+    from plaudsync.classifier import WaterfallClassifier
     from plaudsync.config import ConfigValidationError, load_config
     from plaudsync.locking import SyncLock, SyncLockHeld
     from plaudsync.plaud_client import PlaudClient, PlaudRegionProbeFailed
@@ -100,7 +100,7 @@ def run_sync_pipeline() -> int:
             try:
                 with PlaudClient(token) as client:
                     return orchestrate_sync(
-                        client, CategorizationClassifier(), conn, config,
+                        client, WaterfallClassifier(config), conn, config,
                         trigger=trigger, state_root=state_root,
                     )
             finally:

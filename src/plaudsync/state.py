@@ -92,6 +92,10 @@ def record_recording(
     local_path: str,
     run_id: int,
     classifier_label: str = "_unclassified",
+    classification_source: str | None = None,
+    content_status: str | None = None,
+    content_path: str | None = None,
+    content_task_ids: str | None = None,
 ) -> None:
     """UPSERT semantics: never overwrite a 'downloaded' row.
 
@@ -99,6 +103,12 @@ def record_recording(
     - If row present with status='failed' or 'skipped_unknown_project' and
       incoming status='downloaded': UPDATE.
     - Otherwise: noop (downloaded → anything is rejected to honor immutability).
+
+    BL-4/BL-X new kwargs (all nullable):
+    - classification_source: 'name' | 'folder' | 'none' | None
+    - content_status: 'pending' | 'complete' | 'not_applicable' | None
+    - content_path: absolute path to .md sourozenec
+    - content_task_ids: JSON-encoded {trans, outline, summary} for BL-5 fingerprint
     """
     plaud_id = getattr(meta, "plaud_id")
     title = getattr(meta, "title")
@@ -113,18 +123,24 @@ def record_recording(
         conn.execute(
             "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
             "downloaded_at, local_path, classifier_label, status, sync_run_id, "
-            "file_size) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "file_size, classification_source, content_status, content_path, "
+            "content_task_ids) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (plaud_id, title, created_at, _now_iso(), local_path,
-             classifier_label, status, run_id, file_size),
+             classifier_label, status, run_id, file_size,
+             classification_source, content_status, content_path, content_task_ids),
         )
     elif existing[0] in ("failed", "skipped_unknown_project") and status == "downloaded":
         conn.execute(
             "UPDATE recordings SET title = ?, created_at_plaud = ?, "
             "downloaded_at = ?, local_path = ?, classifier_label = ?, "
-            "status = ?, sync_run_id = ?, file_size = ? WHERE plaud_id = ?",
+            "status = ?, sync_run_id = ?, file_size = ?, "
+            "classification_source = ?, content_status = ?, content_path = ?, "
+            "content_task_ids = ? "
+            "WHERE plaud_id = ?",
             (title, created_at, _now_iso(), local_path, classifier_label,
-             status, run_id, file_size, plaud_id),
+             status, run_id, file_size, classification_source, content_status,
+             content_path, content_task_ids, plaud_id),
         )
     # else: existing.status == 'downloaded' → noop (immutable per Decision #5)
     conn.commit()
