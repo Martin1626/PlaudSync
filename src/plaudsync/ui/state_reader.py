@@ -92,6 +92,10 @@ def _read_recordings(conn: sqlite3.Connection) -> list[RecordingRowPayload]:
         is_unclassified = label == "_unclassified"
         # local_path is the file path; the Dashboard wants the parent directory.
         target_dir = str(Path(local_path).parent) if local_path else ""
+        # Collapse engine-internal 'skipped_unknown_project' to wire 'skipped'.
+        # DB keeps the distinct value so the retry pass at sync.py:148 can find
+        # these rows after the user adds the missing project to config.yaml.
+        wire_status = "skipped" if status == "skipped_unknown_project" else status
         payload.append({
             "plaud_id": plaud_id,
             "title": title,
@@ -101,7 +105,7 @@ def _read_recordings(conn: sqlite3.Connection) -> list[RecordingRowPayload]:
             "classification_status": "unclassified" if is_unclassified else "matched",
             "project": None if is_unclassified else label,
             "target_dir": target_dir,
-            "status": status,
+            "status": wire_status,
         })
     return payload
 
