@@ -15,7 +15,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from loguru import logger
 from pydantic import BaseModel
 
@@ -32,6 +33,7 @@ from plaudsync.schedule import (
     parse_schedule,
     save_schedule,
 )
+from plaudsync.sync_runner import _capture_sentry
 from plaudsync.ui.config_io import (
     maybe_seed_default,
     read_config_payload,
@@ -169,6 +171,28 @@ def create_app(state_root: Path) -> FastAPI:
             conn.close()
 
     app = FastAPI(lifespan=lifespan, title="PlaudSync UI", version="0.0.1")
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(
+        request: Request, exc: Exception,
+    ) -> JSONResponse:
+        # Production runtime is pythonw.exe; uvicorn's default stderr trace is
+        # swallowed by the windowless host, so we route every unhandled
+        # handler exception through Loguru + Sentry before returning a JSON
+        # 500. Without this, BL-3-style ResponseValidationError surfaces to
+        # the user as a generic "connection lost" overlay with no breadcrumb.
+        logger.bind(path=request.url.path, method=request.method).exception(
+            "unhandled exception in handler"
+        )
+        _capture_sentry(
+            exc,
+            fingerprint="ui_handler_unhandled",
+            kind="ui_handler_unhandled",
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "internal_server_error"},
+        )
 
     @app.get("/api/healthz")
     def healthz() -> dict:
