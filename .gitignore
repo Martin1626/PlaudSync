@@ -37,6 +37,7 @@ logs/
 # Claude Code local session / checkpoints
 .claude/settings.local.json
 .claude/projects/
+.claude/effort-coach/usage/
 
 # IDE
 .idea/

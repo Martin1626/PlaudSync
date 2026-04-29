@@ -1,0 +1,42 @@
+{
+  "_comment_": "Effort Coach v0.1 — merge tento fragment do .claude/settings.json projektu. Pokud project nemá settings.json, použij tento jako základ.",
+
+  "statusLine": {
+    "type": "command",
+    "command": "npx -y ccusage@latest statusline"
+  },
+
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/effort-coach/hooks/effort_coach.py\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/effort-coach/hooks/turn_logger.py\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/effort-coach/hooks/session_init.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
