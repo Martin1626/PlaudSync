@@ -33,7 +33,11 @@ def test_read_returns_raw_parsed_for_valid_yaml(tmp_path: Path) -> None:
 
     assert payload["raw_yaml"] == yaml_text
     assert payload["parsed"] is not None
-    assert payload["parsed"]["projects"]["ProjektAlfa"] == str(project_dir)
+    # v0.4 wire shape: projects[name] is dict with path + plaud_folder_id
+    assert payload["parsed"]["projects"]["ProjektAlfa"] == {
+        "path": str(project_dir),
+        "plaud_folder_id": None,
+    }
     assert payload["parse_error"] is None
 
 
@@ -73,7 +77,10 @@ def test_save_persists_valid_yaml(tmp_path: Path) -> None:
     result = save_config_payload(tmp_path, yaml_text)
 
     assert result["ok"] is True
-    assert result["parsed"]["projects"]["ProjektAlfa"] == str(project_dir)
+    assert result["parsed"]["projects"]["ProjektAlfa"] == {
+        "path": str(project_dir),
+        "plaud_folder_id": None,
+    }
     assert (tmp_path / "config.yaml").read_text(encoding="utf-8") == yaml_text
 
 

@@ -1,15 +1,28 @@
 """YAML config loader for PlaudSync state.
 
-Schema: see docs/superpowers/specs/2026-04-25-sync-core-design.md
-"Config file schema" section. Validation rules: required keys,
-absolute paths, no `..` traversal, parent-must-exist for project paths.
+Schema: per docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md
+section "Config schema". Backward-compatible with v0.3 flat layout
+(`projects: {KOD: <path>}`) — new layout uses dict per project entry to carry
+``plaud_folder_id``.
+
+Validation rules (all 422 in UI):
+- absolute paths only, no `..` traversal
+- duplicate casefold project keys rejected
+- folder-id collision between projects rejected
+- at least one classifier strategy must be active
+- classify_by_folder=true requires at least one project with plaud_folder_id
+
+Deprecated keys (load with warning, ignored at runtime):
+- ``sync_only_foldered`` — subsumed by classify_by_name_require_folder + sync_unclassified
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
+from loguru import logger
 
 
 @dataclass(frozen=True)
@@ -19,23 +32,67 @@ class ConfigParseError:
 
 
 @dataclass(frozen=True)
+class ProjectEntry:
+    """Single project mapping: target path + optional Plaud folder ID.
+
+    plaud_folder_id is required iff classify_by_folder=true AND user wants
+    this project to be folder-classifiable (some projects can opt out and
+    rely solely on title regex match).
+    """
+
+    path: Path
+    plaud_folder_id: str | None = None
+
+
+@dataclass(frozen=True)
 class Config:
     unclassified_dir: Path
-    projects: dict[str, Path]
+    projects: dict[str, ProjectEntry]
+    # WHAT
+    download_audio: bool = True
+    download_content: bool = True
+    # CLASSIFIER waterfall
+    classify_by_name: bool = True
+    classify_by_name_require_folder: bool = False
+    classify_by_folder: bool = False
+    sync_unclassified: bool = False
+    # DEPRECATED — removed in BL-4/BL-X Task 14 cleanup pass.
+    # Kept as no-op attribute so existing test fixtures continue to construct
+    # Config(...). Loader logs a deprecation warning when YAML still has the key.
     sync_only_foldered: bool = False
 
-    def lookup_project(self, name: str) -> Path | None:
-        """Case-insensitive project name → absolute path lookup.
+    def __post_init__(self) -> None:
+        """Normalize legacy ``projects: {K: Path}`` shape to ProjectEntry.
 
-        Returns the configured Path for the first projects key whose casefold
-        matches `name.casefold()`. Returns None when nothing matches.
-        Duplicate casefold keys are rejected at load_config time, so the
-        first match here is unambiguous.
+        Tests and pre-BL-X callers pass ``projects={"ALZA": Path(...)}`` directly
+        to the Config constructor. We accept both shapes by coercing here.
+        Frozen dataclass — bypass with ``object.__setattr__``.
         """
+        normalized: dict[str, ProjectEntry] = {}
+        for key, value in self.projects.items():
+            if isinstance(value, ProjectEntry):
+                normalized[key] = value
+            elif isinstance(value, Path):
+                normalized[key] = ProjectEntry(path=value, plaud_folder_id=None)
+            else:
+                # raw string from YAML or legacy test fixture
+                normalized[key] = ProjectEntry(path=Path(str(value)), plaud_folder_id=None)
+        object.__setattr__(self, "projects", normalized)
+
+    def lookup_project(self, name: str) -> Path | None:
         target = name.casefold()
-        for key, path in self.projects.items():
+        for key, entry in self.projects.items():
             if key.casefold() == target:
-                return path
+                return entry.path
+        return None
+
+    def lookup_by_folder_id(self, folder_id: str) -> str | None:
+        """Reverse lookup: Plaud folder ID → project name (case-preserved)."""
+        if not folder_id:
+            return None
+        for key, entry in self.projects.items():
+            if entry.plaud_folder_id == folder_id:
+                return key
         return None
 
 
@@ -49,13 +106,58 @@ class ConfigValidationError(Exception):
 _REQUIRED_KEYS = ("unclassified_dir", "projects")
 
 
-def _validate_path_string(value: str, field: str) -> list[ConfigParseError]:
+def _validate_path_string(value: str, field_name: str) -> list[ConfigParseError]:
     errors: list[ConfigParseError] = []
     if ".." in Path(value).parts:
-        errors.append(ConfigParseError(0, f"{field}: path traversal ('..') not allowed: {value}"))
+        errors.append(ConfigParseError(0, f"{field_name}: path traversal ('..') not allowed: {value}"))
     if not Path(value).is_absolute():
-        errors.append(ConfigParseError(0, f"{field}: must be absolute path, got: {value}"))
+        errors.append(ConfigParseError(0, f"{field_name}: must be absolute path, got: {value}"))
     return errors
+
+
+def _parse_project_entry(
+    name: str, raw: Any, errors: list[ConfigParseError],
+) -> ProjectEntry | None:
+    if isinstance(raw, str):
+        sub = _validate_path_string(raw, f"projects.{name}")
+        errors.extend(sub)
+        if sub:
+            return None
+        return ProjectEntry(path=Path(raw), plaud_folder_id=None)
+    if isinstance(raw, dict):
+        path_str = raw.get("path")
+        if not isinstance(path_str, str):
+            errors.append(ConfigParseError(
+                0, f"projects.{name}: 'path' required (string)",
+            ))
+            return None
+        sub = _validate_path_string(path_str, f"projects.{name}.path")
+        errors.extend(sub)
+        if sub:
+            return None
+        folder_id = raw.get("plaud_folder_id")
+        if folder_id is not None and not isinstance(folder_id, str):
+            errors.append(ConfigParseError(
+                0, f"projects.{name}.plaud_folder_id: must be string or null",
+            ))
+            return None
+        return ProjectEntry(path=Path(path_str), plaud_folder_id=folder_id)
+    errors.append(ConfigParseError(
+        0, f"projects.{name}: must be string path or dict, got {type(raw).__name__}",
+    ))
+    return None
+
+
+def _validate_bool(
+    data: dict, key: str, default: bool, errors: list[ConfigParseError],
+) -> bool:
+    value = data.get(key, default)
+    if not isinstance(value, bool):
+        errors.append(ConfigParseError(
+            0, f"{key}: must be boolean, got {type(value).__name__}",
+        ))
+        return default
+    return value
 
 
 def load_config(state_root: Path) -> Config:
@@ -66,17 +168,20 @@ def load_config(state_root: Path) -> Config:
         data = yaml.safe_load(raw_text)
     except yaml.YAMLError as e:
         line = getattr(getattr(e, "problem_mark", None), "line", 0) + 1
-        raise ConfigValidationError([ConfigParseError(line, f"yaml syntax: {e}")]) from e
+        raise ConfigValidationError(
+            [ConfigParseError(line, f"yaml syntax: {e}")],
+        ) from e
 
     if not isinstance(data, dict):
-        raise ConfigValidationError([ConfigParseError(0, "config root must be a mapping")])
+        raise ConfigValidationError(
+            [ConfigParseError(0, "config root must be a mapping")],
+        )
 
     errors: list[ConfigParseError] = []
 
     for key in _REQUIRED_KEYS:
         if key not in data:
             errors.append(ConfigParseError(0, f"missing required key: {key}"))
-
     if errors:
         raise ConfigValidationError(errors)
 
@@ -85,17 +190,16 @@ def load_config(state_root: Path) -> Config:
 
     projects_raw = data["projects"] or {}
     if not isinstance(projects_raw, dict):
-        errors.append(ConfigParseError(0, "projects must be a mapping name → path"))
+        errors.append(ConfigParseError(0, "projects must be a mapping"))
         projects_raw = {}
 
-    projects: dict[str, Path] = {}
-    for name, path_str in projects_raw.items():
-        sub_errors = _validate_path_string(str(path_str), f"projects.{name}")
-        errors.extend(sub_errors)
-        if not sub_errors:
-            projects[name] = Path(path_str)
+    projects: dict[str, ProjectEntry] = {}
+    for name, raw in projects_raw.items():
+        entry = _parse_project_entry(name, raw, errors)
+        if entry is not None:
+            projects[name] = entry
 
-    # Reject duplicate casefold keys (ambiguous for Config.lookup_project).
+    # Reject duplicate casefold keys (ambiguous for lookup_project).
     seen_casefolds: dict[str, str] = {}
     for key in projects:
         cf = key.casefold()
@@ -108,10 +212,48 @@ def load_config(state_root: Path) -> Config:
         else:
             seen_casefolds[cf] = key
 
-    sync_only_foldered_raw = data.get("sync_only_foldered", False)
-    if not isinstance(sync_only_foldered_raw, bool):
+    # Folder-ID collision: two projects sharing a plaud_folder_id makes
+    # FolderClassifier ambiguous. Reject at load time.
+    folder_id_to_project: dict[str, str] = {}
+    for key, entry in projects.items():
+        if entry.plaud_folder_id:
+            existing = folder_id_to_project.get(entry.plaud_folder_id)
+            if existing:
+                errors.append(ConfigParseError(
+                    0,
+                    f"projects: folder collision — '{existing}' and '{key}' "
+                    f"both reference plaud_folder_id={entry.plaud_folder_id!r}",
+                ))
+            else:
+                folder_id_to_project[entry.plaud_folder_id] = key
+
+    # Classifier flags
+    download_audio = _validate_bool(data, "download_audio", True, errors)
+    download_content = _validate_bool(data, "download_content", True, errors)
+    classify_by_name = _validate_bool(data, "classify_by_name", True, errors)
+    classify_by_name_require_folder = _validate_bool(
+        data, "classify_by_name_require_folder", False, errors,
+    )
+    classify_by_folder = _validate_bool(data, "classify_by_folder", False, errors)
+    sync_unclassified = _validate_bool(data, "sync_unclassified", False, errors)
+
+    # Deprecated key — log warning, do not validate further.
+    if "sync_only_foldered" in data:
+        logger.warning(
+            "sync_only_foldered is deprecated — subsumed by "
+            "classify_by_name_require_folder + sync_unclassified. Ignoring."
+        )
+
+    # Cross-field rules
+    if not (classify_by_name or classify_by_folder or sync_unclassified):
         errors.append(ConfigParseError(
-            0, f"sync_only_foldered must be a boolean, got: {type(sync_only_foldered_raw).__name__}"
+            0, "alespoň jedna klasifikační strategy musí být aktivní "
+            "(classify_by_name / classify_by_folder / sync_unclassified)",
+        ))
+    if classify_by_folder and not folder_id_to_project:
+        errors.append(ConfigParseError(
+            0, "classify_by_folder=true vyžaduje alespoň jeden projekt "
+            "s nastaveným plaud_folder_id",
         ))
 
     if errors:
@@ -120,5 +262,10 @@ def load_config(state_root: Path) -> Config:
     return Config(
         unclassified_dir=Path(unclassified_dir_str),
         projects=projects,
-        sync_only_foldered=bool(sync_only_foldered_raw),
+        download_audio=download_audio,
+        download_content=download_content,
+        classify_by_name=classify_by_name,
+        classify_by_name_require_folder=classify_by_name_require_folder,
+        classify_by_folder=classify_by_folder,
+        sync_unclassified=sync_unclassified,
     )

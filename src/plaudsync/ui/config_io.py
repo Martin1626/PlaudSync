@@ -56,9 +56,24 @@ class ConfigResponsePayload(TypedDict):
 
 
 def _config_to_dict(config: Config) -> dict:
+    """Project-entry shape: {path, plaud_folder_id}. Legacy clients that
+    expect a flat string can read ``path`` field; new clients carry
+    plaud_folder_id."""
     return {
         "unclassified_dir": str(config.unclassified_dir),
-        "projects": {name: str(path) for name, path in config.projects.items()},
+        "projects": {
+            name: {
+                "path": str(entry.path),
+                "plaud_folder_id": entry.plaud_folder_id,
+            }
+            for name, entry in config.projects.items()
+        },
+        "download_audio": config.download_audio,
+        "download_content": config.download_content,
+        "classify_by_name": config.classify_by_name,
+        "classify_by_name_require_folder": config.classify_by_name_require_folder,
+        "classify_by_folder": config.classify_by_folder,
+        "sync_unclassified": config.sync_unclassified,
     }
 
 
