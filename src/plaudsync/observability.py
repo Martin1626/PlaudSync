@@ -65,8 +65,20 @@ _INLINE_LABEL_RE = re.compile(
 # headers, log lines, exception messages). Added for the auth feature.
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE)
 
+# Signed S3 URL pattern — Plaud signed download URLs use AWS S3 hosts. The
+# query-string signature is a capability token; redact wholesale. Added for
+# BL-4 (content download via /file/detail/{id} content_list[*].data_link).
+_S3_URL_RE = re.compile(r"https?://[^\s\"'<>]*amazonaws\.com[^\s\"'<>]*", re.IGNORECASE)
+
+# Maximum length for arbitrary string fields in Sentry events. Defends
+# against accidental f-string leak of transcript / outline / summary text
+# (multi-kB blobs). Per BL-4 spec §7 — exception messages with content text
+# are banned by convention, but defense-in-depth catches accidental misses.
+_MAX_STRING_LEN = 500
+
 
 def _scrub_string(value: str) -> str:
+    value = _S3_URL_RE.sub("<S3_URL_REDACTED>", value)
     value = _WIN_PATH_RE.sub("<path>", value)
     value = _POSIX_PATH_RE.sub("<path>", value)
     value = _RECORDING_FILE_RE.sub("<recording>", value)
@@ -78,6 +90,11 @@ def _scrub_string(value: str) -> str:
     plaud_token = os.getenv("PLAUD_API_TOKEN", "").strip()
     if plaud_token:
         value = value.replace(plaud_token, "[REDACTED]")
+    # Defense-in-depth truncation for free-text fields. Applied last so all
+    # known patterns are scrubbed first; only random surplus content is
+    # truncated.
+    if len(value) > _MAX_STRING_LEN:
+        value = value[:_MAX_STRING_LEN] + "...<TRUNCATED>"
     return value
 
 
