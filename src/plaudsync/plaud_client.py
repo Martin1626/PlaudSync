@@ -67,6 +67,97 @@ class PlaudDownloadCorrupted(Exception):
     """Downloaded body size or hash does not match metadata."""
 
 
+@dataclass(frozen=True)
+class FolderCatalogItem:
+    """Single Plaud filetag (folder) entry — id, name, icon, color.
+
+    Source: GET /filetag/ data_filetag_list[*]. Spike confirmed shape via
+    DevTools network capture (see scripts/spike_bl_x_folders.py).
+    """
+
+    id: str
+    name: str
+    icon: str
+    color: str
+
+    @classmethod
+    def from_raw(cls, raw: dict) -> "FolderCatalogItem":
+        return cls(
+            id=raw.get("id") or "",
+            name=raw.get("name") or "",
+            icon=raw.get("icon") or "",
+            color=raw.get("color") or "",
+        )
+
+
+@dataclass(frozen=True)
+class ContentItem:
+    """Single content_list entry from /file/detail/{id}.
+
+    data_type values observed in spike: 'transaction' (transcript), 'outline',
+    'auto_sum_note' (summary), 'mark_memo', 'high_light', 'sum_multi_note'.
+    task_status: 1 = ready (per spike); other values = pending/failed.
+    """
+
+    data_id: str
+    data_type: str
+    task_status: int
+    data_link: str           # signed S3 URL — never log
+    err_code: str
+    err_msg: str
+
+    @classmethod
+    def from_raw(cls, raw: dict) -> "ContentItem":
+        return cls(
+            data_id=raw.get("data_id") or "",
+            data_type=raw.get("data_type") or "",
+            task_status=int(raw.get("task_status") or 0),
+            data_link=raw.get("data_link") or "",
+            err_code=raw.get("err_code") or "",
+            err_msg=raw.get("err_msg") or "",
+        )
+
+
+@dataclass(frozen=True)
+class DetailMeta:
+    """Normalised projection of /file/detail/{id} for BL-4/BL-X.
+
+    Excludes business strings (headline, recommend_questions, category) by
+    construction — caller never sees them, so they cannot leak into logs
+    or markdown frontmatter.
+    """
+
+    plaud_id: str
+    language: str            # 2-char ISO code from extra_data.tranConfig.language
+    speakers_count: int      # len(extra_data.embeddings) — voice biometric not exposed
+    task_ids: dict           # {trans, outline, summary} — opaque IDs for BL-5 fingerprint
+    content_list: list[ContentItem]
+
+    @classmethod
+    def from_raw(cls, plaud_id: str, raw: dict) -> "DetailMeta":
+        extra = raw.get("extra_data") or {}
+        tran_cfg = extra.get("tranConfig") or {}
+        embeddings = raw.get("embeddings") or {}
+        task_id_info = extra.get("task_id_info") or {}
+        task_ids: dict = {}
+        for src_key, dst_key in (
+            ("trans_task_id", "trans"),
+            ("outline_task_id", "outline"),
+            ("summary_id", "summary"),
+        ):
+            value = task_id_info.get(src_key)
+            if value:
+                task_ids[dst_key] = value
+        items = [ContentItem.from_raw(it) for it in (raw.get("content_list") or [])]
+        return cls(
+            plaud_id=plaud_id,
+            language=tran_cfg.get("language") or "",
+            speakers_count=len(embeddings) if isinstance(embeddings, dict) else 0,
+            task_ids=task_ids,
+            content_list=items,
+        )
+
+
 class PlaudClient:
     def __init__(self, token: str) -> None:
         self._token = token
@@ -192,6 +283,46 @@ class PlaudClient:
             for chunk in audio_resp.iter_content(chunk_size=64 * 1024):
                 if chunk:
                     yield chunk
+
+    def fetch_filetags(self) -> list[FolderCatalogItem]:
+        """Return folder catalog from GET /filetag/.
+
+        Note trailing slash — endpoint 404s without it. Requires
+        ``app-platform: web`` header (set by __init__).
+        """
+        url = f"{self._base_url}/filetag/"
+        resp = self._session.get(url)
+        if resp.status_code == 401:
+            raise PlaudTokenExpired("token rejected by /filetag/")
+        resp.raise_for_status()
+        body = resp.json()
+        items = body.get("data_filetag_list") or []
+        return [FolderCatalogItem.from_raw(it) for it in items]
+
+    def fetch_detail(self, plaud_id: str) -> DetailMeta:
+        """Fetch /file/detail/{id} → DetailMeta (no business strings)."""
+        url = f"{self._base_url}/file/detail/{plaud_id}"
+        resp = self._session.get(url)
+        if resp.status_code == 401:
+            raise PlaudTokenExpired("token rejected by /file/detail/")
+        resp.raise_for_status()
+        body = resp.json()
+        # Tolerate both shapes: top-level data wrapper vs. flat object.
+        data = body.get("data") if isinstance(body, dict) and "data" in body else body
+        return DetailMeta.from_raw(plaud_id, data or {})
+
+    def download_content_text(self, item: ContentItem) -> str:
+        """Stream signed S3 URL from a ContentItem, return decoded text body.
+
+        Mirror of download_audio's SSRF guard: https-only, no redirects,
+        fresh requests.Session so Authorization header doesn't leak to S3.
+        """
+        if urlparse(item.data_link).scheme != "https":
+            raise PlaudDownloadCorrupted("content URL must use https")
+        s3_session = requests.Session()  # fresh — no Authorization header
+        with s3_session.get(item.data_link, stream=True, allow_redirects=False) as resp:
+            resp.raise_for_status()
+            return resp.content.decode("utf-8")
 
     def verify(self) -> None:
         """Pre-flight check against the Plaud API.
