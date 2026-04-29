@@ -1,6 +1,6 @@
 # PlaudSync — Specification
 
-> **Status:** draft v0.3 (2026-04-26, post tray pivot). One-page anchor artifact per průzkum kolo 1.
+> **Status:** draft v0.4 (2026-04-29, post BL-4 + BL-X). One-page anchor artifact per průzkum kolo 1.
 > Actualizuj při každém scope pivotu. `git log SPEC.md` nepohnutý > 4 týdny = kill criterion trigger (viz memory `project_plaud_dev_workflow.md` #3).
 
 ## Problem
@@ -12,8 +12,8 @@ Plaud AI nahrávky se nesynchronizují automaticky s lokální stanicí ani s pr
 ### Sync engine
 
 - Pull new recordings from Plaud API od posledního úspěšného sync (incremental).
-- Uložit originální audio na lokální disk (transcript out of scope v0 — viz Out of scope).
-- **Single-layer regex klasifikace** title → project name. Detail v [docs/superpowers/specs/2026-04-25-categorization-design.md](docs/superpowers/specs/2026-04-25-categorization-design.md).
+- Uložit originální audio + textový obsah (`.md` sourozenec) na lokální disk per per-artefakt config flags (`download_audio` / `download_content`).
+- **Multi-layer waterfall klasifikace** — primary regex on title, fallback Plaud folder ID → project lookup, terminal `_unclassified` (s opt-in catch-all sync). Detail v [docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md](docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md).
 - **Per-project absolutní cílové cesty** z YAML configu — `${config.projects[name]}/{YYYY-MM-DD}_{title_slug}.{ext}` pro matched. Žádný společný kořen (každý projekt může být na jiném drive). Soft fallback do `${config.unclassified_dir}/...` pro title-no-match nebo project-not-in-config. Detail v [docs/superpowers/specs/2026-04-25-sync-core-design.md](docs/superpowers/specs/2026-04-25-sync-core-design.md).
 - CLI entry point (`python -m plaudsync`) pro Task Scheduler headless běh.
 - Provoz: periodic hourly run via Windows Task Scheduler.
@@ -36,8 +36,9 @@ Plaud AI nahrávky se nesynchronizují automaticky s lokální stanicí ani s pr
 - Daemon / Windows Service architecture, REST API pro external integrations, remote UI.
 - Multi-user nebo team sharing.
 - Real-time streaming — periodic pull stačí.
-- Transcript summarization or generation (pouze storage, pokud Plaud dodá).
+- Transcript summarization generation (BL-4 implementuje **storage** Plaud-generovaného obsahu; vlastní LLM generation zůstává out-of-scope).
 - Mobile nebo non-Windows platforms.
+- Re-sync changes (BL-5 — `content_task_ids` snapshot uložen jako forward-compat hook v BL-4).
 
 ## Constraints
 
@@ -93,6 +94,7 @@ Rozhodnuty v kolech 1–4 průzkumu, detaily v memory:
 
 ## Revision history
 
+- **2026-04-29 (v0.4):** BL-4 (text artefakty `.md` sourozenec) + BL-X (multi-layer classifier waterfall) shipped. `sync_only_foldered` flag eliminován (subsumed do `classify_by_name_require_folder` + `sync_unclassified`). Settings UI rozšířen o WHAT × WHEN sekce + folder dropdown z `GET /filetag/`. Nový kill criterion #19 (folder-classify coverage <30 % po 60d → revize folder vrstvy). DB schema +4 nullable cols (`content_status`, `content_path`, `content_task_ids`, `classification_source`). Detaily: [docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md](docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md).
 - **2026-04-26 (v0.3):** tray pivot — tray + auto-start z `Out of scope` do core scope. `pythonw -m plaudsync tray` jako primary execution model. Task Scheduler trigger z 15-min repetition na At-log-on. Nové deps pystray + Pillow. Detaily: [docs/superpowers/specs/2026-04-26-tray-design.md](docs/superpowers/specs/2026-04-26-tray-design.md).
 - **2026-04-25 (v0.2):** per-project absolutní cesty (žádný společný kořen). Env var `PLAUDSYNC_LOCAL_ROOT` → `PLAUDSYNC_STATE_ROOT` (jen state, ne recordings). Cílová struktura per-project z `${PLAUDSYNC_STATE_ROOT}/config.yaml`. Single-layer regex klasifikace (M365/LLM waterfall vyřazen). Success criterion #2 z "LLM accuracy" na "regex coverage rate". Anthropic + M365 odstraněny z paid deps. Cascade z categorization v0.2 + sync-core v0.2 + ui-architecture v0.2 + .env.example update.
 - **2026-04-24 (v0.1):** SPEC pivot — UI přesunuto z out-of-scope do core scope. MVP A (Dashboard + Sync Now + Settings). Stack FastAPI + React + PyWebView, on-demand lifecycle. Detaily brainstorm procesu v `DEV_LOG.md` záznam "SPEC pivot". Auth vrstva spec zapsán do `docs/superpowers/specs/2026-04-24-plaud-auth-design.md`.

@@ -4,6 +4,39 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-29 — BL-4 + BL-X shipped (text artefakty + multi-layer classifier waterfall)
+
+**Spec:** [docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md](docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md).
+**Plan:** [docs/superpowers/plans/2026-04-29-bl4-bl-x-content-classifier.md](docs/superpowers/plans/2026-04-29-bl4-bl-x-content-classifier.md).
+
+**Co se změnilo:**
+- **BL-4 (text artefakty):** `.md` sourozenec MP3 obsahuje YAML frontmatter + Summary → Outline → Transcript sekce. Generuje se až všechny 3 Plaud `data_type` typy (transaction / outline / auto_sum_note) mají task_status=1. Pending → 14d retry pass; po 14d Sentry `content_stale` alert.
+- **BL-X (classifier redesign):** single-layer regex → 3-strategy waterfall: name regex (s volitelným `require_folder` sub-flagem) → folder ID lookup z Plaud `/filetag/` → catch-all unclassified. `sync_only_foldered` flag eliminován; subsumed do nového `classify_by_name_require_folder` + `sync_unclassified`.
+- **Settings UI delta:** WHAT × WHEN model — `download_audio` / `download_content` (artefakty) + 3 classifier strategy flags. Projektová tabulka rozšířená o `plaud_folder_id` (dropdown z `GET /api/folders`, manuální refresh přes `POST /api/folders/refresh`).
+- **DB schema delta:** 4 nové sloupce v `recordings` (`content_status`, `content_path`, `content_task_ids`, `classification_source`); idempotentní ALTER TABLE migrations.
+- **Privacy hardening:** observability `_scrub_string` strip-uje `*amazonaws.com` URL (signed S3 capability tokens) + truncates strings > 500 chars (defense vs. f-string transcript leak).
+- **Forward-compat BL-5:** `content_task_ids` JSON snapshot uložen v DB při každé content emission → BL-5 fingerprint compare může ho porovnat s `extra_data.task_id_info` při re-sync.
+
+**Spike outputs (committed s `69bc6f6`):**
+- [scripts/spike_bl4_fields.py](scripts/spike_bl4_fields.py) — 6 `data_type` hodnot v `/file/detail/{id}` content_list; embeddings nikdy ne (voice biometric PII)
+- [scripts/spike_bl_x_folders.py](scripts/spike_bl_x_folders.py) — `GET /filetag/` (note trailing slash) je folder catalog; vyžaduje `app-platform: web` + `edit-from: web` headers
+
+**Kill criteria delta:**
+- **#19 NEW:** folder-classify větev klasifikuje < 30 % recordings po 60d → revize folder vrstvy (signal že většinu zachycuje regex a folder vrstva je over-engineering).
+
+**Cassette deferral:** Tasks 2/4/5/12 (live API integration tests pro `/filetag/`, `/file/detail/{id}`, S3 content text, ContentFetcher E2E) zůstávají bez VCR cassette. Implementation + unit tests s mocked clientem hotové. Cassette session vyžaduje fresh PLAUD_API_TOKEN + manuální scrubbing aiContentHeader/embeddings/signed URLs per cassette-refresh skill.
+
+**Token rotation (2026-04-29):** během brainstorm session uživatel nedopatřením postnul plný Bearer token do chat history v rámci DevTools investigation. Token rotated.
+
+**Test suite:** 328 passed (296 → 328, +32 nových). 2 Windows concurrency flakes (test_progress, test_tray_scheduler_loop) pre-existing — pasují izolovaně.
+
+**Follow-ups:**
+- Cassette recording session pro Tasks 2/4/5/12 + Task 20 E2E smoke
+- Frontend (React/Tailwind) implementace nového Settings layoutu — UI spec v [docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md#10-ui-settings-page-layout-textový-spec](docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md)
+- BL-5 (re-sync změn) může začít na základě uloženého `content_task_ids` snapshot
+
+---
+
 ## 2026-04-29 — UI 500 silent: skipped_unknown_project wire model drift
 
 **Symptom:** Dashboard ukázal overlay „Spojení s PlaudSync ztraceno — HTTP 500". `/api/healthz` → 200, `/api/state` → 500. Nic v `plaudsync.log` (uvicorn stderr nejde do Loguru).
