@@ -178,6 +178,28 @@ def _migrate_add_file_size_column(conn: sqlite3.Connection) -> None:
         pass
 
 
+def _migrate_add_content_columns(conn: sqlite3.Connection) -> None:
+    """Add nullable BL-4 / BL-X columns to recordings for existing DBs.
+
+    - content_status        (NULL = legacy = not_applicable; pending / complete)
+    - content_path          (absolute path to .md sourozenec)
+    - content_task_ids      (JSON snapshot of task_id_info — BL-5 fingerprint)
+    - classification_source (name / folder / none — for kill criterion #19)
+
+    Idempotent via try/except (duplicate-column OperationalError swallowed).
+    """
+    for column_def in (
+        "content_status TEXT",
+        "content_path TEXT",
+        "content_task_ids TEXT",
+        "classification_source TEXT",
+    ):
+        try:
+            conn.execute(f"ALTER TABLE recordings ADD COLUMN {column_def}")
+        except sqlite3.OperationalError:
+            pass
+
+
 def open_state(state_root: Path) -> sqlite3.Connection:
     db_dir = state_root / ".plaudsync"
     db_dir.mkdir(parents=True, exist_ok=True)
@@ -186,5 +208,6 @@ def open_state(state_root: Path) -> sqlite3.Connection:
     conn.executescript(_SCHEMA)
     _migrate_status_check_constraint(conn)
     _migrate_add_file_size_column(conn)
+    _migrate_add_content_columns(conn)
     conn.commit()
     return conn

@@ -159,6 +159,43 @@ def test_record_recording_upgrades_skipped_to_downloaded(tmp_path: Path) -> None
     conn.close()
 
 
+def test_open_state_adds_bl4_blx_content_columns(tmp_path: Path) -> None:
+    """BL-4 / BL-X: content_status, content_path, content_task_ids,
+    classification_source must exist post-migration. NULL on legacy rows."""
+    _seed_old_db(tmp_path)
+
+    conn = open_state(tmp_path)
+    cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(recordings)").fetchall()
+    }
+    assert "content_status" in cols
+    assert "content_path" in cols
+    assert "content_task_ids" in cols
+    assert "classification_source" in cols
+
+    legacy = conn.execute(
+        "SELECT content_status, content_path, content_task_ids, "
+        "classification_source FROM recordings WHERE plaud_id = 'legacy-1'"
+    ).fetchone()
+    assert legacy == (None, None, None, None)
+    conn.close()
+
+
+def test_open_state_content_columns_idempotent(tmp_path: Path) -> None:
+    """Calling open_state twice must not error on the new BL-4 columns."""
+    _seed_old_db(tmp_path)
+    open_state(tmp_path).close()
+    conn = open_state(tmp_path)  # second open
+    cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(recordings)").fetchall()
+    }
+    assert "content_status" in cols
+    assert "classification_source" in cols
+    conn.close()
+
+
 def test_record_recording_does_not_overwrite_downloaded(tmp_path: Path) -> None:
     """Immutability: a 'downloaded' row must not be downgraded to skipped."""
     conn = open_state(tmp_path)
