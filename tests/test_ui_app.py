@@ -56,6 +56,51 @@ def test_state_returns_idle_on_empty_db(client: TestClient) -> None:
     assert body["recordings"] == []
 
 
+def test_state_serializes_recording_with_skipped_unknown_project_status(
+    state_root: Path,
+) -> None:
+    """Regression: sync engine writes status='skipped_unknown_project' to DB
+    (state.py:21 CHECK constraint allows it; sync.py:317 emits it for
+    recordings whose Plaud title resolves to a project not in config.yaml).
+
+    The /api/state Pydantic response_model previously listed only
+    Literal['downloaded','failed','skipped'] -> any such row in the top-50
+    crashed serialization with HTTP 500 and surfaced as the
+    "Spojení s PlaudSync ztraceno" overlay in the dashboard.
+    """
+    from plaudsync.state import open_state
+
+    seed_conn = open_state(state_root)
+    seed_conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
+        "downloaded_at, local_path, classifier_label, status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            "p1",
+            "2026-04-29 Foo: bar",
+            "2026-04-29T08:00:00+00:00",
+            "2026-04-29T08:01:00+00:00",
+            str(state_root / "_unmapped_Foo" / "audio.mp3"),
+            "Foo",
+            "skipped_unknown_project",
+        ),
+    )
+    seed_conn.commit()
+    seed_conn.close()
+
+    app = create_app(state_root)
+    with TestClient(app) as client:
+        resp = client.get("/api/state")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["recordings"]) == 1
+    # Wire collapses the engine-internal value to canonical "skipped" — the DB
+    # keeps the distinction so the retry pass at sync.py:148 can find these
+    # rows after the user adds the missing project to config.yaml.
+    assert body["recordings"][0]["status"] == "skipped"
+
+
 def test_auth_verify_missing_token_returns_token_missing(
     state_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
