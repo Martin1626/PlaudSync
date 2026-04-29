@@ -346,3 +346,79 @@ def test_state_reflects_running_sync(state_root: Path) -> None:
     body = resp.json()
     assert body["sync"]["status"] == "running"
     assert body["sync"]["trigger"] == "ui_sync_now"
+
+
+def test_unhandled_handler_exception_is_logged_and_captured(
+    state_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: BL-3 wire drift produced silent HTTP 500 — uvicorn writes
+    ResponseValidationError to stderr, which pythonw.exe swallows, and Loguru
+    + Sentry never see it. Dashboard then renders the generic
+    'Spojení s PlaudSync ztraceno' overlay with no breadcrumb in plaudsync.log.
+
+    Contract: any unhandled exception escaping a FastAPI handler MUST be
+    (a) logged via Loguru at ERROR with traceback, (b) captured by Sentry
+    with a stable fingerprint, and (c) returned as JSON 500 to the client.
+    """
+    import logging
+
+    from loguru import logger
+
+    captured_records: list[logging.LogRecord] = []
+    handler_id = logger.add(
+        lambda msg: captured_records.append(  # type: ignore[arg-type]
+            logging.LogRecord(
+                name="plaudsync.ui.app",
+                level=logging.ERROR,
+                pathname="",
+                lineno=0,
+                msg=msg.record["message"],  # type: ignore[index]
+                args=None,
+                exc_info=None,
+            )
+        ),
+        level="ERROR",
+    )
+
+    captured_sentry: list[BaseException] = []
+
+    def fake_capture(exc: BaseException, *, fingerprint: str, kind: str) -> None:
+        del fingerprint, kind
+        captured_sentry.append(exc)
+
+    # Patch the helper at the import site in the app module so the handler
+    # picks up the fake regardless of how it imports _capture_sentry.
+    import plaudsync.ui.app as app_module
+
+    monkeypatch.setattr(app_module, "_capture_sentry", fake_capture, raising=False)
+
+    def boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("forced handler failure")
+
+    # app.py imports read_state_snapshot via `from ... import` — patch the
+    # local reference, not the source module.
+    monkeypatch.setattr(app_module, "read_state_snapshot", boom)
+
+    try:
+        app = create_app(state_root)
+        # raise_server_exceptions=False mirrors production: ASGI server returns
+        # 500 instead of re-raising into the test runner, so the assertion
+        # actually exercises the on-the-wire response shape.
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get("/api/state")
+    finally:
+        logger.remove(handler_id)
+
+    assert resp.status_code == 500, resp.text
+    body = resp.json()
+    assert body == {"detail": "internal_server_error"}, body
+
+    assert any(
+        "forced handler failure" in r.msg or "internal_server_error" in r.msg.lower()
+        for r in captured_records
+    ), f"expected Loguru ERROR with traceback, got: {[r.msg for r in captured_records]}"
+
+    assert len(captured_sentry) == 1, (
+        f"expected exactly one Sentry capture, got {len(captured_sentry)}"
+    )
+    assert isinstance(captured_sentry[0], RuntimeError)
