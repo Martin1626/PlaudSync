@@ -72,6 +72,11 @@ class PlaudClient:
         self._token = token
         self._session = requests.Session()
         self._session.headers["Authorization"] = f"Bearer {token}"
+        # Plaud API expects app-platform + edit-from headers — without them
+        # /filetag/ returns 404 (and likely other endpoints will start to
+        # reject silently as the API surface grows). Set as session defaults.
+        self._session.headers["app-platform"] = "web"
+        self._session.headers["edit-from"] = "web"
         self._base_url = BASE_URL
         self._region_probe()
 
