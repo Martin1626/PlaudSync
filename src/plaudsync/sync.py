@@ -6,6 +6,7 @@ and docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md
 """
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,8 @@ from plaudsync.categorization import ClassificationResult
 from plaudsync.classifier import Classifier, ClassificationOutcome, WaterfallClassifier
 from plaudsync.classifiers.name import NameClassifier
 from plaudsync.config import Config
+from plaudsync.content_fetcher import ContentFetcher, FetchOutcome
+from plaudsync.content_writer import compose as compose_markdown
 from plaudsync.path_resolver import resolve_target_path
 from plaudsync.plaud_client import (
     PlaudDownloadCorrupted,
@@ -429,9 +432,50 @@ def _process_recording(
             f"size mismatch: expected={meta.file_size}, written={bytes_written}"
         )
 
+    # Content artifact (.md sourozenec) — only when gate passes (folder
+    # present + classified). All-or-nothing emit: any required Plaud
+    # content_list type with task_status != 1 → status='pending', retry pass
+    # picks up later. Missing required type → 'not_applicable' (no infinite
+    # retry on recordings too short to summarize).
+    content_status: str | None = "not_applicable"
+    content_path: str | None = None
+    content_task_ids_json: str | None = None
+
+    if should_download_artifact("content", meta, outcome, config):
+        try:
+            fetch_outcome = ContentFetcher(client).fetch_artifacts(meta.plaud_id)
+        except Exception as e:  # noqa: BLE001
+            logger.bind(recording_id=meta.plaud_id).exception("content fetch failed")
+            with sentry_sdk.new_scope() as scope:
+                scope.set_tag("error_kind", "content_fetch_failed")
+                scope.set_tag("recording_id", meta.plaud_id)
+                scope.fingerprint = ["content_fetch_failed", type(e).__name__]
+                sentry_sdk.capture_exception(e)
+            content_status = "pending"  # retry pass will re-attempt
+        else:
+            if fetch_outcome.task_ids:
+                content_task_ids_json = json.dumps(fetch_outcome.task_ids)
+            if fetch_outcome.status == "complete":
+                md_path = target_path.with_suffix(".md")
+                md_text = compose_markdown(
+                    meta=meta,
+                    detail=fetch_outcome.detail,
+                    sections=fetch_outcome.sections,
+                    project=label,
+                    classification_source=outcome.source,
+                )
+                md_path.write_text(md_text, encoding="utf-8")
+                content_status = "complete"
+                content_path = str(md_path)
+            else:
+                content_status = fetch_outcome.status
+
     record_recording(
         conn, meta, status="downloaded",
         local_path=str(target_path), run_id=run_id,
         classifier_label=label,
         classification_source=outcome.source,
+        content_status=content_status,
+        content_path=content_path,
+        content_task_ids=content_task_ids_json,
     )
