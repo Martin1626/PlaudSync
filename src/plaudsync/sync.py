@@ -245,6 +245,101 @@ def _retry_skipped_unknown_project(
     return downloaded, failed
 
 
+def _retry_pending_content(
+    conn: sqlite3.Connection,
+    client,
+    *,
+    days: int = 14,
+) -> tuple[int, int]:
+    """Re-evaluate rows with content_status='pending' against /file/detail/{id}.
+
+    Per spec section 6 ("Data flow — retry pending pass"):
+    - Rows older than ``days`` (default 14) → content_status='not_applicable',
+      Sentry capture(error_kind='content_stale', recording_id=tag).
+    - Rows still pending → leave alone, retry next sync.
+    - Rows where all required types now task_status=1 → fetch S3, compose
+      .md, update DB to 'complete' + content_path + content_task_ids.
+
+    Returns (completed_count, failed_count).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    rows = conn.execute(
+        "SELECT plaud_id, title, created_at_plaud, local_path, "
+        "classifier_label, classification_source "
+        "FROM recordings WHERE content_status = 'pending'",
+    ).fetchall()
+
+    completed = 0
+    failed = 0
+    for plaud_id, title, created_at, local_path, label, source in rows:
+        try:
+            if created_at < cutoff:
+                # Stale — Plaud has not generated content within 14d of upload.
+                # Mark not_applicable so retry doesn't loop forever; Sentry alert
+                # fires once per recording (recording_id tag prevents repeat).
+                conn.execute(
+                    "UPDATE recordings SET content_status='not_applicable' "
+                    "WHERE plaud_id = ?",
+                    (plaud_id,),
+                )
+                conn.commit()
+                with sentry_sdk.new_scope() as scope:
+                    scope.set_tag("error_kind", "content_stale")
+                    scope.set_tag("recording_id", plaud_id)
+                    scope.fingerprint = ["content_stale", plaud_id]
+                    sentry_sdk.capture_message("content_stale_after_14d")
+                continue
+
+            class _MetaLike:
+                pass
+
+            meta = _MetaLike()
+            meta.plaud_id = plaud_id  # type: ignore[attr-defined]
+            meta.title = title  # type: ignore[attr-defined]
+            meta.created_at = created_at  # type: ignore[attr-defined]
+
+            outcome = ContentFetcher(client).fetch_artifacts(plaud_id)
+            if outcome.status == "pending":
+                continue  # still not ready
+            if outcome.status == "not_applicable":
+                conn.execute(
+                    "UPDATE recordings SET content_status='not_applicable' "
+                    "WHERE plaud_id = ?",
+                    (plaud_id,),
+                )
+                conn.commit()
+                continue
+
+            # status == 'complete' → emit .md sourozenec next to existing MP3
+            md_path = Path(local_path).with_suffix(".md")
+            md_text = compose_markdown(
+                meta=meta,
+                detail=outcome.detail,
+                sections=outcome.sections,
+                project=label or "_unclassified",
+                classification_source=source or "name",
+            )
+            md_path.write_text(md_text, encoding="utf-8")
+            conn.execute(
+                "UPDATE recordings SET content_status='complete', "
+                "content_path = ?, content_task_ids = ? WHERE plaud_id = ?",
+                (str(md_path), json.dumps(outcome.task_ids), plaud_id),
+            )
+            conn.commit()
+            completed += 1
+        except Exception as e:  # noqa: BLE001
+            logger.bind(recording_id=plaud_id).exception("retry_pending_content failed")
+            with sentry_sdk.new_scope() as scope:
+                scope.set_tag("error_kind", "content_retry_failed")
+                scope.set_tag("recording_id", plaud_id)
+                scope.fingerprint = ["content_retry_failed", type(e).__name__]
+                sentry_sdk.capture_exception(e)
+            failed += 1
+
+    return completed, failed
+
+
 def run_sync(
     client,
     classifier: Classifier,
@@ -282,12 +377,25 @@ def run_sync(
             conn, classifier, config, run_id, days=14,
         )
 
+        # BL-4 Task 16: retry pending content (.md sourozenec generation).
+        # Rows with content_status='pending' get re-evaluated against
+        # /file/detail/{id}; if Plaud finished generating, we emit .md.
+        # Older than 14d → not_applicable + Sentry content_stale alert.
+        try:
+            content_completed, content_failed = _retry_pending_content(
+                conn, client, days=14,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("retry_pending_content pass crashed")
+            sentry_sdk.capture_exception(e)
+            content_completed, content_failed = 0, 1
+
         since = last_successful_sync(conn)
         metas = list(client.list_recordings(since=since))
 
-        new_count = retry_downloaded
+        new_count = retry_downloaded + content_completed
         skipped_count = 0
-        failed_count = reclassify_failed + retry_failed
+        failed_count = reclassify_failed + retry_failed + content_failed
         total = len(metas)
 
         _emit("downloading", 0, total)
