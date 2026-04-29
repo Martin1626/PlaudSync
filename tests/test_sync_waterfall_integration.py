@@ -299,6 +299,74 @@ def test_content_gate_off_for_unclassified_even_with_folder(tmp_path: Path) -> N
         conn.close()
 
 
+def test_reclassify_moves_md_sibling(tmp_path: Path) -> None:
+    """When reclassify_recent moves an MP3 between project folders, the .md
+    sourozenec must follow + DB.content_path updated."""
+    import sqlite3
+    from datetime import datetime, timezone
+
+    unclassified = tmp_path / "Unclassified"
+    alza_dir = tmp_path / "ALZA"
+    unclassified.mkdir()
+    alza_dir.mkdir()
+    config = Config(
+        unclassified_dir=unclassified,
+        projects={"ALZA": ProjectEntry(path=alza_dir)},
+    )
+
+    # Seed: row with classifier_label='_unclassified' (a misclassified row)
+    # and MP3 + .md sourozenec in unclassified_dir.
+    old_mp3 = unclassified / "2026-04-29_alza_kickoff.mp3"
+    old_md = old_mp3.with_suffix(".md")
+    old_mp3.write_bytes(b"AAAA")
+    old_md.write_text("---\nplaud_id: rec1\n---\n", encoding="utf-8")
+
+    conn = open_state(tmp_path)
+    try:
+        conn.execute(
+            "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+            (datetime.now(timezone.utc).isoformat(), "manual"),
+        )
+        conn.execute(
+            "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
+            "downloaded_at, local_path, classifier_label, status, sync_run_id, "
+            "content_status, content_path) "
+            "VALUES (?, ?, ?, ?, ?, '_unclassified', 'downloaded', 1, 'complete', ?)",
+            (
+                "rec1", "04-29 ALZA: kickoff",
+                datetime.now(timezone.utc).isoformat(),
+                datetime.now(timezone.utc).isoformat(),
+                str(old_mp3), str(old_md),
+            ),
+        )
+        conn.commit()
+
+        # No new recordings — only reclassify pass should fire.
+        client = _FakeClient([])
+        exit_code = run_sync(client, WaterfallClassifier(config), conn, config, "manual")
+        assert exit_code == 0
+
+        # Both files moved to ALZA dir
+        assert not old_mp3.exists()
+        assert not old_md.exists()
+        moved_mp3 = list(alza_dir.rglob("*.mp3"))
+        moved_md = list(alza_dir.rglob("*.md"))
+        assert len(moved_mp3) == 1
+        assert len(moved_md) == 1
+        assert moved_mp3[0].stem == moved_md[0].stem
+
+        # DB updated with new paths
+        row = conn.execute(
+            "SELECT classifier_label, local_path, content_path "
+            "FROM recordings WHERE plaud_id='rec1'",
+        ).fetchone()
+        assert row[0] == "ALZA"
+        assert row[1] == str(moved_mp3[0])
+        assert row[2] == str(moved_md[0])
+    finally:
+        conn.close()
+
+
 def test_download_audio_false_records_skipped_status(tmp_path: Path) -> None:
     """download_audio=False → MP3 not written, status='skipped' in DB so UI
     sees the recording exists but artifact-level decline occurred."""

@@ -139,11 +139,34 @@ def _reclassify_recent(
 
             new_path.parent.mkdir(parents=True, exist_ok=True)
             old_path.rename(new_path)
-            conn.execute(
-                "UPDATE recordings SET classifier_label = ?, local_path = ? "
-                "WHERE plaud_id = ?",
-                (label, str(new_path), plaud_id),
-            )
+
+            # BL-4 Task 17: move .md sourozenec along with the MP3 if present.
+            # Skip the move when target .md already exists (rare race) — log
+            # warning but don't fail the whole reclassify (MP3 already moved).
+            new_content_path: str | None = None
+            old_md = old_path.with_suffix(".md")
+            if old_md.exists():
+                new_md = new_path.with_suffix(".md")
+                if new_md.exists():
+                    logger.bind(recording_id=plaud_id).warning(
+                        "reclassify .md sibling: target exists, skipping move"
+                    )
+                else:
+                    old_md.rename(new_md)
+                    new_content_path = str(new_md)
+
+            if new_content_path is not None:
+                conn.execute(
+                    "UPDATE recordings SET classifier_label = ?, local_path = ?, "
+                    "content_path = ? WHERE plaud_id = ?",
+                    (label, str(new_path), new_content_path, plaud_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE recordings SET classifier_label = ?, local_path = ? "
+                    "WHERE plaud_id = ?",
+                    (label, str(new_path), plaud_id),
+                )
             conn.commit()
             moved += 1
         except Exception as e:  # noqa: BLE001
@@ -224,12 +247,57 @@ def _retry_skipped_unknown_project(
                     f"written={bytes_written}"
                 )
 
+            # BL-4 Task 17: content artifact pass for retry-downloaded recording.
+            # Folder context is unknown (we synthesized meta from DB row), so
+            # content gate's plaud_folder check would always reject. Use the
+            # config flag + label to decide; assume folder check passed
+            # (otherwise the original sync wouldn't have ingested it).
+            content_status: str | None = "not_applicable"
+            content_path: str | None = None
+            content_task_ids_json: str | None = None
+            if (config.download_content
+                    and label and label != "_unclassified"
+                    and hasattr(client, "fetch_detail")):
+                try:
+                    fetch_outcome = ContentFetcher(client).fetch_artifacts(plaud_id)
+                except Exception as e:  # noqa: BLE001
+                    logger.bind(recording_id=plaud_id).exception(
+                        "retry_skipped content fetch failed"
+                    )
+                    with sentry_sdk.new_scope() as scope:
+                        scope.set_tag("error_kind", "content_fetch_failed")
+                        scope.set_tag("recording_id", plaud_id)
+                        sentry_sdk.capture_exception(e)
+                    content_status = "pending"
+                else:
+                    if fetch_outcome.task_ids:
+                        content_task_ids_json = json.dumps(fetch_outcome.task_ids)
+                    if fetch_outcome.status == "complete":
+                        md_path = target_path.with_suffix(".md")
+                        meta_like.plaud_id = plaud_id  # type: ignore[attr-defined]
+                        md_text = compose_markdown(
+                            meta=meta_like,
+                            detail=fetch_outcome.detail,
+                            sections=fetch_outcome.sections,
+                            project=label,
+                            classification_source="name",
+                        )
+                        md_path.write_text(md_text, encoding="utf-8")
+                        content_status = "complete"
+                        content_path = str(md_path)
+                    else:
+                        content_status = fetch_outcome.status
+
             conn.execute(
                 "UPDATE recordings SET status = 'downloaded', "
                 "local_path = ?, classifier_label = ?, downloaded_at = ?, "
-                "sync_run_id = ? WHERE plaud_id = ?",
+                "sync_run_id = ?, classification_source = ?, "
+                "content_status = ?, content_path = ?, content_task_ids = ? "
+                "WHERE plaud_id = ?",
                 (str(target_path), label,
-                 datetime.now(timezone.utc).isoformat(), run_id, plaud_id),
+                 datetime.now(timezone.utc).isoformat(), run_id,
+                 "name", content_status, content_path, content_task_ids_json,
+                 plaud_id),
             )
             conn.commit()
             downloaded += 1
@@ -262,6 +330,10 @@ def _retry_pending_content(
 
     Returns (completed_count, failed_count).
     """
+    # Legacy clients (test fakes) without BL-4 surface — skip pass entirely.
+    if not hasattr(client, "fetch_detail"):
+        return 0, 0
+
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     rows = conn.execute(
@@ -366,15 +438,18 @@ def run_sync(
 
         # Rolling retry pass for previously-skipped rows whose project may now
         # be in config. BL-3 — see specs/2026-04-26-bl3-skip-unknown-projects-design.md.
+        # Uses NameClassifier (str-returning) since synthesized DB metas have
+        # no plaud_folder context.
         retry_downloaded, retry_failed = _retry_skipped_unknown_project(
-            conn, client, classifier, config, run_id, days=14,
+            conn, client, NameClassifier(), config, run_id, days=14,
         )
 
         # Rolling re-classify pass: re-evaluate recent _unclassified rows against
-        # current config (e.g. user added a project, or fixed a typo). Failures
-        # roll into failed_count via exit_code semantics.
+        # current config (e.g. user added a project, or fixed a typo). Uses
+        # NameClassifier (name-only) — folder context isn't available for rows
+        # synthesized from DB. Failures roll into failed_count via exit_code.
         reclassify_moved, reclassify_failed = _reclassify_recent(
-            conn, classifier, config, run_id, days=14,
+            conn, NameClassifier(), config, run_id, days=14,
         )
 
         # BL-4 Task 16: retry pending content (.md sourozenec generation).
@@ -549,7 +624,9 @@ def _process_recording(
     content_path: str | None = None
     content_task_ids_json: str | None = None
 
-    if should_download_artifact("content", meta, outcome, config):
+    # Content emit only when client has BL-4 surface (fetch_detail). Legacy
+    # callers (test fakes pre-BL-4) don't — leave content_status='not_applicable'.
+    if should_download_artifact("content", meta, outcome, config) and hasattr(client, "fetch_detail"):
         try:
             fetch_outcome = ContentFetcher(client).fetch_artifacts(meta.plaud_id)
         except Exception as e:  # noqa: BLE001
