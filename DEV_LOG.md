@@ -4,6 +4,25 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-29 — UI 500 silent: skipped_unknown_project wire model drift
+
+**Symptom:** Dashboard ukázal overlay „Spojení s PlaudSync ztraceno — HTTP 500". `/api/healthz` → 200, `/api/state` → 500. Nic v `plaudsync.log` (uvicorn stderr nejde do Loguru).
+
+**Root cause (Layer 4, sync-debug skill):** BL-3 přidal `status='skipped_unknown_project'` do DB schématu i sync engine ([state.py:21](src/plaudsync/state.py#L21), [sync.py:317](src/plaudsync/sync.py#L317)), ale UI wire model `RecordingRow` v [app.py:101](src/plaudsync/ui/app.py#L101) zůstal s `Literal['downloaded','failed','skipped']`. Jakmile takový řádek spadl do TOP-50 podle `created_at_plaud DESC`, FastAPI `ResponseValidationError` shodil celý endpoint. Frontend [useConnectionLost.ts](frontend/src/components/useConnectionLost.ts) pak po 3 selháních vyplil overlay.
+
+**Fix (commit `80a410b`):** V `_read_recordings` mapping `skipped_unknown_project → skipped` před serializací. DB schema + retry pass [sync.py:148](src/plaudsync/sync.py#L148) zůstávají beze změny, frontend `RecordingStatus` typy beze změny. Failing-first integration test (commit `ea60dcf`).
+
+**Plná suite: 246 passed** (245 → 246, +1 regression).
+
+**Kill criteria check:**
+- `#18` (Sentry scrubbing): nemá dopad — fix je čistá serialization úprava bez nových log/Sentry surfaces.
+
+**Souvisí s `feedback_doc_cascade_exhaustivity`:** BL-3 spec change měl udělat cascade scrub i na `app.py` Pydantic Literal a `state_reader.py` TypedDict. Frontend `types.ts` `RecordingStatus` zůstává „skipped"-only OK, protože wire collapse drží kontrakt.
+
+**Observability follow-up:** uvicorn `ResponseValidationError` jde tiše do stderr trayu (pythonw → swallowed). Zvážit: hook FastAPI exception handler do Loguru, ať podobné silent 500 příště neumřou v ti.
+
+---
+
 ## 2026-04-27 — Log spam: schedule-skip downgrade INFO → DEBUG
 
 **Symptom:** Aktivní `state_root/.plaudsync/plaudsync.log` rostl o ~1 440 řádků/den mimo pracovní hodiny. Každý záznam: `sync_runner:run_sync_pipeline:88 - skipping run per schedule (work_hours=False, interval=60min)`.
