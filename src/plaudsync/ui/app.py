@@ -147,6 +147,21 @@ class ScheduleModel(BaseModel):
     work_to: str
 
 
+class FolderItem(BaseModel):
+    """Plaud folder catalog entry — minimal shape for UI dropdown."""
+
+    id: str
+    name: str
+
+
+class FoldersResponse(BaseModel):
+    """GET /api/folders + POST /api/folders/refresh response (BL-X)."""
+
+    folders: list[FolderItem]
+    fetched_at: str | None = None
+    stale: bool = True
+
+
 def create_app(state_root: Path) -> FastAPI:
     """Build a FastAPI app bound to the given state_root.
 
@@ -250,6 +265,47 @@ def create_app(state_root: Path) -> FastAPI:
                 detail={"ok": False, "errors": result["errors"]},
             )
         return ConfigSaveSuccess(parsed=result["parsed"])
+
+    @app.get("/api/folders", response_model=FoldersResponse)
+    def get_folders() -> FoldersResponse:
+        """Return cached Plaud folder catalog (BL-X). Does NOT auto-refresh
+        even if stale — UI shows the staleness flag and offers manual refresh
+        via POST /api/folders/refresh."""
+        from plaudsync.filetag_cache import FiletagCache
+
+        cache = FiletagCache(app.state.state_root)
+        folders = cache.load() or []
+        return FoldersResponse(
+            folders=[FolderItem(id=f.id, name=f.name) for f in folders],
+            fetched_at=cache.fetched_at(),
+            stale=cache.is_stale(),
+        )
+
+    @app.post("/api/folders/refresh", response_model=FoldersResponse)
+    def refresh_folders() -> FoldersResponse:
+        """Force refresh: hit Plaud /filetag/, persist to filetag_cache.json,
+        return fresh catalog. 503 on token / region failure."""
+        from plaudsync.filetag_cache import FiletagCache
+
+        try:
+            token = load_token()
+        except PlaudTokenMissing:
+            raise HTTPException(status_code=503, detail="PlaudTokenMissing")
+        try:
+            with PlaudClient(token) as client:
+                folders_raw = client.fetch_filetags()
+        except PlaudTokenExpired:
+            raise HTTPException(status_code=503, detail="PlaudTokenExpired")
+        except PlaudRegionProbeFailed:
+            raise HTTPException(status_code=503, detail="region_probe_failed")
+
+        cache = FiletagCache(app.state.state_root)
+        cache.save(folders_raw)
+        return FoldersResponse(
+            folders=[FolderItem(id=f.id, name=f.name) for f in folders_raw],
+            fetched_at=cache.fetched_at(),
+            stale=False,
+        )
 
     @app.middleware("http")
     async def csp_middleware(request, call_next):
