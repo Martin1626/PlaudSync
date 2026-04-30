@@ -45,9 +45,20 @@ class RecordingMeta:
             duration_ms = raw["duration_seconds"] * 1000
         duration_seconds = (duration_ms or 0) // 1000
         file_size = raw.get("filesize") or raw.get("file_size") or 0
-        plaud_folder = raw.get("filetag_id")
-        if not plaud_folder and raw.get("tag_ids"):
-            plaud_folder = raw["tag_ids"][0]
+        # Plaud listing returns folder ID under `filetag_id_list` (a list,
+        # typically ≤1 entry per recording). Pre-2026-04-30 code only read
+        # `filetag_id` (singular, never present in real responses) → folder
+        # ID always extracted as None → plaud_folder='_unknown' across the
+        # board → folder classification path was completely dead in
+        # production. Hotfix J fixes the field name.
+        plaud_folder: str | None = None
+        tag_list = raw.get("filetag_id_list") or raw.get("tag_ids")
+        if isinstance(tag_list, list) and tag_list:
+            plaud_folder = tag_list[0]
+        # Defensive fallback to the legacy singular spelling in case Plaud
+        # ever returns it (different region, different API version).
+        if not plaud_folder:
+            plaud_folder = raw.get("filetag_id")
         return cls(
             plaud_id=plaud_id,
             title=title,

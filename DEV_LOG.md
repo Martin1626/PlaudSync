@@ -4,6 +4,30 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-4 prod hotfix J (folder ID extraction was DEAD since BL-X)
+
+**Symptom:** User filed recording `04-30 Strategický rozpor mezi evidencí a monitoringem hardwarových prvků` do Plaud folder Alza.sk. ALZA project má v configu folder mapping na `8ed7ab6e5a68f02e31f736a15a99024d` (Alza.sk). filetag_cache catalog OK. classify_by_folder=True. Přesto recording NEPŘILETĚL — DB row neexistuje vůbec.
+
+**Layer (per `sync-debug` skill):** Layer 3-ish — API contract drift. Mezi spike (cassette test) a production listing.
+
+**Root cause (commit `<this commit>`):** `RecordingMeta.from_raw` četl Plaud listing pole `raw.get("filetag_id")` (singular) jako zdroj folder ID. Plaud API ale vrací **`filetag_id_list`** (LIST). Pole `filetag_id` ve skutečném response **neexistuje**. Důsledek: `plaud_folder = None or "_unknown"` pro VŠECHNY recordings — od BL-X šipu napříč produkční DB.
+
+**Proč to nikdo nezpozoroval do dnes:** všechny dosud zpracované recordings měly title formát `MM-DD KOD:` → name regex match → klasifikace přes name strategy. Folder strategy se nikdy nevolala s real folder ID (vždy dostala `_unknown`). Tvůj Strategický rozpor recording je první real-world test of folder path — bez `:` v titulu je name strategy mrtvá → folder má všechen vliv → Hotfix J bug fired.
+
+**Fix:** `RecordingMeta.from_raw` reads `filetag_id_list[0]` (preferentně), s fallbackem na `filetag_id` (singular) a `tag_ids[0]` pro defensive backward-compat. Empty list / missing key → `_unknown` (existing semantic).
+
+**Tests:** 381 → 388 passing, +7 v `tests/unit/test_recording_meta_filetag.py` pokrývající: filetag_id_list extraction, empty list, missing key, multi-entry first-wins, legacy singular field, legacy tag_ids field, precedence order.
+
+**Impact na produkci:**
+- Strategický rozpor recording: po next Sync Now sjede do `Recordings/ALZA/` přes folder source. Žádný DB cleanup needed (recording v DB neexistoval).
+- Existing rows: žádné nejsou impacted, protože všechny stávající rows byly name-classified (jejich classification stále valid). Folder classifier teď začne fungovat pro budoucí recordings + retry pass legacy stuck rows.
+
+**Kill criteria check:** **#19 (folder coverage <30 %) byl jako kritérium až dnes nepoužitelný** — folder coverage byla 0 % skrz celý BL-X! Po Hotfix J konečně bude relevantní telemetrie. Resetuju 60d window pro #19 začátek od dneška.
+
+**Severity:** P1. Folder klasifikační strategie byla v produkci celou dobu **inert** — uživatel s `classify_by_folder=true` měl false sense že to funguje. 9 hotfixů tento týden + tento je nejvíce závažný (silent feature failure).
+
+---
+
 ## 2026-04-30 — BL-4 prod hotfix H + I (partial-emit + name→folder fallback)
 
 **Symptoms (sequenced):**
