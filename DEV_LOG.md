@@ -4,6 +4,24 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-4 prod hotfix D (eligibility via task_id_info)
+
+**Symptom:** Po deploy A+B+C (commit `6c74d50`) FHB recording z 04-30 přitekl jako MP3, ale `.md` sourozenec chyběl. DB row měl `content_status='not_applicable'` + `content_task_ids=NULL`. Recording 14:27 dlouhý, evidentně Plaud měl co transcribovat.
+
+**Layer (per `sync-debug` skill):** Layer 4. ContentFetcher.fetch_artifacts logic.
+
+**Root cause (commit `242de91`):** ContentFetcher rozlišoval pending/not_applicable podle přítomnosti všech required `data_type` v `content_list`. Pro čerstvý recording (sync ~1h po uploadu) Plaud ještě negeneroval všech 6 summary types — `transaction` byl ready, ale `outline` + `auto_sum_note` ještě ne v content_list. Pre-fix logika to označila jako `not_applicable` (final, no retry) místo `pending` (retry within 14d).
+
+**Fix:** použít `extra_data.task_id_info` jako eligibility signál — Plaud vždy queue-uje všech 3 task IDs (trans + outline + summary) hned při ingest pro recordings, které půjde plně zprocesovat. Subset = recording ineligible (moc krátký / Plaud skipl) = legitimate `not_applicable`. Všechny 3 task IDs queued + content_list missing/pending = mid-generation = `pending`.
+
+**Impact na produkci:** 11 DB rows bylo stuck v `not_applicable` kvůli tomuto bugu. One-shot SQL UPDATE flipnul je na `pending` aby je retry pass znovu zkusil. Žádná migrace v state.py — recovery one-time, ne ongoing.
+
+**Test delta:** 339 → 341 passing. 1 test deleted (`test_missing_required_type_returns_not_applicable` — semantic obrácený), 3 new (eligibility subset, pending+missing-types, pending+empty-content-list).
+
+**Kill criteria check:** Žádné triggered. Highlight: kill criterion #19 (folder coverage) telemetrie závisí na content emission rate — tento fix významně ovlivní její baseline. Watch.
+
+---
+
 ## 2026-04-30 — BL-4 prod hotfix A+B+C (Plaud-side mutations) + BL-5 stub
 
 **Symptom:** Den po BL-4/BL-X ship 3 expected recordings (2× FHB, 1× OEZ-renamed-from-Konzultace) nesynchronizovány lokálně, přestože byly viditelné v Plaud UI. Plus 5 default-named recordings (`2026-04-29 08:14:23` formát) stuck v `skipped_unknown_project` s nesmyslnými labels (`08`, `10`, `11`, `14`, `19` — hodina jako project name).
