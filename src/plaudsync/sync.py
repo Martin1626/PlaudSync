@@ -74,36 +74,77 @@ def _reclassify_recent(
     classifier: Classifier,
     config: Config,
     run_id: int,
+    live_metas: dict | None = None,
     *,
     days: int = 14,
 ) -> tuple[int, int]:
-    """Re-classify recordings with classifier_label='_unclassified' and
-    downloaded_at within the last `days` days. Move physical files to new
-    target paths and update DB. Returns (moved_count, failed_count).
+    """Re-classify recently-downloaded rows when their label could change.
+
+    Two trigger paths:
+    1. **Existing (BL-3 era):** rows with classifier_label='_unclassified'
+       — re-evaluate against current config (user added a project, fixed
+       typo, etc.).
+    2. **Hotfix F (2026-04-30):** rows where Plaud-side title changed
+       since download — Plaud user renamed recording, classification could
+       map to a different project. Detected via live_metas dict (built from
+       /file/simple/web in run_sync). When effective title produces a new
+       label that's in config, MP3 + .md sourozenec are moved + DB updated.
+
+    Both paths bounded to ``days`` window (default 14d) to bound cost.
+    Returns (moved_count, failed_count).
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     rows = conn.execute(
-        "SELECT plaud_id, title, created_at_plaud, local_path "
+        "SELECT plaud_id, title, created_at_plaud, local_path, "
+        "       classifier_label, content_path "
         "FROM recordings "
-        "WHERE classifier_label = '_unclassified' "
-        "AND status = 'downloaded' "
+        "WHERE status = 'downloaded' "
         "AND downloaded_at >= ?",
         (cutoff,),
     ).fetchall()
 
     moved = 0
     failed = 0
-    for plaud_id, title, created_at, old_local_path in rows:
+    for plaud_id, db_title, created_at, old_local_path, current_label, old_content_path in rows:
         try:
+            # Hotfix F: live title takes precedence when listing has the
+            # recording (handles Plaud-side rename of already-downloaded
+            # rows). Falls back to DB title for rows missing from listing
+            # (e.g., trashed on Plaud — separate BL-5 case).
+            live_meta = live_metas.get(plaud_id) if live_metas else None
+            live_title = getattr(live_meta, "title", None) if live_meta else None
+            effective_title = live_title if live_title else db_title
+
+            # Skip work when nothing has changed and label is already
+            # non-unclassified (typical hot path — most rows are stable).
+            title_changed = bool(live_title and live_title != db_title)
+            if current_label != "_unclassified" and not title_changed:
+                continue
+
             class _MetaLike:
                 pass
             meta_like = _MetaLike()
-            meta_like.title = title  # type: ignore[attr-defined]
+            meta_like.title = effective_title  # type: ignore[attr-defined]
             meta_like.created_at = created_at  # type: ignore[attr-defined]
 
             label = classifier.classify(meta_like)
-            if label == "_unclassified":
+            if label == "_unclassified" or label == current_label:
+                # No-op for renames that don't change label, or rows still
+                # unclassified after re-eval. Persist title change anyway
+                # (DB stays in sync with Plaud).
+                if title_changed:
+                    conn.execute(
+                        "UPDATE recordings SET title = ? WHERE plaud_id = ?",
+                        (effective_title, plaud_id),
+                    )
+                    conn.commit()
+                continue
+
+            # New label must be in config to materialize a target path.
+            # Otherwise leave the row alone (treat like BL-3 — user must
+            # add the project to config first, then retry pass moves it).
+            if config.lookup_project(label) is None:
                 continue
 
             old_path = Path(old_local_path)
@@ -113,6 +154,10 @@ def _reclassify_recent(
                 )
                 continue
 
+            # Preserve existing filename (don't re-slug). Slug stays with
+            # original title for stability across renames; the meaningful
+            # change is the project directory. User can rename file
+            # manually if the slug bothers them.
             result = ClassificationResult(
                 status="matched", project=label, matched_date=None,
             )
@@ -123,10 +168,10 @@ def _reclassify_recent(
                 filename=old_path.name,
             )
             if new_path == old_path:
-                # Path unchanged — just update label.
                 conn.execute(
-                    "UPDATE recordings SET classifier_label = ? WHERE plaud_id = ?",
-                    (label, plaud_id),
+                    "UPDATE recordings SET classifier_label = ?, title = ? "
+                    "WHERE plaud_id = ?",
+                    (label, effective_title, plaud_id),
                 )
                 conn.commit()
                 continue
@@ -158,14 +203,15 @@ def _reclassify_recent(
             if new_content_path is not None:
                 conn.execute(
                     "UPDATE recordings SET classifier_label = ?, local_path = ?, "
-                    "content_path = ? WHERE plaud_id = ?",
-                    (label, str(new_path), new_content_path, plaud_id),
+                    "content_path = ?, title = ? WHERE plaud_id = ?",
+                    (label, str(new_path), new_content_path,
+                     effective_title, plaud_id),
                 )
             else:
                 conn.execute(
-                    "UPDATE recordings SET classifier_label = ?, local_path = ? "
-                    "WHERE plaud_id = ?",
-                    (label, str(new_path), plaud_id),
+                    "UPDATE recordings SET classifier_label = ?, local_path = ?, "
+                    "title = ? WHERE plaud_id = ?",
+                    (label, str(new_path), effective_title, plaud_id),
                 )
             conn.commit()
             moved += 1
@@ -471,12 +517,14 @@ def run_sync(
             conn, client, NameClassifier(), config, run_id, live_metas, days=14,
         )
 
-        # Rolling re-classify pass: re-evaluate recent _unclassified rows against
-        # current config (e.g. user added a project, or fixed a typo). Uses
-        # NameClassifier (name-only) — folder context isn't available for rows
-        # synthesized from DB. Failures roll into failed_count via exit_code.
+        # Rolling re-classify pass: re-evaluate recent downloaded rows against
+        # (a) current config — for old _unclassified rows when user added a
+        # project or fixed typo, and (b) live Plaud title from listing —
+        # detect Plaud-side rename of already-downloaded recording (Hotfix F
+        # 2026-04-30). Uses NameClassifier (name-only); folder context absent
+        # in DB. Failures roll into failed_count via exit_code.
         reclassify_moved, reclassify_failed = _reclassify_recent(
-            conn, NameClassifier(), config, run_id, days=14,
+            conn, NameClassifier(), config, run_id, live_metas, days=14,
         )
 
         # BL-4 Task 16: retry pending content (.md sourozenec generation).

@@ -4,6 +4,39 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-4 prod hotfix F (Plaud-side rename of downloaded rows)
+
+**Symptom:** User na Plaude přejmenoval recording z `04-30 Test: Úprava procesu picking finish` na `04-30 OEZ: Úprava procesu picking finish`. Po Sync Now DB row stále `classifier_label='Test'`, oba MP3 i `.md` zůstaly v `Testy/`. Očekávané: oba soubory v `OEZ/`.
+
+**Layer (per `sync-debug` skill):** Layer 4 — sync flow. Předjímáno v BL-5 stub jako "rename detection of already-downloaded rows".
+
+**Root cause (commit `<this commit>`):** `_reclassify_recent` filtroval `classifier_label='_unclassified' AND status='downloaded'` — re-evaluoval jen unclassified rows. Downloaded rows s konkrétním project labelem (Test, ALZA, …) byly imune proti Plaud-side rename. To je užší podmnožina BL-5 scope (rename detection); zbytek BL-5 (folder move, trash) zůstává mimo scope.
+
+**Fix:** Rozšíření `_reclassify_recent`:
+- SELECT zahrnuje VŠECHNY downloaded rows v 14d window (ne jen _unclassified).
+- Z `live_metas` dictu (pre-fetched v `run_sync`) čte živý title pro každou plaud_id.
+- Skip work na hot-path: `current_label != "_unclassified" AND not title_changed` → nic se nedělá.
+- Pokud title změněn → re-classify s effective_title; pokud nový label != current_label a je v configu → move MP3 + .md sourozenec do nového project dir + update DB (label, local_path, content_path, **title**).
+- Pokud title změněn ale label se nezmění (rename within same project) → persist title to DB jen.
+- Pokud nový label není v configu → leave row alone (BL-3 retry path picks up after user adds project).
+
+Filename slug **neměníme** — soubor zůstává s původním slugem (např. `2026-04-30_04-30_Test_...mp3` po renameu na OEZ). Stabilita > slug consistency. Test `test_reclassify_skips_when_target_path_exists` by jinak selhal.
+
+**Tests:** 363 → 368, +5 nových v `tests/test_sync_reclassify_rename.py` pokrývající:
+- Plaud rename Test→OEZ → MP3 + .md move + DB update.
+- Rename within same project (Test→Test) → no move, title persisted.
+- Rename to project not in config → no move, label stays.
+- No title change → cheap skip.
+- Legacy _unclassified path → still works.
+
+**Impact na produkci:** User-reported recording (`fb94db93...`, picking finish) automaticky přesunuto při příštím Sync Now. Žádný manual cleanup needed.
+
+**Kill criteria check:** Žádné triggered. Kill criterion #19 (folder coverage) measurement nepostiženo — `classification_source` nemění se při name-only re-classify (zůstává `'name'`).
+
+**BL-5 stub:** Aktualizovat — rename detection částečně shipped v hotfix F. Zbývající scope: folder move detection (classification_source='folder'), trash detection, content drift via task_id_info fingerprint compare. Zatím nedotčeno; spec stub stále platný pro tyto 3 sub-cases.
+
+---
+
 ## 2026-04-30 — BL-4 prod hotfix E (outline + transcript JSON → markdown)
 
 **Symptom:** Po hotfix D + Sync Now začaly vznikat `.md` sourozence, ale uvnitř obsahovaly raw JSON pole pro Outline a Transcript sekce. User otevřel soubor a viděl `[{"start_time":1240,"end_time":20930,"topic":"Úvod a e-maily"}, …]` místo čitelného markdown.
