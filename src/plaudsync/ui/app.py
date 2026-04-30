@@ -128,6 +128,9 @@ class RecordingRow(BaseModel):
     project: str | None = None
     target_dir: str
     status: Literal["downloaded", "failed", "skipped"]
+    # BL-6: source-aware project badge
+    classification_source: Literal["name", "folder", "none"] | None = None
+    plaud_folder_name: str | None = None
 
 
 class StateResponse(BaseModel):

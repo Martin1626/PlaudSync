@@ -13,6 +13,8 @@ export const SAMPLE_RECORDINGS_FULL: RecordingRow[] = [
     project: "ProjektAlfa",
     target_dir: "C:\\Projects\\Alpha\\Recordings",
     status: "downloaded",
+    classification_source: "name",
+    plaud_folder_name: null,
   },
   {
     plaud_id: "rec_011",
@@ -24,6 +26,8 @@ export const SAMPLE_RECORDINGS_FULL: RecordingRow[] = [
     project: "Interní",
     target_dir: "E:\\Work\\Interni",
     status: "downloaded",
+    classification_source: "name",
+    plaud_folder_name: null,
   },
   {
     plaud_id: "rec_010",
@@ -35,6 +39,36 @@ export const SAMPLE_RECORDINGS_FULL: RecordingRow[] = [
     project: "KlientBeta",
     target_dir: "D:\\Clients\\Beta\\Audio",
     status: "downloaded",
+    classification_source: "name",
+    plaud_folder_name: null,
+  },
+  // BL-6 folder-classified: badge shows folder name, green
+  {
+    plaud_id: "rec_009b",
+    title: "04-25 Webinář o GDPR",
+    created_at: "2026-04-25T08:00:00+02:00",
+    downloaded_at: "2026-04-25T13:00:19+02:00",
+    plaud_folder: "Vzdělávání",
+    classification_status: "matched",
+    project: "Vzdělávání",
+    target_dir: "D:\\Vzdelavani",
+    status: "downloaded",
+    classification_source: "folder",
+    plaud_folder_name: "Školení",
+  },
+  // BL-6 folder cache-miss: badge shows "(neznámá složka)" placeholder
+  {
+    plaud_id: "rec_009c",
+    title: "04-25 Recording v přejmenované složce",
+    created_at: "2026-04-25T07:00:00+02:00",
+    downloaded_at: "2026-04-25T13:00:15+02:00",
+    plaud_folder: "Inbox",
+    classification_status: "matched",
+    project: "RenamedFolder",
+    target_dir: "D:\\Renamed",
+    status: "downloaded",
+    classification_source: "folder",
+    plaud_folder_name: "",
   },
   {
     plaud_id: "rec_009",
@@ -46,6 +80,8 @@ export const SAMPLE_RECORDINGS_FULL: RecordingRow[] = [
     project: null,
     target_dir: "D:\\Recordings\\Unclassified\\Inbox",
     status: "downloaded",
+    classification_source: "none",
+    plaud_folder_name: null,
   },
   {
     plaud_id: "rec_008",
@@ -57,6 +93,8 @@ export const SAMPLE_RECORDINGS_FULL: RecordingRow[] = [
     project: "Interní",
     target_dir: "E:\\Work\\Interni",
     status: "downloaded",
+    classification_source: "name",
+    plaud_folder_name: null,
   },
   {
     plaud_id: "rec_003",
@@ -68,7 +106,10 @@ export const SAMPLE_RECORDINGS_FULL: RecordingRow[] = [
     project: null,
     target_dir: "D:\\Recordings\\Unclassified\\Inbox",
     status: "failed",
+    classification_source: "none",
+    plaud_folder_name: null,
   },
+  // BL-6 legacy pre-BL-X row: classification_source NULL → blue fallback
   {
     plaud_id: "rec_001",
     title: "04-20 Onboarding — nový kolega",
@@ -79,6 +120,8 @@ export const SAMPLE_RECORDINGS_FULL: RecordingRow[] = [
     project: "Interní",
     target_dir: "E:\\Work\\Interni",
     status: "skipped",
+    classification_source: null,
+    plaud_folder_name: null,
   },
 ];
 

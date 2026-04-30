@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Outlet } from "react-router-dom";
 
-import { useStateQuery } from "@/api/hooks";
+import { STATE_QUERY_KEY, useStateQuery } from "@/api/hooks";
 import type { SyncState } from "@/api/types";
 import { useBanners } from "@/context/BannersContext";
 import { useToasts } from "@/context/ToastsContext";
@@ -52,6 +53,7 @@ function buildSyncSummaryMessage(sync: SyncState): string | null {
 
 export default function AppShell() {
   const { data } = useStateQuery();
+  const qc = useQueryClient();
   const { banners, dismissBanner } = useBanners();
   const { toasts, pushToast, dismissToast } = useToasts();
   const conn = useConnectionLost();
@@ -73,10 +75,24 @@ export default function AppShell() {
     seenRunRef.current = sync.last_run_at;
 
     const message = buildSyncSummaryMessage(sync);
-    if (!message) return;
-    const variant = sync.last_run_outcome === "failed" ? "error" : "success";
-    pushToast(variant, message);
-  }, [sync, pushToast]);
+    if (message) {
+      const variant = sync.last_run_outcome === "failed" ? "error" : "success";
+      pushToast(variant, message);
+    }
+
+    // BL-6 refresh fix: useStateQuery polling drops from 1.5 s to 30 s the
+    // moment status becomes idle, which leaves the recordings list (and
+    // sometimes the sync status text) stale until the next 30 s tick or a
+    // window refocus. Force an immediate refetch and a 1.5 s second pass —
+    // the second one is a safety net against the SQLite write race where
+    // the sync subprocess commits sync_runs.finished_at before the last
+    // recordings row reaches the WAL reader.
+    void qc.invalidateQueries({ queryKey: STATE_QUERY_KEY });
+    const t = window.setTimeout(() => {
+      void qc.invalidateQueries({ queryKey: STATE_QUERY_KEY });
+    }, 1500);
+    return () => window.clearTimeout(t);
+  }, [sync, pushToast, qc]);
 
   const onBannerAction = (banner: { id: string; actionTarget?: "settings" }) => {
     if (banner.actionTarget === "settings") {

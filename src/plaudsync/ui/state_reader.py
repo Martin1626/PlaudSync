@@ -40,6 +40,9 @@ class RecordingRowPayload(TypedDict):
     project: str | None
     target_dir: str
     status: Literal["downloaded", "failed", "skipped"]
+    # BL-6: source-aware project badge
+    classification_source: Literal["name", "folder", "none"] | None
+    plaud_folder_name: str | None
 
 
 class StateResponsePayload(TypedDict):
@@ -76,19 +79,35 @@ def _read_last_finished(conn: sqlite3.Connection) -> tuple[str, int, int, int, i
     return (row[0], row[1], row[2], row[3], row[4]) if row else None
 
 
-def _read_recordings(conn: sqlite3.Connection) -> list[RecordingRowPayload]:
+def _read_recordings(
+    conn: sqlite3.Connection,
+    state_root: Path | None = None,
+) -> list[RecordingRowPayload]:
     # Newest recording on top: order by Plaud-side creation time (when the user
     # actually recorded). downloaded_at is a tie-breaker for batches whose
     # created_at_plaud is identical or missing.
     rows = conn.execute(
         "SELECT plaud_id, title, created_at_plaud, downloaded_at, "
-        "local_path, classifier_label, status "
+        "local_path, classifier_label, status, classification_source, "
+        "plaud_folder_id "
         "FROM recordings ORDER BY created_at_plaud DESC, downloaded_at DESC "
         "LIMIT 50"
     ).fetchall()
+
+    # BL-6: load FiletagCache once per snapshot for O(1) lookup_by_id calls.
+    # Empty list when state_root not provided (defensive — used by some test
+    # fixtures that don't pass it) or when cache file missing/unreadable.
+    folder_name_by_id: dict[str, str] = {}
+    if state_root is not None:
+        from plaudsync.filetag_cache import FiletagCache
+        cache = FiletagCache(state_root)
+        for f in (cache.load() or []):
+            folder_name_by_id[f.id] = f.name
+
     payload: list[RecordingRowPayload] = []
     for r in rows:
-        plaud_id, title, created_at, downloaded_at, local_path, label, status = r
+        (plaud_id, title, created_at, downloaded_at, local_path, label, status,
+         classification_source, plaud_folder_id) = r
         is_unclassified = label == "_unclassified"
         # local_path is the file path; the Dashboard wants the parent directory.
         target_dir = str(Path(local_path).parent) if local_path else ""
@@ -96,6 +115,22 @@ def _read_recordings(conn: sqlite3.Connection) -> list[RecordingRowPayload]:
         # DB keeps the distinct value so the retry pass at sync.py:148 can find
         # these rows after the user adds the missing project to config.yaml.
         wire_status = "skipped" if status == "skipped_unknown_project" else status
+
+        # BL-6: resolve folder name. Cache miss for folder-classified row
+        # → empty string sentinel (frontend renders '(neznámá složka)').
+        # plaud_folder_id NULL OR no state_root (cache unreachable) → None.
+        plaud_folder_name: str | None
+        if plaud_folder_id is None or state_root is None:
+            plaud_folder_name = None
+        else:
+            resolved = folder_name_by_id.get(plaud_folder_id)
+            if resolved is not None:
+                plaud_folder_name = resolved
+            elif classification_source == "folder":
+                plaud_folder_name = ""  # cache-miss sentinel
+            else:
+                plaud_folder_name = None
+
         payload.append({
             "plaud_id": plaud_id,
             "title": title,
@@ -106,6 +141,8 @@ def _read_recordings(conn: sqlite3.Connection) -> list[RecordingRowPayload]:
             "project": None if is_unclassified else label,
             "target_dir": target_dir,
             "status": wire_status,
+            "classification_source": classification_source,
+            "plaud_folder_name": plaud_folder_name,
         })
     return payload
 
@@ -172,7 +209,7 @@ def read_state_snapshot(
             "progress": None,
         }
 
-    return {"sync": sync, "recordings": _read_recordings(conn)}
+    return {"sync": sync, "recordings": _read_recordings(conn, state_root)}
 
 
 def read_running_started_at(conn: sqlite3.Connection) -> str | None:

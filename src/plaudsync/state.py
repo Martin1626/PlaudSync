@@ -12,15 +12,20 @@ from pathlib import Path
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS recordings (
-    plaud_id          TEXT PRIMARY KEY,
-    title             TEXT NOT NULL,
-    created_at_plaud  TEXT NOT NULL,
-    downloaded_at     TEXT NOT NULL,
-    local_path        TEXT NOT NULL,
-    classifier_label  TEXT NOT NULL,
-    status            TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped','skipped_unknown_project')),
-    sync_run_id       INTEGER REFERENCES sync_runs(run_id),
-    file_size         INTEGER
+    plaud_id              TEXT PRIMARY KEY,
+    title                 TEXT NOT NULL,
+    created_at_plaud      TEXT NOT NULL,
+    downloaded_at         TEXT NOT NULL,
+    local_path            TEXT NOT NULL,
+    classifier_label      TEXT NOT NULL,
+    status                TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped','skipped_unknown_project')),
+    sync_run_id           INTEGER REFERENCES sync_runs(run_id),
+    file_size             INTEGER,
+    content_status        TEXT,
+    content_path          TEXT,
+    content_task_ids      TEXT,
+    classification_source TEXT,
+    plaud_folder_id       TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -96,6 +101,7 @@ def record_recording(
     content_status: str | None = None,
     content_path: str | None = None,
     content_task_ids: str | None = None,
+    plaud_folder_id: str | None = None,
 ) -> None:
     """UPSERT semantics: never overwrite a 'downloaded' row.
 
@@ -109,6 +115,9 @@ def record_recording(
     - content_status: 'pending' | 'complete' | 'not_applicable' | None
     - content_path: absolute path to .md sourozenec
     - content_task_ids: JSON-encoded {trans, outline, summary} for BL-5 fingerprint
+
+    BL-6 new kwarg:
+    - plaud_folder_id: Plaud folder ID (FiletagCache key); UI resolves to name
     """
     plaud_id = getattr(meta, "plaud_id")
     title = getattr(meta, "title")
@@ -124,11 +133,12 @@ def record_recording(
             "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
             "downloaded_at, local_path, classifier_label, status, sync_run_id, "
             "file_size, classification_source, content_status, content_path, "
-            "content_task_ids) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "content_task_ids, plaud_folder_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (plaud_id, title, created_at, _now_iso(), local_path,
              classifier_label, status, run_id, file_size,
-             classification_source, content_status, content_path, content_task_ids),
+             classification_source, content_status, content_path,
+             content_task_ids, plaud_folder_id),
         )
     elif existing[0] in ("failed", "skipped_unknown_project") and status == "downloaded":
         conn.execute(
@@ -136,11 +146,11 @@ def record_recording(
             "downloaded_at = ?, local_path = ?, classifier_label = ?, "
             "status = ?, sync_run_id = ?, file_size = ?, "
             "classification_source = ?, content_status = ?, content_path = ?, "
-            "content_task_ids = ? "
+            "content_task_ids = ?, plaud_folder_id = ? "
             "WHERE plaud_id = ?",
             (title, created_at, _now_iso(), local_path, classifier_label,
              status, run_id, file_size, classification_source, content_status,
-             content_path, content_task_ids, plaud_id),
+             content_path, content_task_ids, plaud_folder_id, plaud_id),
         )
     # else: existing.status == 'downloaded' → noop (immutable per Decision #5)
     conn.commit()
@@ -194,6 +204,20 @@ def _migrate_add_file_size_column(conn: sqlite3.Connection) -> None:
         pass
 
 
+def _migrate_add_plaud_folder_id_column(conn: sqlite3.Connection) -> None:
+    """Add nullable plaud_folder_id column (BL-6 source-aware badge).
+
+    Stores Plaud's folder ID per recording (from meta.plaud_folder). UI
+    state_reader resolves the folder NAME via FiletagCache.lookup_by_id().
+    Legacy rows stay NULL — frontend treats null as 'name'-source legacy
+    behavior. Idempotent via OperationalError swallowing.
+    """
+    try:
+        conn.execute("ALTER TABLE recordings ADD COLUMN plaud_folder_id TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+
 def _migrate_add_content_columns(conn: sqlite3.Connection) -> None:
     """Add nullable BL-4 / BL-X columns to recordings for existing DBs.
 
@@ -225,5 +249,6 @@ def open_state(state_root: Path) -> sqlite3.Connection:
     _migrate_status_check_constraint(conn)
     _migrate_add_file_size_column(conn)
     _migrate_add_content_columns(conn)
+    _migrate_add_plaud_folder_id_column(conn)
     conn.commit()
     return conn

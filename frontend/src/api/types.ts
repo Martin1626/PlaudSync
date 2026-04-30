@@ -25,6 +25,8 @@ export interface SyncState {
   progress: SyncProgress | null;
 }
 
+export type ClassificationSource = "name" | "folder" | "none";
+
 export interface RecordingRow {
   plaud_id: string;
   title: string;
@@ -35,6 +37,17 @@ export interface RecordingRow {
   project: string | null;
   target_dir: string;
   status: RecordingStatus;
+  /** BL-6: source-aware project badge.
+   *  - "name"   → matched by title regex; badge shows project code (blue)
+   *  - "folder" → matched by Plaud folder fallback; badge shows folderName (green)
+   *  - "none"   → unclassified catch-all (gray)
+   *  - null     → legacy pre-BL-X row; render as "name" fallback */
+  classification_source: ClassificationSource | null;
+  /** BL-6: resolved Plaud folder name (FiletagCache lookup).
+   *  - string   → folder found in cache
+   *  - ""       → folder ID present but missing in cache (renamed/deleted in Plaud)
+   *  - null     → no folder ID persisted (e.g., name-classified or legacy) */
+  plaud_folder_name: string | null;
 }
 
 export interface StateResponse {

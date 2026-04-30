@@ -87,6 +87,8 @@ export default function RecordingsList({ recordings }: Props) {
             <ProjectBadge
               project={r.project}
               classification={r.classification_status}
+              source={r.classification_source}
+              folderName={r.plaud_folder_name}
             />
           </li>
         ))}

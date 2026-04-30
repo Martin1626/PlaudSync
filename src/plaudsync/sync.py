@@ -69,6 +69,19 @@ def _slugify(title: str, max_len: int = 60) -> str:
     return slug[:max_len] or "untitled"
 
 
+def _meta_folder_id(meta: Any) -> str | None:
+    """Normalize meta.plaud_folder to a persistable folder ID or None.
+
+    PlaudClient maps a missing filetag to the sentinel '_unknown'; in DB we
+    store NULL instead so frontend can distinguish 'no folder' from a real
+    Plaud folder ID. (BL-6 source-aware badge.)
+    """
+    raw = getattr(meta, "plaud_folder", None)
+    if raw is None or raw == "_unknown":
+        return None
+    return raw
+
+
 def _reclassify_recent(
     conn: sqlite3.Connection,
     classifier: Classifier,
@@ -563,7 +576,8 @@ def run_sync(
                     scope.fingerprint = ["recording_failed", type(e).__name__]
                     sentry_sdk.capture_exception(e)
                 record_recording(conn, meta, status="failed",
-                                 local_path="", run_id=run_id)
+                                 local_path="", run_id=run_id,
+                                 plaud_folder_id=_meta_folder_id(meta))
                 failed_count += 1
             _emit("downloading", i + 1, total)
 
@@ -634,6 +648,7 @@ def _process_recording(
             local_path="", run_id=run_id,
             classifier_label=label,
             classification_source=outcome.source,
+            plaud_folder_id=_meta_folder_id(meta),
         )
         logger.bind(recording_id=meta.plaud_id, project=label).info(
             "skipped: project not in config"
@@ -648,6 +663,7 @@ def _process_recording(
             local_path="", run_id=run_id,
             classifier_label=label,
             classification_source=outcome.source,
+            plaud_folder_id=_meta_folder_id(meta),
         )
         return
 
@@ -735,4 +751,5 @@ def _process_recording(
         content_status=content_status,
         content_path=content_path,
         content_task_ids=content_task_ids_json,
+        plaud_folder_id=_meta_folder_id(meta),
     )

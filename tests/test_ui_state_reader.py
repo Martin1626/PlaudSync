@@ -1,7 +1,9 @@
 """Unit tests for plaudsync.ui.state_reader (in-memory SQLite)."""
 from __future__ import annotations
 
+import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +21,40 @@ def conn() -> sqlite3.Connection:
     c.executescript(_SCHEMA)
     c.commit()
     return c
+
+
+def _seed_filetag_cache(state_root: Path, folders: list[dict]) -> None:
+    """Write a minimal filetag_cache.json so FiletagCache.lookup_by_id works."""
+    state_root.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "fetched_at": "2026-04-30T10:00:00+00:00",
+        "folders": folders,
+    }
+    (state_root / "filetag_cache.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _insert_recording(
+    conn: sqlite3.Connection,
+    *,
+    plaud_id: str = "rec-1",
+    title: str = "test",
+    label: str = "OEZ",
+    status: str = "downloaded",
+    classification_source: str | None = "name",
+    plaud_folder_id: str | None = None,
+) -> None:
+    conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
+        "downloaded_at, local_path, classifier_label, status, "
+        "classification_source, plaud_folder_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (plaud_id, title, "2026-04-30T10:00:00+00:00",
+         "2026-04-30T10:01:00+00:00", "/data/X/file.mp3", label, status,
+         classification_source, plaud_folder_id),
+    )
+    conn.commit()
 
 
 def test_snapshot_idle_on_fresh_db(conn: sqlite3.Connection) -> None:
@@ -105,3 +141,106 @@ def test_running_started_at_and_trigger_queries(conn: sqlite3.Connection) -> Non
 def test_running_queries_return_none_when_idle(conn: sqlite3.Connection) -> None:
     assert read_running_started_at(conn) is None
     assert read_running_trigger(conn) is None
+
+
+# ---------------- BL-6: source-aware badge wire payload ---------------------
+
+
+def test_recording_row_includes_source_and_folder_name_for_name(
+    tmp_path: Path, conn: sqlite3.Connection,
+) -> None:
+    """name-classified recording: classification_source='name',
+    plaud_folder_name resolves from cache (project code drives blue badge)."""
+    _seed_filetag_cache(tmp_path, [{"id": "f-abc", "name": "Školení", "icon": "", "color": ""}])
+    _insert_recording(
+        conn, plaud_id="rec-name", classification_source="name",
+        plaud_folder_id="f-abc", label="OEZ",
+    )
+
+    snap = read_state_snapshot(conn, state_root=tmp_path)
+    rec = snap["recordings"][0]
+    assert rec["classification_source"] == "name"
+    assert rec["plaud_folder_name"] == "Školení"
+    assert rec["project"] == "OEZ"
+
+
+def test_recording_row_folder_source_resolves_folder_name(
+    tmp_path: Path, conn: sqlite3.Connection,
+) -> None:
+    """folder-classified recording: badge shows the FOLDER name (green
+    pill in UI)."""
+    _seed_filetag_cache(tmp_path, [{"id": "f-train", "name": "Školení", "icon": "", "color": ""}])
+    _insert_recording(
+        conn, plaud_id="rec-folder", classification_source="folder",
+        plaud_folder_id="f-train", label="ŠKOLENÍ",
+    )
+
+    snap = read_state_snapshot(conn, state_root=tmp_path)
+    rec = snap["recordings"][0]
+    assert rec["classification_source"] == "folder"
+    assert rec["plaud_folder_name"] == "Školení"
+
+
+def test_recording_row_folder_source_cache_miss_returns_empty_string(
+    tmp_path: Path, conn: sqlite3.Connection,
+) -> None:
+    """Folder ID not in cache (Plaud rename/delete): plaud_folder_name=""
+    so frontend renders '(neznámá složka)' placeholder."""
+    _seed_filetag_cache(tmp_path, [])  # empty cache
+    _insert_recording(
+        conn, plaud_id="rec-orphan", classification_source="folder",
+        plaud_folder_id="f-deleted",
+    )
+
+    snap = read_state_snapshot(conn, state_root=tmp_path)
+    rec = snap["recordings"][0]
+    assert rec["classification_source"] == "folder"
+    assert rec["plaud_folder_name"] == ""
+
+
+def test_recording_row_none_source_no_folder_resolution(
+    tmp_path: Path, conn: sqlite3.Connection,
+) -> None:
+    """Unclassified (source='none'): badge stays gray; folder name not
+    populated even if id is set (frontend ignores it)."""
+    _seed_filetag_cache(tmp_path, [{"id": "f-x", "name": "X", "icon": "", "color": ""}])
+    _insert_recording(
+        conn, plaud_id="rec-none", classification_source="none",
+        plaud_folder_id=None, label="_unclassified",
+    )
+
+    snap = read_state_snapshot(conn, state_root=tmp_path)
+    rec = snap["recordings"][0]
+    assert rec["classification_source"] == "none"
+    assert rec["plaud_folder_name"] is None
+
+
+def test_recording_row_legacy_null_source_forwards_null(
+    tmp_path: Path, conn: sqlite3.Connection,
+) -> None:
+    """Legacy pre-BL-X row: classification_source IS NULL → wire NULL.
+    Frontend treats null as 'name'-source legacy fallback."""
+    _seed_filetag_cache(tmp_path, [])
+    _insert_recording(
+        conn, plaud_id="rec-legacy", classification_source=None,
+        plaud_folder_id=None, label="OEZ",
+    )
+
+    snap = read_state_snapshot(conn, state_root=tmp_path)
+    rec = snap["recordings"][0]
+    assert rec["classification_source"] is None
+    assert rec["plaud_folder_name"] is None
+
+
+def test_recording_row_no_state_root_returns_null_folder_name(
+    conn: sqlite3.Connection,
+) -> None:
+    """Defensive: when state_root not provided to read_state_snapshot,
+    folder lookup is impossible — wire NULL gracefully (no crash)."""
+    _insert_recording(
+        conn, plaud_id="rec-nosroot", classification_source="folder",
+        plaud_folder_id="f-something",
+    )
+    snap = read_state_snapshot(conn)  # no state_root kwarg
+    rec = snap["recordings"][0]
+    assert rec["plaud_folder_name"] is None

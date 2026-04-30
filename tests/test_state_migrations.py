@@ -196,6 +196,72 @@ def test_open_state_content_columns_idempotent(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_open_state_adds_plaud_folder_id_column(tmp_path: Path) -> None:
+    """BL-6: plaud_folder_id (folder NAME via FiletagCache lookup) must be
+    present after migration. Legacy rows have NULL — frontend renders the
+    blue project badge fallback."""
+    _seed_old_db(tmp_path)
+
+    conn = open_state(tmp_path)
+    cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(recordings)").fetchall()
+    }
+    assert "plaud_folder_id" in cols
+
+    legacy = conn.execute(
+        "SELECT plaud_folder_id FROM recordings WHERE plaud_id = 'legacy-1'"
+    ).fetchone()
+    assert legacy == (None,)
+    conn.close()
+
+
+def test_open_state_plaud_folder_id_idempotent(tmp_path: Path) -> None:
+    """BL-6: second open_state must not error on the plaud_folder_id column."""
+    _seed_old_db(tmp_path)
+    open_state(tmp_path).close()
+    conn = open_state(tmp_path)
+    cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(recordings)").fetchall()
+    }
+    assert "plaud_folder_id" in cols
+    conn.close()
+
+
+def test_record_recording_persists_plaud_folder_id(tmp_path: Path) -> None:
+    """BL-6: record_recording(plaud_folder_id=...) round-trips.
+
+    Insert path stores the folder ID; UPDATE path (skipped → downloaded)
+    overwrites with the new value (folder may differ between attempts —
+    user moved recording on Plaud between syncs).
+    """
+    conn = open_state(tmp_path)
+    run_id = start_sync_run(conn, "manual")
+
+    meta = _MetaStub(
+        plaud_id="rec-folder",
+        title="04-30 OEZ konzultace",
+        created_at="2026-04-30T10:00:00+00:00",
+        file_size=4096,
+    )
+    record_recording(
+        conn, meta, status="downloaded",
+        local_path="/data/OEZ/file.mp3", run_id=run_id,
+        classifier_label="OEZ",
+        classification_source="name",
+        plaud_folder_id="folder-abc-123",
+    )
+
+    row = conn.execute(
+        "SELECT plaud_folder_id, classification_source FROM recordings "
+        "WHERE plaud_id = 'rec-folder'"
+    ).fetchone()
+    assert row[0] == "folder-abc-123"
+    assert row[1] == "name"
+    conn.close()
+
+
 def test_record_recording_does_not_overwrite_downloaded(tmp_path: Path) -> None:
     """Immutability: a 'downloaded' row must not be downgraded to skipped."""
     conn = open_state(tmp_path)
