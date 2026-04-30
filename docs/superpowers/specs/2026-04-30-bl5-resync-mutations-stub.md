@@ -11,17 +11,20 @@
 > **Predecessor:** BL-4/BL-X
 > ([2026-04-29-bl4-bl-x-content-classifier-design.md](2026-04-29-bl4-bl-x-content-classifier-design.md)).
 > A+B+C fixes (commit `6c74d50`) handle the *not-yet-downloaded* (skipped)
-> case via live title in retry pass. BL-5 picks up where A+B+C stops:
-> already-downloaded rows whose state on Plaud has changed.
+> case via live title in retry pass. **Hotfix F (commit `bd44722`,
+> 2026-04-30)** shipped rename detection for *already-downloaded* rows
+> via expansion of `_reclassify_recent`. BL-5 remaining scope is the
+> three sub-cases below.
 
 ## 1. Problem
 
-After BL-4/BL-X + 6c74d50, three Plaud-side mutations remain unhandled
+After BL-4/BL-X + 6c74d50 + Hotfix F (commit `bd44722`), the rename
+sub-case is shipped. Three Plaud-side mutations remain unhandled
 for `status=downloaded` recordings:
 
 | Mutation | Current behavior | Desired |
 |---|---|---|
-| User renames recording on Plaud | Local MP3 + .md keep old slug; DB row keeps stale `title`. Future syncs ignore (already downloaded). | Detect, rename local files atomic, update DB. |
+| ~~User renames recording on Plaud~~ | ✅ **SHIPPED Hotfix F** — `_reclassify_recent` reads live title from listing, moves files + updates DB on label change | — |
 | User moves recording to a different Plaud folder | If `classify_by_folder=true`, classification could change. Currently no re-eval. | Detect via `filetag_id` diff, re-classify, move to new project dir, atomic. |
 | User trashes recording on Plaud | Listing filter `is_trash=0` hides trashed → PlaudSync sees nothing. Local MP3 + .md remain orphan. | Detect via separate `is_trash=1` listing, delete local files, mark DB row `trashed`. |
 
