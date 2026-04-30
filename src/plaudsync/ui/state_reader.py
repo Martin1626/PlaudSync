@@ -131,12 +131,22 @@ def _read_recordings(
             else:
                 plaud_folder_name = None
 
+        # Folder-icon row (left of badge) shows the Plaud folder NAME for
+        # any recording where we can resolve it via FiletagCache. Pre-BL-6
+        # rows with NULL plaud_folder_id, cache-miss rows, and rows synced
+        # before classification get an empty string — frontend renders "—".
+        # The legacy "_unknown" sentinel is no longer surfaced to the UI.
+        if plaud_folder_id is None or state_root is None:
+            plaud_folder_display = ""
+        else:
+            plaud_folder_display = folder_name_by_id.get(plaud_folder_id, "")
+
         payload.append({
             "plaud_id": plaud_id,
             "title": title,
             "created_at": created_at,
             "downloaded_at": downloaded_at,
-            "plaud_folder": "_unknown",  # not currently persisted; v0 ships "_unknown" per Dashboard spec Gap 2
+            "plaud_folder": plaud_folder_display,
             "classification_status": "unclassified" if is_unclassified else "matched",
             "project": None if is_unclassified else label,
             "target_dir": target_dir,

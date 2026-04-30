@@ -109,7 +109,21 @@ export const SAMPLE_RECORDINGS_FULL: RecordingRow[] = [
     classification_source: "none",
     plaud_folder_name: null,
   },
-  // BL-6 legacy pre-BL-X row: classification_source NULL → blue fallback
+  // skipped_unknown_project (wire 'skipped'): regex našel 'Schůzka' v titulu,
+  // ale projekt 'Schůzka' není v configu → žádný badge se nezobrazí
+  {
+    plaud_id: "rec_002",
+    title: "04-20 Schůzka: ranní stand-up",
+    created_at: "2026-04-20T08:00:00+02:00",
+    downloaded_at: "2026-04-20T08:01:00+02:00",
+    plaud_folder: "",
+    classification_status: "matched",
+    project: "Schůzka",
+    target_dir: "",
+    status: "skipped",
+    classification_source: "name",
+    plaud_folder_name: null,
+  },
   {
     plaud_id: "rec_001",
     title: "04-20 Onboarding — nový kolega",

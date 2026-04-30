@@ -150,7 +150,8 @@ def test_recording_row_includes_source_and_folder_name_for_name(
     tmp_path: Path, conn: sqlite3.Connection,
 ) -> None:
     """name-classified recording: classification_source='name',
-    plaud_folder_name resolves from cache (project code drives blue badge)."""
+    plaud_folder_name resolves from cache (project code drives blue badge).
+    plaud_folder (folder-icon row) shows the resolved folder name too."""
     _seed_filetag_cache(tmp_path, [{"id": "f-abc", "name": "Školení", "icon": "", "color": ""}])
     _insert_recording(
         conn, plaud_id="rec-name", classification_source="name",
@@ -161,7 +162,24 @@ def test_recording_row_includes_source_and_folder_name_for_name(
     rec = snap["recordings"][0]
     assert rec["classification_source"] == "name"
     assert rec["plaud_folder_name"] == "Školení"
+    assert rec["plaud_folder"] == "Školení"
     assert rec["project"] == "OEZ"
+
+
+def test_recording_row_legacy_null_folder_id_shows_empty_plaud_folder(
+    tmp_path: Path, conn: sqlite3.Connection,
+) -> None:
+    """Legacy row without plaud_folder_id: folder-icon row shows '' (frontend
+    renders '—'). The pre-BL-6 '_unknown' sentinel is no longer surfaced."""
+    _seed_filetag_cache(tmp_path, [])
+    _insert_recording(
+        conn, plaud_id="rec-legacy-folder", classification_source="name",
+        plaud_folder_id=None, label="OEZ",
+    )
+
+    snap = read_state_snapshot(conn, state_root=tmp_path)
+    rec = snap["recordings"][0]
+    assert rec["plaud_folder"] == ""
 
 
 def test_recording_row_folder_source_resolves_folder_name(
