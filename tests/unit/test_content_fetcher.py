@@ -13,8 +13,13 @@ from plaudsync.plaud_client import ContentItem, DetailMeta
 
 def _detail(task_statuses: dict[str, int] | None = None,
             include: tuple[str, ...] = ("transaction", "outline", "auto_sum_note"),
+            task_ids: dict | None = None,
             ) -> DetailMeta:
-    """Build DetailMeta with only the listed data_types. Default all status=1."""
+    """Build DetailMeta with only the listed data_types. Default all status=1.
+
+    task_ids defaults to all 3 (trans + outline + summary) so the eligibility
+    check passes. Pass task_ids={} or partial dict to test not_applicable path.
+    """
     task_statuses = task_statuses or {}
     items = []
     for dt in include:
@@ -25,9 +30,11 @@ def _detail(task_statuses: dict[str, int] | None = None,
             data_link=f"https://s3.example/{dt}",
             err_code="", err_msg="",
         ))
+    if task_ids is None:
+        task_ids = {"trans": "t1", "outline": "o1", "summary": "s1"}
     return DetailMeta(
         plaud_id="rec1", language="cs", speakers_count=2,
-        task_ids={"trans": "t1", "outline": "o1", "summary": "s1"},
+        task_ids=task_ids,
         content_list=items,
     )
 
@@ -93,25 +100,56 @@ def test_pending_when_any_required_type_not_status_one() -> None:
 
 
 # ---------------------------------------------------------------------------
-# not_applicable path
+# not_applicable path — eligibility via task_ids
 # ---------------------------------------------------------------------------
 
-def test_missing_required_type_returns_not_applicable() -> None:
-    """If 'auto_sum_note' missing entirely (e.g., recording too short for summary)
-    → not_applicable so retry pass doesn't loop forever."""
+def test_not_applicable_when_task_ids_missing_subset() -> None:
+    """Plaud's task_id_info missing one of {trans, outline, summary} task IDs
+    → recording is not eligible for full content trio (too short / Plaud
+    skipped). not_applicable, no retry."""
+    for partial in (
+        {},  # nothing queued
+        {"trans": "t1"},  # only transcript
+        {"trans": "t1", "outline": "o1"},  # missing summary
+        {"trans": "t1", "summary": "s1"},  # missing outline
+    ):
+        client = MagicMock()
+        client.fetch_detail.return_value = _detail(task_ids=partial)
+        outcome = ContentFetcher(client).fetch_artifacts("rec1")
+        assert outcome.status == "not_applicable", f"failed for task_ids={partial}"
+
+
+def test_pending_when_required_type_missing_but_tasks_queued() -> None:
+    """All 3 task IDs queued + content_list missing some types → recording is
+    mid-generation. Treat as pending so retry pass picks it up. Was buggy
+    pre-2026-04-30 (returned not_applicable; recording stuck without .md)."""
     client = MagicMock()
-    client.fetch_detail.return_value = _detail(include=("transaction", "outline"))
+    client.fetch_detail.return_value = _detail(
+        include=("transaction",),  # outline + auto_sum_note missing
+        # task_ids default = all 3 → tasks ARE queued
+    )
 
     outcome = ContentFetcher(client).fetch_artifacts("rec1")
 
-    assert outcome.status == "not_applicable"
+    assert outcome.status == "pending"
     assert outcome.sections == {}
     client.download_content_text.assert_not_called()
 
 
-def test_empty_content_list_returns_not_applicable() -> None:
+def test_pending_when_content_list_empty_but_tasks_queued() -> None:
+    """Edge case — Plaud has tasks queued (task_id_info populated) but
+    content_list is still empty. Pending, retry next sync."""
     client = MagicMock()
     client.fetch_detail.return_value = _detail(include=())
+
+    outcome = ContentFetcher(client).fetch_artifacts("rec1")
+
+    assert outcome.status == "pending"
+
+
+def test_empty_task_ids_returns_not_applicable() -> None:
+    client = MagicMock()
+    client.fetch_detail.return_value = _detail(include=(), task_ids={})
 
     outcome = ContentFetcher(client).fetch_artifacts("rec1")
     assert outcome.status == "not_applicable"
