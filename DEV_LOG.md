@@ -4,6 +4,26 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-4 prod hotfix A+B+C (Plaud-side mutations) + BL-5 stub
+
+**Symptom:** Den po BL-4/BL-X ship 3 expected recordings (2× FHB, 1× OEZ-renamed-from-Konzultace) nesynchronizovány lokálně, přestože byly viditelné v Plaud UI. Plus 5 default-named recordings (`2026-04-29 08:14:23` formát) stuck v `skipped_unknown_project` s nesmyslnými labels (`08`, `10`, `11`, `14`, `19` — hodina jako project name).
+
+**Layer (per `sync-debug` skill):** Layer 4 — kategorizace + sync flow. Layers 1-3 clean (token OK, listing OK, cassette tests green).
+
+**Three root causes (commit `6c74d50`):**
+
+1. **Fix A — Plaud-side rename invisibility:** `_retry_skipped_unknown_project` četl DB title pro re-classify. Při Plaud rename retry pass loop-oval na stale title forever. Fix: pre-fetch listing v run_sync, předat `live_metas` dict do retry pass, classify proti live title + persist live title v UPDATE.
+2. **Fix B — delayed-upload miss:** `since=last_successful_sync.finished_at` filtr v `list_recordings` filtroval podle Plaud `start_time` (= recording start, NE upload time). Recording uploaded after sync but with earlier start_time was permanently missed. Fix: drop `since` filter úplně; existing `recording_exists_and_downloaded` dedup keeps cost bounded (~5-20 pages per sync for typical accounts).
+3. **Fix C — pure-digit project regex false positive:** Plaud's default file_name `YYYY-MM-DD HH:MM:SS` matched regex with project=`HH`. Fix: post-match guard `any(ch.isalpha() for ch in project)` — pure digits → unclassified.
+
+**Test suite:** 331 → 339 passing (+ 8 new TDD-first regression tests).
+
+**Kill criteria delta:** none triggered. Bug class was test-blind (regex on real-world default-named titles, retry-pass DB-vs-live mismatch). Adds rationale for BL-5 prioritization.
+
+**BL-5 stub written:** [docs/superpowers/specs/2026-04-30-bl5-resync-mutations-stub.md](docs/superpowers/specs/2026-04-30-bl5-resync-mutations-stub.md). Captures requirements + 6 decision points + architecture sketch for re-sync of *already-downloaded* rows (rename/move/trash/content drift). Trigger to start: 3 incidents in 30 days OR 30-day post-BL-4 soak complete. Not before — premature scope expansion risk.
+
+---
+
 ## 2026-04-29 — BL-4 + BL-X shipped (text artefakty + multi-layer classifier waterfall)
 
 **Spec:** [docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md](docs/superpowers/specs/2026-04-29-bl4-bl-x-content-classifier-design.md).
