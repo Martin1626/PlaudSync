@@ -287,6 +287,14 @@ def _retry_skipped_unknown_project(
 
             label = classifier.classify(meta_like)
             classification_source = "name"
+            # Hotfix K (2026-04-30): folder ID for the row's plaud_folder_id
+            # column. Sourced from live_meta when available; persisted via
+            # the UPDATE below regardless of which strategy classified.
+            row_folder_id: str | None = None
+            if live_meta is not None:
+                live_folder = getattr(live_meta, "plaud_folder", None)
+                if live_folder and live_folder != "_unknown":
+                    row_folder_id = live_folder
             if label == "_unclassified" or config.lookup_project(label) is None:
                 # Hotfix I (2026-04-30): legacy skipped_unknown_project rows
                 # may also benefit from folder fallback now that
@@ -294,14 +302,13 @@ def _retry_skipped_unknown_project(
                 # listing — synthesized DB metas don't have plaud_folder.
                 folder_hit = False
                 if (config.classify_by_folder
-                        and live_meta is not None):
-                    live_folder = getattr(live_meta, "plaud_folder", "_unknown")
-                    if live_folder and live_folder != "_unknown":
-                        folder_label = config.lookup_by_folder_id(live_folder)
-                        if folder_label is not None:
-                            label = folder_label
-                            classification_source = "folder"
-                            folder_hit = True
+                        and live_meta is not None
+                        and row_folder_id is not None):
+                    folder_label = config.lookup_by_folder_id(row_folder_id)
+                    if folder_label is not None:
+                        label = folder_label
+                        classification_source = "folder"
+                        folder_hit = True
                 if not folder_hit:
                     continue
 
@@ -383,11 +390,13 @@ def _retry_skipped_unknown_project(
                 "title = ?, "
                 "local_path = ?, classifier_label = ?, downloaded_at = ?, "
                 "sync_run_id = ?, classification_source = ?, "
+                "plaud_folder_id = ?, "
                 "content_status = ?, content_path = ?, content_task_ids = ? "
                 "WHERE plaud_id = ?",
                 (effective_title, str(target_path), label,
                  datetime.now(timezone.utc).isoformat(), run_id,
-                 classification_source, content_status, content_path,
+                 classification_source, row_folder_id,
+                 content_status, content_path,
                  content_task_ids_json, plaud_id),
             )
             conn.commit()

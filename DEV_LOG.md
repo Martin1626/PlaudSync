@@ -4,6 +4,24 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-4 prod hotfix K (retry pass missed plaud_folder_id persistence)
+
+**Symptom:** CPR row se po Hotfix I retry-pass folder fallback objevil v UI s badge `(neznámá složka)` přestože folder NÁZEV (`Školení`) byl správný a v filetag_cache existoval.
+
+**Layer:** Layer 4 — DB persistence path. Sync engine logic OK, UI lookup OK, ale persistence vrstva mezi nimi kapsla folder ID.
+
+**Root cause:** `_retry_skipped_unknown_project` UPDATE SQL při Hotfix I folder fallback zapsal `classifier_label='Školení'` + `classification_source='folder'`, ale **nezahrnoval `plaud_folder_id`**. UI state_reader resolve folder name přes `filetag_cache.lookup_by_id(plaud_folder_id)` — pro NULL ID returnuje placeholder.
+
+**Fix:** retry pass UPDATE rozšířen o `plaud_folder_id` column. Zdroj hodnoty: `live_meta.plaud_folder` (Hotfix J extracted real folder ID from filetag_id_list). Když retry pass použije folder fallback, `row_folder_id` má hodnotu Plaud folder ID z listingu.
+
+**Tests:** 388 passing (no new tests — pure DB persistence fix, integration covered by existing `test_sync_retry_skipped_live_title` patterns).
+
+**Impact na produkci:** 2 production rows backfill-ed manuálně přes SQL (`UPDATE recordings SET plaud_folder_id=... WHERE classification_source='folder' AND plaud_folder_id IS NULL`). Mapping z config.projects[label].plaud_folder_id. Rows se klasifikací 'folder' co měly NULL ID teď mají správný folder_id → UI badge resolve-uje folder name.
+
+**Severity:** P2. UI cosmetic problem (badge text), ale signal že Hotfix I path nekompletní.
+
+---
+
 ## 2026-04-30 — BL-4 prod hotfix J (folder ID extraction was DEAD since BL-X)
 
 **Symptom:** User filed recording `04-30 Strategický rozpor mezi evidencí a monitoringem hardwarových prvků` do Plaud folder Alza.sk. ALZA project má v configu folder mapping na `8ed7ab6e5a68f02e31f736a15a99024d` (Alza.sk). filetag_cache catalog OK. classify_by_folder=True. Přesto recording NEPŘILETĚL — DB row neexistuje vůbec.
