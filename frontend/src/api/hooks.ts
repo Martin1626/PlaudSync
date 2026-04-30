@@ -71,10 +71,19 @@ export function useStartSync() {
           },
         };
       });
+      // Delayed invalidate: start_sync_subprocess returns 202 within 500ms
+      // of spawning, but the subprocess hasn't reached start_sync_run() yet.
+      // An immediate refetch would see no open sync_run row and overwrite
+      // our optimistic 'running' back to 'idle' — UI would flash idle until
+      // the next 30s poll. 2s gives the subprocess time to INSERT.
+      window.setTimeout(() => {
+        void qc.invalidateQueries({ queryKey: STATE_QUERY_KEY });
+      }, 2000);
     },
-    onSettled: () => {
-      // Always invalidate state — happy path picks up running stav,
-      // 409 ConflictError still wants a fresh state read to show running.
+    onError: () => {
+      // ConflictError (409) or spawn failure: refetch immediately so UI
+      // reflects the actual server state (sync may already be running by
+      // another trigger; spawn failure should reset optimistic running).
       void qc.invalidateQueries({ queryKey: STATE_QUERY_KEY });
     },
   });
