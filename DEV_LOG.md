@@ -4,6 +4,34 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-4 prod hotfix E (outline + transcript JSON → markdown)
+
+**Symptom:** Po hotfix D + Sync Now začaly vznikat `.md` sourozence, ale uvnitř obsahovaly raw JSON pole pro Outline a Transcript sekce. User otevřel soubor a viděl `[{"start_time":1240,"end_time":20930,"topic":"Úvod a e-maily"}, …]` místo čitelného markdown.
+
+**Root cause (commit `<this commit>`):** Plaud's `content_list[].data_link` pro `outline` a `transaction` (transcript) typů vrací **JSON arrays** stringified, ne markdown. `auto_sum_note` (summary) naopak vrací plain markdown — funguje OK passthrough. ContentFetcher dotekal raw JSON do .md beze zpracování.
+
+**Fix:** Nový modul `content_formatter.py` s per-section formatters:
+- `format_outline(json_str)` → `- **MM:SS** Topic` bullet list
+- `format_transcript(json_str)` → speaker turns block:
+  ```
+  **Speaker** [MM:SS]
+  Content here.
+  ```
+  Consecutive same-speaker turns merged do jednoho bloku (Plaud splituje na sentence-level).
+- `format_section(kind, raw)` dispatch s passthrough fallback.
+
+ContentFetcher.fetch_artifacts teď volá `format_section` po `download_content_text` — sections dict má už hotový markdown když dorazí do compose().
+
+Failure mode: invalid JSON nebo unexpected shape → return raw input (additive change, sync nespadne).
+
+**Tests:** 341 → 363 passing, +22 nových v `tests/unit/test_content_formatter.py` pokrývající: timestamp formatting (s/m/h/0/negativní/invalid), outline rendering + edge cases, transcript speaker grouping + edge cases, format_section dispatch.
+
+**Impact na produkci:** 7 already-rendered `.md` rows v DB byly stuck v complete s broken JSON content. One-shot SQL flipnul je zpět na pending (`UPDATE recordings SET content_status='pending' WHERE content_status='complete' AND content_path IS NOT NULL AND created_at_plaud >= '2026-04-16'`). Next Sync Now retry pass přerenderuje s nově formatted obsahem (overwrites existing .md atomicky).
+
+**Kill criteria check:** Žádné triggered. Watchpoint: pokud Plaud změní schema (např. přidá pole `language` per turn), formatter graceful-degraduje na raw passthrough — pre-existing fields stále renderují.
+
+---
+
 ## 2026-04-30 — BL-6 stub: source-aware recording badge
 
 **Spec:** [docs/superpowers/specs/2026-04-30-bl6-recording-badge-source-aware-stub.md](docs/superpowers/specs/2026-04-30-bl6-recording-badge-source-aware-stub.md).

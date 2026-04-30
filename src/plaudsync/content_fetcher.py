@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from plaudsync.content_formatter import format_section
+
 # Section key (markdown heading) → Plaud data_type
 _REQUIRED_TYPES: dict[str, str] = {
     "transcript": "transaction",
@@ -74,7 +76,10 @@ class ContentFetcher:
 
         sections: dict[str, str] = {}
         for section, item in required_items:
-            sections[section] = self._client.download_content_text(item)
+            raw = self._client.download_content_text(item)
+            # outline + transcript come as JSON arrays from Plaud; format
+            # to readable markdown. summary is markdown already → passthrough.
+            sections[section] = format_section(section, raw)
 
         return FetchOutcome(
             status="complete",
