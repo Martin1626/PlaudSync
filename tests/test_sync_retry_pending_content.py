@@ -171,7 +171,10 @@ def test_retry_stale_marks_not_applicable_after_14d(tmp_path: Path) -> None:
 # missing required type → not_applicable
 # ---------------------------------------------------------------------------
 
-def test_retry_not_applicable_when_required_type_missing(tmp_path: Path) -> None:
+def test_retry_stays_pending_when_required_type_missing(tmp_path: Path) -> None:
+    """Hotfix G (2026-04-30): missing required type or task_ids subset →
+    pending (not not_applicable). Row stays pending until 14d stale path
+    fires for legitimate-not-applicable cases (recording too short)."""
     mp3 = tmp_path / "rec1.mp3"
     mp3.write_bytes(b"AAAA")
     conn = _seed_pending(
@@ -180,7 +183,7 @@ def test_retry_not_applicable_when_required_type_missing(tmp_path: Path) -> None
         local_path=str(mp3),
     )
     try:
-        # Detail missing 'auto_sum_note' entirely
+        # Detail missing 'auto_sum_note' entirely + task_ids empty
         detail = DetailMeta(
             plaud_id="rec1", language="cs", speakers_count=2, task_ids={},
             content_list=[
@@ -201,6 +204,6 @@ def test_retry_not_applicable_when_required_type_missing(tmp_path: Path) -> None
         row = conn.execute(
             "SELECT content_status FROM recordings WHERE plaud_id='rec1'",
         ).fetchone()
-        assert row[0] == "not_applicable"
+        assert row[0] == "pending"  # row stays pending; stale path resolves later
     finally:
         conn.close()

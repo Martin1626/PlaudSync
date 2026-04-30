@@ -103,20 +103,22 @@ def test_pending_when_any_required_type_not_status_one() -> None:
 # not_applicable path — eligibility via task_ids
 # ---------------------------------------------------------------------------
 
-def test_not_applicable_when_task_ids_missing_subset() -> None:
-    """Plaud's task_id_info missing one of {trans, outline, summary} task IDs
-    → recording is not eligible for full content trio (too short / Plaud
-    skipped). not_applicable, no retry."""
+def test_pending_when_task_ids_missing_subset() -> None:
+    """Hotfix G (2026-04-30): subset of task_ids → pending (not
+    not_applicable). Plaud queues task IDs progressively; partial subset
+    can mean 'still being assigned' for fresh long recordings. Retry pass
+    re-evaluates every sync; 14d stale path resolves legitimate
+    not_applicable for tiny clips Plaud never processes."""
     for partial in (
-        {},  # nothing queued
-        {"trans": "t1"},  # only transcript
+        {},  # nothing queued — could be very fresh OR very short
+        {"trans": "t1"},  # only transcript queued so far
         {"trans": "t1", "outline": "o1"},  # missing summary
         {"trans": "t1", "summary": "s1"},  # missing outline
     ):
         client = MagicMock()
         client.fetch_detail.return_value = _detail(task_ids=partial)
         outcome = ContentFetcher(client).fetch_artifacts("rec1")
-        assert outcome.status == "not_applicable", f"failed for task_ids={partial}"
+        assert outcome.status == "pending", f"failed for task_ids={partial}"
 
 
 def test_pending_when_required_type_missing_but_tasks_queued() -> None:
@@ -147,9 +149,12 @@ def test_pending_when_content_list_empty_but_tasks_queued() -> None:
     assert outcome.status == "pending"
 
 
-def test_empty_task_ids_returns_not_applicable() -> None:
+def test_empty_task_ids_returns_pending() -> None:
+    """Hotfix G: empty task_ids dict → pending (not not_applicable). The
+    14d stale window in retry pass converts long-unresolved rows to
+    not_applicable + Sentry alert."""
     client = MagicMock()
     client.fetch_detail.return_value = _detail(include=(), task_ids={})
 
     outcome = ContentFetcher(client).fetch_artifacts("rec1")
-    assert outcome.status == "not_applicable"
+    assert outcome.status == "pending"

@@ -4,6 +4,26 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-4 prod hotfix G (revert not_applicable eligibility — too aggressive)
+
+**Symptom:** User report — `04-30 OEZ: Úprava layoutu...` (30:42 dlouhý, ~7.8 MB) má `content_status='not_applicable'` a chybí `.md`. Audit ukazal: 8 rows v `not_applicable`, z toho 7 jsou velké recordings (2-23 MB, real meetings) které by transcript MĚLY mít. Pouze 1 (`531fb257`, 25 KB ~1.5s) je legitimní (Plaud genuinely netranscribed).
+
+**Layer (per `sync-debug` skill):** Layer 4. Hotfix D rozhodl o eligibility příliš tvrdě.
+
+**Root cause (commit `<this commit>`):** Hotfix D (commit `242de91`) interpretoval subset of task_ids (méně než 3 z {trans, outline, summary}) jako `not_applicable` — assumption že Plaud nikdy nedoplní zbytek. Skutečnost: Plaud queue-uje task IDs **progresivně** (po sobě, jak ingest pipeline postupuje). Sync běžící krátce po uploadu vidí jen některé IDs → row uzamčen v `not_applicable` final, žádný retry, i když Plaud do hodiny dotvoří všechny 3.
+
+**Fix:** Subset of task_ids missing → `pending` (was: `not_applicable`). Stejné pro empty task_ids dict. Jediná cesta do `not_applicable` je teď `_retry_pending_content` 14d stale path — pokud Plaud do 14 dnů nedotvoří, Sentry alert + status flip. Cost: tiny clips (<10s) co Plaud genuinely neprocesuje churnou v retry pass 14 dnů, pak transition. Acceptable — bound je nahoře 14d * hourly = ~336 detail calls per row.
+
+**Tests:** 368 passing. Existující 4 tests v `test_content_fetcher.py` + 1 v `test_sync_retry_pending_content.py` updated z `not_applicable` na `pending` expectation. Žádný nový test (semantic rollback Hotfix D, no new code paths).
+
+**Impact na produkci:** 6 rows (z 7 large) flipnuto z not_applicable → pending. SQL: `UPDATE recordings SET content_status='pending' WHERE content_status='not_applicable' AND content_path IS NULL AND created_at_plaud >= '2026-04-16' AND file_size > 100000`. The 25 KB "test 4" row záměrně **nezahrnut** (skutečně legitimní not_applicable). Po next Sync Now retry pass re-fetchne 6 rows; ty co Plaud už dotvořil → complete + .md generated.
+
+**Kill criteria check:** Žádné triggered. Hot-path observability — kill criterion #19 (folder coverage) measurement zůstává OK; content_status nemění classification_source. Watchpoint: pokud 14d stale alert začne pálit > 5× za týden, indikuje že eligibility logika potřebuje další tuning (nutí Plaud-API-introspection pro přesnější signal).
+
+**BL-4/BL-X total bug count today (post-deploy):** A+B+C, D, E, F, G = **7 hotfixes** v jednom dni. Indikuje že 30-day soak zóna z BL-5 stub trigger condition by měla začít teprve **po stabilizaci** — odložit BL-5 brainstorm trigger až po 7 consecutive days bez nového hotfixu.
+
+---
+
 ## 2026-04-30 — BL-4 prod hotfix F (Plaud-side rename of downloaded rows)
 
 **Symptom:** User na Plaude přejmenoval recording z `04-30 Test: Úprava procesu picking finish` na `04-30 OEZ: Úprava procesu picking finish`. Po Sync Now DB row stále `classifier_label='Test'`, oba MP3 i `.md` zůstaly v `Testy/`. Očekávané: oba soubory v `OEZ/`.

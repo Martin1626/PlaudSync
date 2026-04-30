@@ -46,22 +46,27 @@ class ContentFetcher:
     def fetch_artifacts(self, plaud_id: str) -> FetchOutcome:
         detail = self._client.fetch_detail(plaud_id)
 
-        # Eligibility check: Plaud queues all 3 task IDs for recordings that
-        # WILL get the full transcript+outline+summary trio. Missing task IDs
-        # signal Plaud is not generating them (recording too short / skipped).
-        # Mark not_applicable immediately so retry pass doesn't waste cycles.
+        # Hotfix G (2026-04-30): eligibility check via task_id_info subset
+        # was too aggressive — Plaud queues task IDs progressively (not
+        # all at once at upload). Long recordings synced before all 3 IDs
+        # were assigned were locked into not_applicable forever.
+        #
+        # New semantic: anything-not-complete returns pending. The
+        # _retry_pending_content pass re-evaluates every sync; rows that
+        # legitimately never get processed (recording too short for
+        # Plaud's pipeline) transition to not_applicable after 14 days
+        # via the content_stale alert path.
         if not _REQUIRED_TASK_IDS.issubset(set(detail.task_ids.keys())):
             return FetchOutcome(
-                status="not_applicable",
+                status="pending",
                 task_ids=detail.task_ids,
                 detail=detail,
             )
 
-        # Plaud will produce all 3 — required types should appear in
-        # content_list eventually. If any are missing OR task_status != 1
-        # (mid-generation), the row stays pending; retry pass picks up next
-        # sync and eventually transitions to not_applicable after 14 days
-        # via the content_stale path.
+        # All 3 task IDs queued — required content_list types should
+        # appear eventually. If any are missing OR task_status != 1
+        # (mid-generation), the row stays pending; retry pass picks up
+        # next sync; 14d stale path handles long-term unresolved cases.
         items_by_type = {it.data_type: it for it in detail.content_list}
         required_items: list[tuple[str, Any]] = []
         for section, dtype in _REQUIRED_TYPES.items():
