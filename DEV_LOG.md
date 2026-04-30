@@ -4,6 +4,24 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-6 stub: source-aware recording badge
+
+**Spec:** [docs/superpowers/specs/2026-04-30-bl6-recording-badge-source-aware-stub.md](docs/superpowers/specs/2026-04-30-bl6-recording-badge-source-aware-stub.md).
+
+**Problem:** Today's Dashboard ProjectBadge shows colored badge pro každý matched recording bez ohledu na `status`. Skipped / failed rows zobrazují project code, jako by byly úspěšně staženy. Plus folder-classified recordings ukazují project code, ne Plaud folder name — user nevidí, že klasifikace přišla z folder fallback.
+
+**Desired:**
+- Badge visible ONLY pro `status='downloaded'`.
+- Badge text: project code (source='name') NEBO Plaud folder name (source='folder') NEBO „nezatříděno" (source='none' / unclassified).
+
+**Scope:** ~100 LoC + 8 tests. Backend: nový sloupec `recordings.plaud_folder_id` + 2 fields ve wire modelu (`classification_source`, `plaud_folder_name` resolved via filetag_cache). Frontend: ProjectBadge gates on `status`, větví podle `source`.
+
+**Dependencies:** žádné — `classification_source` a filetag_cache už v place od BL-X. Lze rozjet kdykoli; nezávislé na BL-5.
+
+**Trigger to start:** uživatelská UX preference. Ne blokujicí correctness.
+
+---
+
 ## 2026-04-30 — BL-4 prod hotfix D (eligibility via task_id_info)
 
 **Symptom:** Po deploy A+B+C (commit `6c74d50`) FHB recording z 04-30 přitekl jako MP3, ale `.md` sourozenec chyběl. DB row měl `content_status='not_applicable'` + `content_task_ids=NULL`. Recording 14:27 dlouhý, evidentně Plaud měl co transcribovat.
