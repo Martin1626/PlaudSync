@@ -187,12 +187,19 @@ def _retry_skipped_unknown_project(
     classifier: Classifier,
     config: Config,
     run_id: int,
+    live_metas: dict | None = None,
     *,
     days: int = 14,
 ) -> tuple[int, int]:
     """Re-evaluate rows with status='skipped_unknown_project' and
     created_at_plaud within the last `days` days. If the project is now
     present in config, download the audio and update the row.
+
+    Fix A (BL-X 2026-04-30): when ``live_metas`` is provided, classify
+    against the LIVE Plaud title — handles the case where user renamed
+    the recording on Plaud after PlaudSync's first failed sync. Without
+    this, retry pass would loop on the stale DB title forever.
+
     Returns (downloaded_count, failed_count).
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -213,18 +220,26 @@ def _retry_skipped_unknown_project(
                 pass
             meta_like = _MetaLike()
             meta_like.plaud_id = plaud_id  # type: ignore[attr-defined]
-            meta_like.title = title  # type: ignore[attr-defined]
+            # Fix A: prefer live title from listing (Plaud-side rename detection).
+            live_meta = live_metas.get(plaud_id) if live_metas else None
+            live_title = getattr(live_meta, "title", None) if live_meta else None
+            meta_like.title = live_title if live_title else title  # type: ignore[attr-defined]
             meta_like.created_at = created_at  # type: ignore[attr-defined]
 
             label = classifier.classify(meta_like)
             if label == "_unclassified" or config.lookup_project(label) is None:
                 continue
 
+            # Use live title for filename slug + DB persistence (Fix A —
+            # otherwise file lands with stale slug like the original
+            # 'Konzultace' from before the user renamed on Plaud).
+            effective_title = meta_like.title  # type: ignore[attr-defined]
+
             result = ClassificationResult(
                 status="matched", project=label, matched_date=None,
             )
             date_prefix = created_at[:10]
-            filename = f"{date_prefix}_{_slugify(title)}.mp3"
+            filename = f"{date_prefix}_{_slugify(effective_title)}.mp3"
             target_path = resolve_target_path(
                 result, plaud_folder="(retry)", config=config, filename=filename,
             )
@@ -290,11 +305,12 @@ def _retry_skipped_unknown_project(
 
             conn.execute(
                 "UPDATE recordings SET status = 'downloaded', "
+                "title = ?, "
                 "local_path = ?, classifier_label = ?, downloaded_at = ?, "
                 "sync_run_id = ?, classification_source = ?, "
                 "content_status = ?, content_path = ?, content_task_ids = ? "
                 "WHERE plaud_id = ?",
-                (str(target_path), label,
+                (effective_title, str(target_path), label,
                  datetime.now(timezone.utc).isoformat(), run_id,
                  "name", content_status, content_path, content_task_ids_json,
                  plaud_id),
@@ -436,12 +452,23 @@ def run_sync(
     try:
         _emit("listing", None, None)
 
+        # Pre-fetch full listing ONCE per sync run. Used by:
+        # - retry_skipped_unknown_project pass (live title lookup — Fix A)
+        # - main download loop (with recording_exists_and_downloaded dedup)
+        # Fix B (BL-X 2026-04-30): drop `since` filter entirely. Plaud's
+        # `start_time` is recording start, NOT upload time — a delayed
+        # upload of an older recording was permanently missed by the prior
+        # `since=last_successful_sync.finished_at` filter. Existing dedup
+        # via recording_exists_and_downloaded keeps cost bounded.
+        metas = list(client.list_recordings(since=None))
+        live_metas = {m.plaud_id: m for m in metas}
+
         # Rolling retry pass for previously-skipped rows whose project may now
         # be in config. BL-3 — see specs/2026-04-26-bl3-skip-unknown-projects-design.md.
         # Uses NameClassifier (str-returning) since synthesized DB metas have
-        # no plaud_folder context.
+        # no plaud_folder context. Fix A: live title from listing reused.
         retry_downloaded, retry_failed = _retry_skipped_unknown_project(
-            conn, client, NameClassifier(), config, run_id, days=14,
+            conn, client, NameClassifier(), config, run_id, live_metas, days=14,
         )
 
         # Rolling re-classify pass: re-evaluate recent _unclassified rows against
@@ -464,9 +491,6 @@ def run_sync(
             logger.exception("retry_pending_content pass crashed")
             sentry_sdk.capture_exception(e)
             content_completed, content_failed = 0, 1
-
-        since = last_successful_sync(conn)
-        metas = list(client.list_recordings(since=since))
 
         new_count = retry_downloaded + content_completed
         skipped_count = 0

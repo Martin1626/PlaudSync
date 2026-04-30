@@ -47,6 +47,12 @@ def classify(title: str, created_at: datetime) -> ClassificationResult:
     day = int(match.group("day"))
     project = match.group("project").strip()
 
+    # Reject pure-digit "projects" — Plaud's default file_name for unnamed
+    # recordings is a timestamp like "2026-04-29 08:14:23", and the regex
+    # would otherwise extract "08" as project. Require at least one letter.
+    if not any(ch.isalpha() for ch in project):
+        return ClassificationResult(status="unclassified", project=None, matched_date=None)
+
     if year_str is None:
         year = created_at.year
     else:
