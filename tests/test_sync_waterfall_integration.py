@@ -219,8 +219,10 @@ def test_content_emit_writes_md_sourozenec(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_content_pending_when_task_status_not_ready(tmp_path: Path) -> None:
-    """Plaud still generating summary → content_status='pending', no .md, task_ids snapshot."""
+def test_content_partial_emit_when_only_transcript_ready(tmp_path: Path) -> None:
+    """Hotfix H (2026-04-30): Plaud has transcript ready but outline + summary
+    still in progress. Sync emits partial .md (transcript only); status stays
+    pending so retry pass overwrites when more sections appear."""
     from plaudsync.plaud_client import ContentItem, DetailMeta
 
     unclassified = tmp_path / "U"
@@ -232,7 +234,7 @@ def test_content_pending_when_task_status_not_ready(tmp_path: Path) -> None:
         projects={"ALZA": ProjectEntry(path=project_dir)},
     )
 
-    class _PendingClient(_FakeClient):
+    class _PartialClient(_FakeClient):
         def fetch_detail(self, plaud_id):
             return DetailMeta(
                 plaud_id=plaud_id, language="cs", speakers_count=2,
@@ -248,23 +250,28 @@ def test_content_pending_when_task_status_not_ready(tmp_path: Path) -> None:
             )
 
         def download_content_text(self, item):
-            raise AssertionError("must not call S3 when any required type pending")
+            return "TRANSCRIPT_BODY"
 
     conn = open_state(tmp_path)
     try:
-        client = _PendingClient([
+        client = _PartialClient([
             _rec("rec1", title="04-29 ALZA: x", folder="some_folder", file_size=4),
         ])
         exit_code = run_sync(client, WaterfallClassifier(config), conn, config, "manual")
         assert exit_code == 0
-        assert list(project_dir.rglob("*.md")) == []  # no .md yet
+        # Partial .md present
+        md_files = list(project_dir.rglob("*.md"))
+        assert len(md_files) == 1
+        body = md_files[0].read_text(encoding="utf-8")
+        assert "## Transcript" in body
+        assert "## Outline" not in body  # not yet ready
+        assert "## Summary" not in body  # not yet ready
         row = conn.execute(
             "SELECT content_status, content_path, content_task_ids "
             "FROM recordings WHERE plaud_id='rec1'"
         ).fetchone()
-        assert row[0] == "pending"
-        assert row[1] is None
-        # task_ids stored even in pending state — BL-5 fingerprint
+        assert row[0] == "pending"  # still pending — retry will overwrite when more sections ready
+        assert row[1] == str(md_files[0])
         import json
         assert json.loads(row[2]) == {"trans": "t1", "outline": "o1", "summary": "s1"}
     finally:

@@ -2,9 +2,16 @@
 
 Returns FetchOutcome:
 - status='complete'      — all 3 required types ready, sections fetched
-- status='pending'       — some required type has task_status != 1; no S3 calls
-- status='not_applicable' — required type missing entirely from content_list
-                            (e.g., recording too short to summarize)
+- status='pending'       — at least one required type missing/not ready;
+                           sections may still contain ready ones (partial emit)
+- status='not_applicable' — only via 14d stale path in _retry_pending_content,
+                           never directly from this module
+
+Hotfix H (2026-04-30): partial emit. When transcript or outline arrives
+before summary, emit .md with whatever's ready; status stays 'pending' so
+retry pass re-fetches next sync and overwrites with the now-complete file
+once Plaud catches up. Better UX than waiting silently for the slowest
+section.
 
 Required types (per Q2 lock-in): transcript = 'transaction',
 outline = 'outline', summary = 'auto_sum_note'.
@@ -23,13 +30,6 @@ _REQUIRED_TYPES: dict[str, str] = {
     "summary": "auto_sum_note",
 }
 
-# Plaud's task_id_info must carry all 3 IDs for the recording to be eligible
-# for our full content trio. A recording too short to transcribe (or one Plaud
-# explicitly skipped) won't have all 3 task IDs queued — those are legitimately
-# not_applicable. Recordings WITH all 3 task IDs whose content_list is still
-# incomplete are mid-generation → pending.
-_REQUIRED_TASK_IDS = frozenset({"trans", "outline", "summary"})
-
 
 @dataclass(frozen=True)
 class FetchOutcome:
@@ -46,45 +46,31 @@ class ContentFetcher:
     def fetch_artifacts(self, plaud_id: str) -> FetchOutcome:
         detail = self._client.fetch_detail(plaud_id)
 
-        # Hotfix G (2026-04-30): eligibility check via task_id_info subset
-        # was too aggressive — Plaud queues task IDs progressively (not
-        # all at once at upload). Long recordings synced before all 3 IDs
-        # were assigned were locked into not_applicable forever.
-        #
-        # New semantic: anything-not-complete returns pending. The
-        # _retry_pending_content pass re-evaluates every sync; rows that
-        # legitimately never get processed (recording too short for
-        # Plaud's pipeline) transition to not_applicable after 14 days
-        # via the content_stale alert path.
-        if not _REQUIRED_TASK_IDS.issubset(set(detail.task_ids.keys())):
-            return FetchOutcome(
-                status="pending",
-                task_ids=detail.task_ids,
-                detail=detail,
-            )
-
-        # All 3 task IDs queued — required content_list types should
-        # appear eventually. If any are missing OR task_status != 1
-        # (mid-generation), the row stays pending; retry pass picks up
-        # next sync; 14d stale path handles long-term unresolved cases.
+        # Hotfix H (2026-04-30): per-section readiness — fetch any type that's
+        # ready (task_status=1), skip the rest. Status='complete' iff all 3
+        # types are ready, else 'pending' with whatever sections we got.
+        # The retry pass re-runs and overwrites .md when more sections appear.
         items_by_type = {it.data_type: it for it in detail.content_list}
-        required_items: list[tuple[str, Any]] = []
+        sections: dict[str, str] = {}
+        missing_any = False
+
         for section, dtype in _REQUIRED_TYPES.items():
             item = items_by_type.get(dtype)
             if item is None or item.task_status != 1:
-                return FetchOutcome(
-                    status="pending",
-                    task_ids=detail.task_ids,
-                    detail=detail,
-                )
-            required_items.append((section, item))
-
-        sections: dict[str, str] = {}
-        for section, item in required_items:
+                missing_any = True
+                continue
             raw = self._client.download_content_text(item)
             # outline + transcript come as JSON arrays from Plaud; format
             # to readable markdown. summary is markdown already → passthrough.
             sections[section] = format_section(section, raw)
+
+        if missing_any:
+            return FetchOutcome(
+                status="pending",
+                sections=sections,  # may be partial — caller emits if non-empty
+                task_ids=detail.task_ids,
+                detail=detail,
+            )
 
         return FetchOutcome(
             status="complete",

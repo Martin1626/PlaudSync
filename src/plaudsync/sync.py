@@ -286,8 +286,24 @@ def _retry_skipped_unknown_project(
             meta_like.created_at = created_at  # type: ignore[attr-defined]
 
             label = classifier.classify(meta_like)
+            classification_source = "name"
             if label == "_unclassified" or config.lookup_project(label) is None:
-                continue
+                # Hotfix I (2026-04-30): legacy skipped_unknown_project rows
+                # may also benefit from folder fallback now that
+                # WaterfallClassifier supports it. Use live folder from
+                # listing — synthesized DB metas don't have plaud_folder.
+                folder_hit = False
+                if (config.classify_by_folder
+                        and live_meta is not None):
+                    live_folder = getattr(live_meta, "plaud_folder", "_unknown")
+                    if live_folder and live_folder != "_unknown":
+                        folder_label = config.lookup_by_folder_id(live_folder)
+                        if folder_label is not None:
+                            label = folder_label
+                            classification_source = "folder"
+                            folder_hit = True
+                if not folder_hit:
+                    continue
 
             # Use live title for filename slug + DB persistence (Fix A —
             # otherwise file lands with stale slug like the original
@@ -354,7 +370,7 @@ def _retry_skipped_unknown_project(
                             detail=fetch_outcome.detail,
                             sections=fetch_outcome.sections,
                             project=label,
-                            classification_source="name",
+                            classification_source=classification_source,
                         )
                         md_path.write_text(md_text, encoding="utf-8")
                         content_status = "complete"
@@ -371,8 +387,8 @@ def _retry_skipped_unknown_project(
                 "WHERE plaud_id = ?",
                 (effective_title, str(target_path), label,
                  datetime.now(timezone.utc).isoformat(), run_id,
-                 "name", content_status, content_path, content_task_ids_json,
-                 plaud_id),
+                 classification_source, content_status, content_path,
+                 content_task_ids_json, plaud_id),
             )
             conn.commit()
             downloaded += 1
@@ -447,9 +463,17 @@ def _retry_pending_content(
             meta.created_at = created_at  # type: ignore[attr-defined]
 
             outcome = ContentFetcher(client).fetch_artifacts(plaud_id)
-            if outcome.status == "pending":
-                continue  # still not ready
+
+            # Hotfix H (2026-04-30): partial emit. If at least one section
+            # is ready (transcript / outline / summary), emit .md with
+            # whatever's there. Status='pending' rows keep getting re-emitted
+            # until status='complete' (all 3 ready).
+            if not outcome.sections:
+                # Nothing to emit yet; leave row pending for next sync.
+                continue
             if outcome.status == "not_applicable":
+                # Defensive — ContentFetcher post-Hotfix H never returns this,
+                # but keep handler in case future code paths reintroduce it.
                 conn.execute(
                     "UPDATE recordings SET content_status='not_applicable' "
                     "WHERE plaud_id = ?",
@@ -458,7 +482,9 @@ def _retry_pending_content(
                 conn.commit()
                 continue
 
-            # status == 'complete' → emit .md sourozenec next to existing MP3
+            # Emit .md sourozenec — partial when status='pending', full when
+            # 'complete'. compose_markdown handles missing sections by
+            # omitting their headings.
             md_path = Path(local_path).with_suffix(".md")
             md_text = compose_markdown(
                 meta=meta,
@@ -468,13 +494,15 @@ def _retry_pending_content(
                 classification_source=source or "name",
             )
             md_path.write_text(md_text, encoding="utf-8")
+            new_db_status = "complete" if outcome.status == "complete" else "pending"
             conn.execute(
-                "UPDATE recordings SET content_status='complete', "
+                "UPDATE recordings SET content_status=?, "
                 "content_path = ?, content_task_ids = ? WHERE plaud_id = ?",
-                (str(md_path), json.dumps(outcome.task_ids), plaud_id),
+                (new_db_status, str(md_path), json.dumps(outcome.task_ids), plaud_id),
             )
             conn.commit()
-            completed += 1
+            if outcome.status == "complete":
+                completed += 1
         except Exception as e:  # noqa: BLE001
             logger.bind(recording_id=plaud_id).exception("retry_pending_content failed")
             with sentry_sdk.new_scope() as scope:
@@ -728,7 +756,11 @@ def _process_recording(
         else:
             if fetch_outcome.task_ids:
                 content_task_ids_json = json.dumps(fetch_outcome.task_ids)
-            if fetch_outcome.status == "complete":
+            # Hotfix H (2026-04-30): emit .md whenever at least one section
+            # is ready, even if status='pending'. Retry pass overwrites when
+            # more sections arrive — user gets transcript ASAP rather than
+            # waiting for the slowest section (typically summary).
+            if fetch_outcome.sections:
                 md_path = target_path.with_suffix(".md")
                 md_text = compose_markdown(
                     meta=meta,
@@ -738,8 +770,10 @@ def _process_recording(
                     classification_source=outcome.source,
                 )
                 md_path.write_text(md_text, encoding="utf-8")
-                content_status = "complete"
                 content_path = str(md_path)
+                content_status = (
+                    "complete" if fetch_outcome.status == "complete" else "pending"
+                )
             else:
                 content_status = fetch_outcome.status
 

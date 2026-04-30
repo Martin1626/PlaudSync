@@ -49,6 +49,69 @@ def test_falls_through_to_folder_when_name_no_match() -> None:
     assert out.source == "folder"
 
 
+def test_name_unknown_project_falls_through_to_folder() -> None:
+    """Hotfix I (2026-04-30): name regex matches a project not in config
+    AND classify_by_folder=true AND folder maps to a known project →
+    use folder source instead of returning the unknown name label.
+
+    User scenario: '04-28 CPR: Terapeutické rodičovství' (CPR not in
+    config) but recording is in 'Školení' Plaud folder (mapped to
+    Školení project). Should classify as Školení/folder, not CPR/name."""
+    cfg = Config(
+        unclassified_dir=Path("/u"),
+        projects={
+            "ALZA": ProjectEntry(path=Path("/p/alza"), plaud_folder_id="aaa"),
+            "Školení": ProjectEntry(path=Path("/p/sk"), plaud_folder_id="sk_id"),
+        },
+        classify_by_folder=True,
+    )
+    wc = WaterfallClassifier(cfg)
+    out = wc.classify(_meta(title="04-28 CPR: nějaký případ", folder="sk_id"))
+    assert out.label == "Školení"
+    assert out.source == "folder"
+
+
+def test_name_unknown_project_no_folder_fallback_returns_skip_path() -> None:
+    """Hotfix I: when name produces unknown label AND folder fallback
+    can't classify (no folder mapping or classify_by_folder=false), return
+    the unknown name label with source='name' so sync.py BL-3 gate can
+    record the row as skipped_unknown_project for retry."""
+    cfg = _base_config()  # only ALZA configured, classify_by_folder=False default
+    wc = WaterfallClassifier(cfg)
+    out = wc.classify(_meta(title="04-28 CPR: x", folder="aaa"))
+    assert out.label == "CPR"
+    assert out.source == "name"  # → BL-3 skip path in sync.py
+
+
+def test_name_unknown_project_with_folder_strategy_but_no_folder_match() -> None:
+    """Hotfix I: classify_by_folder=True but recording's folder isn't
+    mapped to any project → BL-3 skip path preserved."""
+    cfg = replace(_base_config(), classify_by_folder=True)
+    wc = WaterfallClassifier(cfg)
+    out = wc.classify(_meta(title="04-28 CPR: x", folder="zzz_unmapped"))
+    assert out.label == "CPR"
+    assert out.source == "name"
+
+
+def test_name_in_config_still_wins_over_folder() -> None:
+    """Hotfix I doesn't break existing behavior: name match for an in-config
+    project still wins, doesn't fall through to folder."""
+    cfg = Config(
+        unclassified_dir=Path("/u"),
+        projects={
+            "ALZA": ProjectEntry(path=Path("/p/alza"), plaud_folder_id="aaa"),
+            "Školení": ProjectEntry(path=Path("/p/sk"), plaud_folder_id="sk_id"),
+        },
+        classify_by_folder=True,
+    )
+    wc = WaterfallClassifier(cfg)
+    # Title says ALZA, folder is sk_id (Školení) — name wins because
+    # ALZA is configured.
+    out = wc.classify(_meta(title="04-28 ALZA: x", folder="sk_id"))
+    assert out.label == "ALZA"
+    assert out.source == "name"
+
+
 def test_disabled_classify_by_name_falls_to_folder() -> None:
     cfg = replace(_base_config(), classify_by_name=False, classify_by_folder=True)
     wc = WaterfallClassifier(cfg)

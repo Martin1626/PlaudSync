@@ -101,7 +101,11 @@ def test_retry_pending_writes_md_and_updates_db_when_ready(tmp_path: Path) -> No
 # pending → still pending
 # ---------------------------------------------------------------------------
 
-def test_retry_still_pending_leaves_row_unchanged(tmp_path: Path) -> None:
+def test_retry_partial_emit_when_some_sections_ready(tmp_path: Path) -> None:
+    """Hotfix H (2026-04-30): when transcript + summary are ready but outline
+    is still in progress (task_status=0), retry pass writes partial .md
+    (transcript + summary) and keeps row pending so next sync overwrites
+    once outline arrives."""
     mp3 = tmp_path / "rec1.mp3"
     mp3.write_bytes(b"AAAA")
     conn = _seed_pending(
@@ -111,15 +115,56 @@ def test_retry_still_pending_leaves_row_unchanged(tmp_path: Path) -> None:
     )
     try:
         detail = _detail_all_ready()
-        # Outline still pending
+        # Outline mid-generation (task_status != 1)
         detail = DetailMeta(
             plaud_id=detail.plaud_id, language=detail.language,
             speakers_count=detail.speakers_count, task_ids=detail.task_ids,
             content_list=[
-                detail.content_list[0],
+                detail.content_list[0],  # transcript ready
                 ContentItem(**{**detail.content_list[1].__dict__, "task_status": 0}),
-                detail.content_list[2],
+                detail.content_list[2],  # summary ready
             ],
+        )
+        client = MagicMock()
+        client.fetch_detail.return_value = detail
+        client.download_content_text.side_effect = ["TRANSCRIPT_BODY", "SUMMARY_BODY"]
+
+        completed, failed = _retry_pending_content(conn, client, days=14)
+        # Only complete-status rows count; pending stays pending so completed=0.
+        assert completed == 0
+        assert failed == 0
+
+        md_path = mp3.with_suffix(".md")
+        assert md_path.exists()  # partial .md written
+        body = md_path.read_text(encoding="utf-8")
+        assert "## Transcript" in body and "TRANSCRIPT_BODY" in body
+        assert "## Summary" in body and "SUMMARY_BODY" in body
+        assert "## Outline" not in body  # mid-generation, omitted
+
+        row = conn.execute(
+            "SELECT content_status, content_path FROM recordings WHERE plaud_id='rec1'",
+        ).fetchone()
+        assert row[0] == "pending"  # still pending — retry overwrites when outline ready
+        assert row[1] == str(md_path)
+    finally:
+        conn.close()
+
+
+def test_retry_no_emit_when_no_section_ready(tmp_path: Path) -> None:
+    """Hotfix H: empty content_list → no sections to emit, no .md, row
+    stays pending. (Previously retry-still-pending case.)"""
+    mp3 = tmp_path / "rec1.mp3"
+    mp3.write_bytes(b"AAAA")
+    conn = _seed_pending(
+        tmp_path, plaud_id="rec1",
+        created_at=datetime.now(timezone.utc).isoformat(),
+        local_path=str(mp3),
+    )
+    try:
+        detail = DetailMeta(
+            plaud_id="rec1", language="cs", speakers_count=2,
+            task_ids={"trans": "t1", "outline": "o1", "summary": "s1"},
+            content_list=[],
         )
         client = MagicMock()
         client.fetch_detail.return_value = detail
@@ -128,12 +173,12 @@ def test_retry_still_pending_leaves_row_unchanged(tmp_path: Path) -> None:
         assert completed == 0
         assert failed == 0
         client.download_content_text.assert_not_called()
+        assert not mp3.with_suffix(".md").exists()
 
         row = conn.execute(
             "SELECT content_status FROM recordings WHERE plaud_id='rec1'",
         ).fetchone()
-        assert row[0] == "pending"  # unchanged
-        assert not mp3.with_suffix(".md").exists()
+        assert row[0] == "pending"
     finally:
         conn.close()
 
@@ -171,10 +216,11 @@ def test_retry_stale_marks_not_applicable_after_14d(tmp_path: Path) -> None:
 # missing required type → not_applicable
 # ---------------------------------------------------------------------------
 
-def test_retry_stays_pending_when_required_type_missing(tmp_path: Path) -> None:
-    """Hotfix G (2026-04-30): missing required type or task_ids subset →
-    pending (not not_applicable). Row stays pending until 14d stale path
-    fires for legitimate-not-applicable cases (recording too short)."""
+def test_retry_partial_emit_when_summary_missing_from_content_list(tmp_path: Path) -> None:
+    """Hotfix H (2026-04-30): summary missing from content_list (Plaud not
+    queued yet) but transcript + outline ready. Partial .md emitted with
+    Transcript + Outline; row stays pending so retry overwrites when summary
+    arrives. Production case from 2026-04-30: '04-30 OEZ: Úprava layoutu'."""
     mp3 = tmp_path / "rec1.mp3"
     mp3.write_bytes(b"AAAA")
     conn = _seed_pending(
@@ -183,9 +229,10 @@ def test_retry_stays_pending_when_required_type_missing(tmp_path: Path) -> None:
         local_path=str(mp3),
     )
     try:
-        # Detail missing 'auto_sum_note' entirely + task_ids empty
+        # auto_sum_note absent from content_list — Plaud queued only trans + outline
         detail = DetailMeta(
-            plaud_id="rec1", language="cs", speakers_count=2, task_ids={},
+            plaud_id="rec1", language="cs", speakers_count=2,
+            task_ids={"trans": "t1", "outline": "o1"},  # no summary task ID yet
             content_list=[
                 ContentItem(data_id="d1", data_type="transaction", task_status=1,
                             data_link="https://s3/t", err_code="", err_msg=""),
@@ -195,11 +242,20 @@ def test_retry_stays_pending_when_required_type_missing(tmp_path: Path) -> None:
         )
         client = MagicMock()
         client.fetch_detail.return_value = detail
+        client.download_content_text.side_effect = ["T", "O"]
 
         completed, failed = _retry_pending_content(conn, client, days=14)
         assert completed == 0
         assert failed == 0
-        client.download_content_text.assert_not_called()
+        # Both ready sections fetched
+        assert client.download_content_text.call_count == 2
+
+        md_path = mp3.with_suffix(".md")
+        assert md_path.exists()
+        body = md_path.read_text(encoding="utf-8")
+        assert "## Transcript" in body
+        assert "## Outline" in body
+        assert "## Summary" not in body
 
         row = conn.execute(
             "SELECT content_status FROM recordings WHERE plaud_id='rec1'",

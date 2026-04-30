@@ -4,6 +4,36 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-4 prod hotfix H + I (partial-emit + name→folder fallback)
+
+**Symptoms (sequenced):**
+
+1. User: `04-30 OEZ: Úprava layoutu` (30:42 dlouhý, ~7.8 MB) má `content_status='pending'`, žádné .md. DB row `task_ids = {trans, outline}` (chybí summary). Plaud queue task IDs progresivně — `summary_id` ještě nedoplnil → row v pending limbu.
+
+2. User: `04-28 CPR: Terapeutické rodičovství` má badge "CPR" (modře, name source) přestože CPR není v configu. Recording je ve složce "Školení" na Plaude (Školení MÁ folder mapping v configu) — user očekával "Školení" badge zeleně.
+
+**Root cause #1 (Hotfix H, content_fetcher.py):** All-or-nothing emit semantic. Když Plaud nedotvořil VŠECHNY 3 typy (transcript + outline + summary), .md se nepsal. User čekal i 2+ hodiny.
+
+**Fix H:** per-section readiness — emit partial .md jakmile alespoň 1 sekce ready. Status='pending' s ready sekcemi → caller writes partial .md, retry pass overwrites při příštím sync až další sekce přibudou. Když Plaud nakonec dotvoří summary, .md má všech 3 sekce.
+
+**Root cause #2 (Hotfix I, classifier.py):** WaterfallClassifier returnoval `(label="CPR", source="name")` při name-regex match na "CPR" — i když CPR není v configu. BL-3 gate v sync.py skipnul recording jako `skipped_unknown_project`, NIKDY se nepokusil folder fallback (Školení folder mapping ignored).
+
+**Fix I:** WaterfallClassifier — když name match produkuje project NOT in config AND classify_by_folder=True AND folder mapping existuje → použít folder source. Když folder fallback nematched → vrátit name label se source='name' (BL-3 retry path zachován pro pozdější config update).
+
+`_retry_skipped_unknown_project` taky rozšířen o folder fallback pro legacy stuck rows.
+
+**Tests:** 363 → 381 passing. +6 v `test_content_fetcher.py` (partial emit), +4 v `test_waterfall_classifier.py` (Hotfix I fall-through), updated 2 v `test_sync_retry_pending_content.py` (partial semantic), updated 1 v `test_sync_waterfall_integration.py`.
+
+**Impact na produkci:**
+- 18 skipped_unknown_project rows DELETED (`DELETE FROM recordings WHERE status='skipped_unknown_project' AND (local_path IS NULL OR local_path = '') AND created_at_plaud >= '2026-04-16'`). Ty co mají folder mapping budou re-klasifikovány Hotfix I waterfall jako folder source. Ty bez folder mappingu se znova zaepí jako skipped_unknown_project (BL-3 retry pass čeká na config update).
+- `04-30 OEZ layoutu` row zůstal v pending — Hotfix H ho při příštím sync emituje s tím, co je ready (transcript + outline). Až Plaud dotvoří summary, příští retry pass ho doplní.
+
+**Kill criteria check:** Žádné triggered. Watchpoint pro #19 (folder coverage): Hotfix I zvyšuje fold-classified rate na úkor name-classified. Telemetrie po 7 dnech ukáže effect.
+
+**8 hotfixes na BL-4/BL-X v jednom dni** (A/B/C/D/E/F/G/H/I). Indikuje fragile feature surface — BL-5 trigger conditions extends z 7d → 14d post-stable.
+
+---
+
 ## 2026-04-30 — BL-4 prod hotfix G (revert not_applicable eligibility — too aggressive)
 
 **Symptom:** User report — `04-30 OEZ: Úprava layoutu...` (30:42 dlouhý, ~7.8 MB) má `content_status='not_applicable'` a chybí `.md`. Audit ukazal: 8 rows v `not_applicable`, z toho 7 jsou velké recordings (2-23 MB, real meetings) které by transcript MĚLY mít. Pouze 1 (`531fb257`, 25 KB ~1.5s) je legitimní (Plaud genuinely netranscribed).

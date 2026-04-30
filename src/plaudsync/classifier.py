@@ -51,12 +51,35 @@ class WaterfallClassifier:
 
         # Strategy 1 — name regex
         if self._config.classify_by_name:
-            label = self._name.classify(recording)
-            if label != "_unclassified":
-                if self._config.classify_by_name_require_folder and meta_folder == "_unknown":
-                    pass  # fall-through — defensive trust requires folder
-                else:
-                    return ClassificationOutcome(label=label, source="name")
+            name_label = self._name.classify(recording)
+            if name_label != "_unclassified":
+                require_folder_blocks = (
+                    self._config.classify_by_name_require_folder
+                    and meta_folder == "_unknown"
+                )
+                in_config = self._config.lookup_project(name_label) is not None
+                # Hotfix I (2026-04-30): fall through to folder strategy
+                # when name match produces a project not in config. Common
+                # case: title contains random project code (e.g. "CPR")
+                # but recording is filed in a known Plaud folder (e.g.
+                # "Školení"). Folder fallback wins; if folder also can't
+                # classify, drop back to BL-3 skip path (return name label
+                # with source='name' so sync.py records the row as
+                # skipped_unknown_project for later retry once the user
+                # adds the project to config).
+                if not require_folder_blocks and in_config:
+                    return ClassificationOutcome(label=name_label, source="name")
+                if not require_folder_blocks and not in_config:
+                    if self._config.classify_by_folder:
+                        folder_label = self._folder.classify(recording)
+                        if folder_label != "_unclassified":
+                            return ClassificationOutcome(
+                                label=folder_label, source="folder",
+                            )
+                    # No folder fallback worked — preserve BL-3 retry path
+                    # by returning the unknown name label with source='name'.
+                    return ClassificationOutcome(label=name_label, source="name")
+                # require_folder_blocks → fall through to folder/catch-all
 
         # Strategy 2 — Plaud folder lookup
         if self._config.classify_by_folder:

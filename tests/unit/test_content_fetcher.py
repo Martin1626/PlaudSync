@@ -1,7 +1,9 @@
 """ContentFetcher orchestration — uses mocked PlaudClient (no network).
 
-Cassette-backed integration via real fetch_detail/download_content_text is
-a follow-up step in the cassette-recording session.
+Hotfix H semantic: per-section readiness, partial emit allowed.
+- All 3 types ready → status='complete', sections has all 3
+- Some types ready → status='pending', sections has those ready (partial)
+- No types ready → status='pending', sections empty (caller skips emit)
 """
 from __future__ import annotations
 
@@ -17,8 +19,9 @@ def _detail(task_statuses: dict[str, int] | None = None,
             ) -> DetailMeta:
     """Build DetailMeta with only the listed data_types. Default all status=1.
 
-    task_ids defaults to all 3 (trans + outline + summary) so the eligibility
-    check passes. Pass task_ids={} or partial dict to test not_applicable path.
+    task_ids defaults to all 3 (trans + outline + summary). Hotfix H removed
+    the task_ids eligibility gate, so this affects only the metadata snapshot
+    written to DB — does not change pending/complete outcome.
     """
     task_statuses = task_statuses or {}
     items = []
@@ -40,7 +43,7 @@ def _detail(task_statuses: dict[str, int] | None = None,
 
 
 # ---------------------------------------------------------------------------
-# complete path
+# complete path — all 3 ready
 # ---------------------------------------------------------------------------
 
 def test_all_ready_returns_complete_with_sections() -> None:
@@ -75,60 +78,66 @@ def test_complete_outcome_exposes_detail_for_caller() -> None:
 
 
 # ---------------------------------------------------------------------------
-# pending path
+# pending path — partial emit (Hotfix H)
 # ---------------------------------------------------------------------------
 
-def test_any_pending_returns_pending_no_fetch() -> None:
+def test_partial_emit_when_only_transcript_ready() -> None:
+    """Hotfix H: outline + summary task_status=0 (mid-generation), transcript
+    task_status=1 → pending status with transcript-only sections. Caller
+    writes .md with just '## Transcript' section."""
     client = MagicMock()
-    client.fetch_detail.return_value = _detail(task_statuses={"transaction": 0})
+    client.fetch_detail.return_value = _detail(
+        task_statuses={"outline": 0, "auto_sum_note": 0},
+    )
+    client.download_content_text.side_effect = ["transcript text"]
+
+    outcome = ContentFetcher(client).fetch_artifacts("rec1")
+
+    assert outcome.status == "pending"  # not all 3 ready → still pending
+    assert outcome.sections == {"transcript": "transcript text"}
+    # Only transcript fetched from S3 — outline + summary skipped
+    assert client.download_content_text.call_count == 1
+
+
+def test_partial_emit_when_summary_missing_from_content_list() -> None:
+    """Common case post-2026-04-30: Plaud queued trans+outline tasks but
+    summary_id not yet populated; content_list has transaction + outline
+    only. Hotfix H emits .md with these 2 sections."""
+    client = MagicMock()
+    client.fetch_detail.return_value = _detail(
+        include=("transaction", "outline"),  # auto_sum_note absent
+    )
+    client.download_content_text.side_effect = ["transcript text", "outline text"]
+
+    outcome = ContentFetcher(client).fetch_artifacts("rec1")
+
+    assert outcome.status == "pending"
+    assert outcome.sections == {
+        "transcript": "transcript text",
+        "outline": "outline text",
+    }
+    assert client.download_content_text.call_count == 2
+
+
+def test_no_emit_when_no_section_ready() -> None:
+    """Empty content_list (Plaud just received recording, processing not
+    started) → pending with no sections. Caller skips .md emit."""
+    client = MagicMock()
+    client.fetch_detail.return_value = _detail(include=())
 
     outcome = ContentFetcher(client).fetch_artifacts("rec1")
 
     assert outcome.status == "pending"
     assert outcome.sections == {}
     client.download_content_text.assert_not_called()
-    assert outcome.task_ids == {"trans": "t1", "outline": "o1", "summary": "s1"}
 
 
-def test_pending_when_any_required_type_not_status_one() -> None:
-    """Any task_status != 1 (including 2, 3, etc.) → pending."""
-    for status in (0, 2, 3, 99):
-        client = MagicMock()
-        client.fetch_detail.return_value = _detail(task_statuses={"outline": status})
-        outcome = ContentFetcher(client).fetch_artifacts("rec1")
-        assert outcome.status == "pending", f"failed for status={status}"
-
-
-# ---------------------------------------------------------------------------
-# not_applicable path — eligibility via task_ids
-# ---------------------------------------------------------------------------
-
-def test_pending_when_task_ids_missing_subset() -> None:
-    """Hotfix G (2026-04-30): subset of task_ids → pending (not
-    not_applicable). Plaud queues task IDs progressively; partial subset
-    can mean 'still being assigned' for fresh long recordings. Retry pass
-    re-evaluates every sync; 14d stale path resolves legitimate
-    not_applicable for tiny clips Plaud never processes."""
-    for partial in (
-        {},  # nothing queued — could be very fresh OR very short
-        {"trans": "t1"},  # only transcript queued so far
-        {"trans": "t1", "outline": "o1"},  # missing summary
-        {"trans": "t1", "summary": "s1"},  # missing outline
-    ):
-        client = MagicMock()
-        client.fetch_detail.return_value = _detail(task_ids=partial)
-        outcome = ContentFetcher(client).fetch_artifacts("rec1")
-        assert outcome.status == "pending", f"failed for task_ids={partial}"
-
-
-def test_pending_when_required_type_missing_but_tasks_queued() -> None:
-    """All 3 task IDs queued + content_list missing some types → recording is
-    mid-generation. Treat as pending so retry pass picks it up. Was buggy
-    pre-2026-04-30 (returned not_applicable; recording stuck without .md)."""
+def test_no_emit_when_all_types_pending_status() -> None:
+    """All 3 types in content_list but task_status != 1 (in-flight) → pending,
+    no sections, no S3 fetches."""
     client = MagicMock()
     client.fetch_detail.return_value = _detail(
-        include=("transaction",),  # outline + auto_sum_note missing
-        # task_ids default = all 3 → tasks ARE queued
+        task_statuses={"transaction": 0, "outline": 0, "auto_sum_note": 0},
     )
 
     outcome = ContentFetcher(client).fetch_artifacts("rec1")
@@ -138,23 +147,23 @@ def test_pending_when_required_type_missing_but_tasks_queued() -> None:
     client.download_content_text.assert_not_called()
 
 
-def test_pending_when_content_list_empty_but_tasks_queued() -> None:
-    """Edge case — Plaud has tasks queued (task_id_info populated) but
-    content_list is still empty. Pending, retry next sync."""
-    client = MagicMock()
-    client.fetch_detail.return_value = _detail(include=())
-
-    outcome = ContentFetcher(client).fetch_artifacts("rec1")
-
-    assert outcome.status == "pending"
-
-
-def test_empty_task_ids_returns_pending() -> None:
-    """Hotfix G: empty task_ids dict → pending (not not_applicable). The
-    14d stale window in retry pass converts long-unresolved rows to
-    not_applicable + Sentry alert."""
-    client = MagicMock()
-    client.fetch_detail.return_value = _detail(include=(), task_ids={})
-
-    outcome = ContentFetcher(client).fetch_artifacts("rec1")
-    assert outcome.status == "pending"
+def test_partial_emit_status_pending_regardless_of_task_ids() -> None:
+    """Hotfix H removed the task_id_info eligibility gate. With partial
+    content_list ready, task_ids subset doesn't change the outcome — we
+    emit what's ready and let retry pass re-evaluate next sync."""
+    for partial_task_ids in (
+        {},
+        {"trans": "t1"},
+        {"trans": "t1", "outline": "o1"},  # missing summary
+    ):
+        client = MagicMock()
+        client.fetch_detail.return_value = _detail(
+            include=("transaction", "outline"),  # missing summary in content_list too
+            task_ids=partial_task_ids,
+        )
+        client.download_content_text.side_effect = ["t-text", "o-text"]
+        outcome = ContentFetcher(client).fetch_artifacts("rec1")
+        assert outcome.status == "pending"
+        assert outcome.sections == {
+            "transcript": "t-text", "outline": "o-text",
+        }, f"failed for task_ids={partial_task_ids}"
