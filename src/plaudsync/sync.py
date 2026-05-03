@@ -712,9 +712,17 @@ def _process_recording(
         )
         return
 
-    # Audio gate — when off, skip download but still record DB row so UI sees
-    # the recording (with status='skipped' marking artifact-level decline).
-    if not should_download_artifact("audio", meta, outcome, config):
+    # Per-artifact gates — independent so user can pick MP3-only, MD-only,
+    # or both. Pre-fix the audio gate's early return short-circuited the
+    # whole pipeline and starved the MD path. UI exposes both toggles
+    # independently in BlxSettingsPanel.
+    audio_enabled = should_download_artifact("audio", meta, outcome, config)
+    content_enabled = (
+        should_download_artifact("content", meta, outcome, config)
+        and hasattr(client, "fetch_detail")
+    )
+
+    if not audio_enabled and not content_enabled:
         record_recording(
             conn, meta, status="skipped",
             local_path="", run_id=run_id,
@@ -732,7 +740,8 @@ def _process_recording(
             status="matched", project=label, matched_date=created_dt.date()
         )
 
-    # File name: {YYYY-MM-DD}_{slug}.mp3
+    # File name: {YYYY-MM-DD}_{slug}.mp3 — also serves as base for the
+    # .md sourozenec when only content download is enabled.
     date_prefix = meta.created_at[:10]
     filename = f"{date_prefix}_{_slugify(meta.title)}.mp3"
 
@@ -741,24 +750,25 @@ def _process_recording(
     )
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
-    bytes_written = 0
-    try:
-        with open(target_path, "wb") as f:
-            for chunk in client.download_audio(meta.plaud_id):
-                f.write(chunk)
-                bytes_written += len(chunk)
-    except Exception:
-        # Mid-stream interruption (network drop, S3 RST, etc.) leaves a partial
-        # file on disk. Remove it so a UI/file watcher does not surface a
-        # half-recording with a real-looking name.
-        target_path.unlink(missing_ok=True)
-        raise
+    if audio_enabled:
+        bytes_written = 0
+        try:
+            with open(target_path, "wb") as f:
+                for chunk in client.download_audio(meta.plaud_id):
+                    f.write(chunk)
+                    bytes_written += len(chunk)
+        except Exception:
+            # Mid-stream interruption (network drop, S3 RST, etc.) leaves a partial
+            # file on disk. Remove it so a UI/file watcher does not surface a
+            # half-recording with a real-looking name.
+            target_path.unlink(missing_ok=True)
+            raise
 
-    if meta.file_size and bytes_written != meta.file_size:
-        target_path.unlink(missing_ok=True)
-        raise PlaudDownloadCorrupted(
-            f"size mismatch: expected={meta.file_size}, written={bytes_written}"
-        )
+        if meta.file_size and bytes_written != meta.file_size:
+            target_path.unlink(missing_ok=True)
+            raise PlaudDownloadCorrupted(
+                f"size mismatch: expected={meta.file_size}, written={bytes_written}"
+            )
 
     # Content artifact (.md sourozenec) — only when gate passes (folder
     # present + classified). All-or-nothing emit: any required Plaud
@@ -769,9 +779,7 @@ def _process_recording(
     content_path: str | None = None
     content_task_ids_json: str | None = None
 
-    # Content emit only when client has BL-4 surface (fetch_detail). Legacy
-    # callers (test fakes pre-BL-4) don't — leave content_status='not_applicable'.
-    if should_download_artifact("content", meta, outcome, config) and hasattr(client, "fetch_detail"):
+    if content_enabled:
         try:
             fetch_outcome = ContentFetcher(client).fetch_artifacts(meta.plaud_id)
         except Exception as e:  # noqa: BLE001
