@@ -382,7 +382,8 @@ def test_reclassify_moves_md_sibling(tmp_path: Path) -> None:
 
 
 def test_download_audio_false_records_skipped_status(tmp_path: Path) -> None:
-    """download_audio=False → MP3 not written, status='skipped' in DB so UI
+    """download_audio=False AND legacy client without fetch_detail (so no
+    content path either) → MP3 not written, status='skipped' in DB so UI
     sees the recording exists but artifact-level decline occurred."""
     unclassified = tmp_path / "U"
     project_dir = tmp_path / "ALZA"
@@ -407,5 +408,77 @@ def test_download_audio_false_records_skipped_status(tmp_path: Path) -> None:
         assert row[0] == "skipped"
         assert row[1] == "name"
         assert list(project_dir.rglob("*.mp3")) == []
+    finally:
+        conn.close()
+
+
+def test_audio_off_content_on_writes_md_only(tmp_path: Path) -> None:
+    """download_audio=False AND download_content=True → .md sourozenec emitted
+    even though MP3 not downloaded. The two artifact gates are independent
+    (regression: pre-fix, audio gate's early return blocked MD download)."""
+    from plaudsync.plaud_client import ContentItem, DetailMeta
+
+    unclassified = tmp_path / "U"
+    project_dir = tmp_path / "ALZA"
+    unclassified.mkdir()
+    project_dir.mkdir()
+    config = Config(
+        unclassified_dir=unclassified,
+        projects={"ALZA": ProjectEntry(path=project_dir)},
+        download_audio=False,
+    )
+
+    class _RichClient(_FakeClient):
+        def __init__(self, recordings):
+            super().__init__(recordings)
+            self.audio_called = False
+
+        def download_audio(self, plaud_id):
+            self.audio_called = True
+            yield b"AAAA"
+
+        def fetch_detail(self, plaud_id):
+            return DetailMeta(
+                plaud_id=plaud_id, language="cs", speakers_count=2,
+                task_ids={"trans": "t1", "outline": "o1", "summary": "s1"},
+                content_list=[
+                    ContentItem(data_id="d1", data_type="transaction", task_status=1,
+                                data_link="https://s3.example/t", err_code="", err_msg=""),
+                    ContentItem(data_id="d2", data_type="outline", task_status=1,
+                                data_link="https://s3.example/o", err_code="", err_msg=""),
+                    ContentItem(data_id="d3", data_type="auto_sum_note", task_status=1,
+                                data_link="https://s3.example/s", err_code="", err_msg=""),
+                ],
+            )
+
+        def download_content_text(self, item):
+            return {
+                "transaction": "TRANSCRIPT",
+                "outline": "OUTLINE",
+                "auto_sum_note": "SUMMARY",
+            }[item.data_type]
+
+    conn = open_state(tmp_path)
+    try:
+        client = _RichClient([
+            _rec("rec1", title="04-29 ALZA: x", folder="some_folder", file_size=4),
+        ])
+        exit_code = run_sync(client, WaterfallClassifier(config), conn, config, "manual")
+        assert exit_code == 0
+        assert client.audio_called is False
+        assert list(project_dir.rglob("*.mp3")) == []
+        md_files = list(project_dir.rglob("*.md"))
+        assert len(md_files) == 1
+        md_text = md_files[0].read_text(encoding="utf-8")
+        assert "## Transcript" in md_text and "TRANSCRIPT" in md_text
+
+        row = conn.execute(
+            "SELECT status, classification_source, content_status, content_path "
+            "FROM recordings WHERE plaud_id='rec1'"
+        ).fetchone()
+        assert row[0] == "downloaded"
+        assert row[1] == "name"
+        assert row[2] == "complete"
+        assert row[3] == str(md_files[0])
     finally:
         conn.close()
