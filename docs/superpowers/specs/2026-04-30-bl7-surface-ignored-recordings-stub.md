@@ -1,7 +1,9 @@
 # BL-7 — Surface ignored recordings in UI
 
-> **Status:** stub v0.1 (2026-04-30). NOT YET IMPLEMENTED. Backlog ticket
-> filed to capture requirements + design direction.
+> **Status:** SHIPPED 2026-05-03. Persists skip-source rows + gray
+> "ignorováno" badge. Decision locked: reuse `'skipped'` status +
+> `classification_source='skip'` discriminator (no schema migration).
+> Tests: tests/test_bl7_surface_ignored.py (6 cases).
 >
 > **Predecessor:** BL-X waterfall (commit `78b6176`) introduced
 > `outcome.source == "skip"` semantic — recording invisible to PlaudSync

@@ -25,7 +25,7 @@ export interface SyncState {
   progress: SyncProgress | null;
 }
 
-export type ClassificationSource = "name" | "folder" | "none";
+export type ClassificationSource = "name" | "folder" | "none" | "skip";
 
 export interface RecordingRow {
   plaud_id: string;
@@ -37,10 +37,12 @@ export interface RecordingRow {
   project: string | null;
   target_dir: string;
   status: RecordingStatus;
-  /** BL-6: source-aware project badge.
+  /** BL-6 / BL-7: source-aware project badge.
    *  - "name"   → matched by title regex; badge shows project code (blue)
    *  - "folder" → matched by Plaud folder fallback; badge shows folderName (green)
    *  - "none"   → unclassified catch-all (gray)
+   *  - "skip"   → BL-7: ignored (no strategy matched + sync_unclassified=false);
+   *               badge shows "ignorováno" (gray) with tooltip explaining recovery
    *  - null     → legacy pre-BL-X row; render as "name" fallback */
   classification_source: ClassificationSource | null;
   /** BL-6: resolved Plaud folder name (FiletagCache lookup).

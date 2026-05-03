@@ -18,6 +18,13 @@ const PILL_BASE =
 
 const BLUE = "bg-blue-100 text-blue-700 border-blue-200";
 const GREEN = "bg-green-100 text-green-700 border-green-200";
+const GRAY = "bg-gray-100 text-gray-600 border-gray-200";
+
+const IGNORED_TOOLTIP =
+  "Nahrávka neodpovídá žádné klasifikační strategii. Možnosti:\n" +
+  "• přidat KOD: do názvu na Plaude\n" +
+  "• přesunout nahrávku do mapované Plaud složky\n" +
+  "• zapnout „Synchronizovat i to, co nelze roztřídit\" v Settings";
 
 export default function ProjectBadge({
   project,
@@ -26,6 +33,18 @@ export default function ProjectBadge({
   folderName,
   status,
 }: Props) {
+  // BL-7: skip-source → šedá "ignorováno" pilulka s tooltipem vysvětlujícím,
+  // proč PlaudSync nahrávku nestáhl + jak ji obnovit. Tato větev musí být
+  // PŘED kontrolou status/classification, protože skip rows mají
+  // status='skipped' a classification='unclassified'.
+  if (source === "skip") {
+    return (
+      <span className={classNames(PILL_BASE, GRAY)} title={IGNORED_TOOLTIP}>
+        ignorováno
+      </span>
+    );
+  }
+
   // Badge se zobrazuje jen pro nahrávky úspěšně zařazené do projektu (v configu)
   // nebo do Plaud složky. Skipped (vč. skipped_unknown_project — projekt
   // detekován z titulu, ale není v configu) a failed nedostávají badge.

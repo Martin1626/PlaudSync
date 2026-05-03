@@ -299,12 +299,9 @@ def test_classify_by_folder_off_then_on_recovers_skipped_unknown_project(tmp_pat
 
 def test_sync_unclassified_off_drops_unknown_then_on_picks_up_new(tmp_path: Path) -> None:
     """sync_unclassified=False → recording with no name match + no folder
-    mapping is dropped (no DB row). Toggle on → next sync creates row
-    in unclassified_dir.
-
-    Caveat: doesn't recover the EXACT recording that was dropped during
-    the off period if it's still listable on Plaud — main loop processes
-    it on next sync regardless of past attempts."""
+    mapping persists as 'skipped' / source='skip' (BL-7) so UI surfaces
+    it. Toggle on → next sync upgrades the row to 'downloaded' in
+    unclassified_dir."""
     project, unclassified = _setup(tmp_path)
     config_off = Config(
         unclassified_dir=unclassified,
@@ -313,17 +310,18 @@ def test_sync_unclassified_off_drops_unknown_then_on_picks_up_new(tmp_path: Path
     )
     conn = open_state(tmp_path)
     try:
-        # Sync 1: title without 'KOD:' format → outright skip, no row
+        # Sync 1: title without 'KOD:' format → BL-7 skip-source row.
         client1 = _StatefulFakeClient([
             _rec("rec_random", "Random title without project code"),
         ])
         run_sync(client1, WaterfallClassifier(config_off), conn,
                  config_off, "manual")
         assert client1.audio_calls == []
-        rows = conn.execute(
-            "SELECT plaud_id FROM recordings WHERE plaud_id='rec_random'",
-        ).fetchall()
-        assert rows == []  # no row at all
+        row = conn.execute(
+            "SELECT status, classification_source FROM recordings "
+            "WHERE plaud_id='rec_random'",
+        ).fetchone()
+        assert row == ("skipped", "skip")
 
         # Sync 2: sync_unclassified=True → catch-all kicks in
         config_on = replace(config_off, sync_unclassified=True)

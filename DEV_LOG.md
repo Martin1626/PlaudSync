@@ -4,6 +4,27 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-05-03 — BL-7 shipped (surface ignored recordings)
+
+Implementace BL-7 stubu z 04-30. Skip-source nahrávky (`outcome.source == "skip"` — žádná strategie nematchla + `sync_unclassified=false`) už nejsou silently dropped — persisují do `recordings` tabulky se `status='skipped'` + `classification_source='skip'`.
+
+**Decision lock:** reuse `'skipped'` status + nový discriminator `classification_source='skip'` (doporučená cesta z stubu §3). Žádná schema migration; existing CHECK constraint pokrývá `'skipped'` a `classification_source` je nullable TEXT z BL-X.
+
+**Recovery paths (BL-7 stub §6 edge cases):**
+- Project added to config + Plaud rename → main loop natural re-process via `recording_exists_and_downloaded` (vrací False pro skipped) → `_process_recording` reclassifuje a Hotfix L upgrade `skipped → downloaded` triggeruje UPSERT.
+- `sync_unclassified=true` flip → main loop natural re-process → catch-all kicks in → upgrade na `downloaded` se `source='none'`.
+- Žádné rozšíření retry passu nebylo potřeba (na rozdíl od stubu doporučení §6.1) — main loop iteruje all live metas, dedup jen na `status='downloaded'`, takže skip-source rows se přirozeně re-processnou každý sync.
+
+**Files touched:** `src/plaudsync/sync.py` (`_process_recording` skip větev), `src/plaudsync/ui/state_reader.py` (`'skip'` v Literal type), `frontend/src/api/types.ts` (`ClassificationSource` union), `frontend/src/pages/Dashboard/ProjectBadge.tsx` (gray "ignorováno" pill + tooltip). Mock state extended s rec_007 pro DevPanel ověření.
+
+**Tests:** `tests/test_bl7_surface_ignored.py` — 6 cases: skip persistence, NULL folder ID handling, project-added upgrade, sync_unclassified flip upgrade, state_reader wire payload, FiletagCache folder name resolve. Update 2 pre-existing tests (`test_waterfall_skip_writes_no_db_row` → `test_waterfall_skip_persists_row_no_audio`, `test_sync_unclassified_off_drops_unknown_then_on_picks_up_new`) — assertovaly starou silent-drop semantic.
+
+**LoC odhad vs. realita:** stub §7 odhadl ~80 LoC + 6 tests; reálně ~30 LoC backend + ~20 LoC frontend + ~290 LoC test (includes copy of fake client harness). 6 nových testů + 2 updated.
+
+Backlog stav: BL-1 (progress bar), BL-5 (2 sub-cases open), BL-6 (badge — shipped), BL-7 (shipped), BL-8 (trash detection — pending soak/incident trigger).
+
+---
+
 ## 2026-04-30 — BL-7 + BL-8 stubs (UI completeness gaps)
 
 User otázka: „Můžu se spolehnout, že se v seznamu nahrávek zobrazují všechny? Jsou některé vyřazené apriori? Jak je to s těmi v koši?"

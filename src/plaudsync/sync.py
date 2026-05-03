@@ -674,9 +674,21 @@ def _process_recording(
     """
     outcome = _normalize_classifier_output(classifier.classify(meta))
 
-    # No strategy matched + sync_unclassified=false → outright skip,
-    # no DB row written. Replaces pre-BL-X sync_only_foldered semantic.
+    # BL-7 (2026-05-03): persist skip-source row so UI can render it as
+    # "ignorováno" (gray pill). Pre-BL-7 this was a silent drop — user had
+    # no signal that PlaudSync had seen the recording at all. Reuses
+    # status='skipped' + classification_source='skip' discriminator (no
+    # schema migration). Hotfix L upgrade path (skipped → downloaded)
+    # naturally handles recovery when title is renamed on Plaud, project
+    # is added to config, or sync_unclassified flag flips on.
     if outcome.source == "skip":
+        record_recording(
+            conn, meta, status="skipped",
+            local_path="", run_id=run_id,
+            classifier_label="_unclassified",
+            classification_source="skip",
+            plaud_folder_id=_meta_folder_id(meta),
+        )
         return
 
     label = outcome.label

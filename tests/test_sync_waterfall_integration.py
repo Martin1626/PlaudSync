@@ -1,7 +1,10 @@
 """run_sync wired with WaterfallClassifier — BL-X integration tests.
 
 Verifies the new ClassificationOutcome-based protocol:
-- source='skip' → no DB row (replaces sync_only_foldered semantic)
+- source='skip' → DB row with status='skipped' + classification_source='skip'
+  (BL-7 — surfaces ignored recordings in UI as 'ignorováno' pill).
+  Pre-BL-7 this dropped silently (no DB row); the BL-7 dedicated test file
+  is tests/test_bl7_surface_ignored.py.
 - source='name' / 'folder' / 'none' persisted to classification_source column
 - Adapter accepts legacy str-returning classifiers (regression check)
 """
@@ -44,13 +47,14 @@ def _rec(plaud_id: str, title: str = "random title", folder: str = "_unknown",
 
 
 # ---------------------------------------------------------------------------
-# source='skip' → no DB row
+# source='skip' → status='skipped' + source='skip' (BL-7)
 # ---------------------------------------------------------------------------
 
-def test_waterfall_skip_writes_no_db_row(tmp_path: Path) -> None:
+def test_waterfall_skip_persists_row_no_audio(tmp_path: Path) -> None:
     """Default config (classify_by_name=True, sync_unclassified=False):
-    a recording whose title doesn't match regex falls through all strategies
-    and is dropped — no DB row, no MP3 on disk."""
+    a recording whose title doesn't match regex falls through all strategies.
+    Pre-BL-7: silent drop. Post-BL-7: status='skipped' + source='skip' DB row,
+    no MP3 on disk (download still gated)."""
     unclassified = tmp_path / "U"
     unclassified.mkdir()
     config = Config(unclassified_dir=unclassified, projects={})
@@ -60,8 +64,11 @@ def test_waterfall_skip_writes_no_db_row(tmp_path: Path) -> None:
         client = _FakeClient([_rec("rec1", title="random title")])
         exit_code = run_sync(client, WaterfallClassifier(config), conn, config, "manual")
         assert exit_code == 0
-        rows = conn.execute("SELECT plaud_id FROM recordings").fetchall()
-        assert rows == []
+        row = conn.execute(
+            "SELECT status, classification_source, classifier_label, local_path "
+            "FROM recordings WHERE plaud_id='rec1'"
+        ).fetchone()
+        assert row == ("skipped", "skip", "_unclassified", "")
         assert list(unclassified.rglob("*.mp3")) == []
     finally:
         conn.close()

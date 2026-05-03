@@ -109,6 +109,22 @@ export const SAMPLE_RECORDINGS_FULL: RecordingRow[] = [
     classification_source: "none",
     plaud_folder_name: null,
   },
+  // BL-7 ignored: no strategy matched (no project code v titulu, folder není
+  // mapován v configu, sync_unclassified=false). Wire status='skipped' +
+  // classification_source='skip' → šedá "ignorováno" pilulka s tooltipem.
+  {
+    plaud_id: "rec_007",
+    title: "04-23 Náhodné zamyšlení do diktafonu",
+    created_at: "2026-04-23T19:30:00+02:00",
+    downloaded_at: "2026-04-23T20:00:00+02:00",
+    plaud_folder: "Inbox",
+    classification_status: "unclassified",
+    project: null,
+    target_dir: "",
+    status: "skipped",
+    classification_source: "skip",
+    plaud_folder_name: null,
+  },
   // skipped_unknown_project (wire 'skipped'): regex našel 'Schůzka' v titulu,
   // ale projekt 'Schůzka' není v configu → žádný badge se nezobrazí
   {

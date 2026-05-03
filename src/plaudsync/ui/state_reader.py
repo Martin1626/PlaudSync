@@ -40,8 +40,11 @@ class RecordingRowPayload(TypedDict):
     project: str | None
     target_dir: str
     status: Literal["downloaded", "failed", "skipped"]
-    # BL-6: source-aware project badge
-    classification_source: Literal["name", "folder", "none"] | None
+    # BL-6: source-aware project badge.
+    # BL-7: 'skip' added — recording fell through all strategies +
+    # sync_unclassified=false; persisted with status='skipped' and surfaced
+    # as a gray "ignorováno" pill so the user has a visible signal.
+    classification_source: Literal["name", "folder", "none", "skip"] | None
     plaud_folder_name: str | None
 
 
