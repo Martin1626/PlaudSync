@@ -4,6 +4,57 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-05-03 — BL-8 shipped (Plaud-side trash detection)
+
+User otázka „Co se stane v lokálním úložišti, když záznam přesunu do koše na Plaude?" odhalila, že BL-8 dosud žil pouze jako stub a trigger conditions ještě nebyly splněny (3 incidenty / 14d soak). User se rozhodl ship-nout preemptivně po skončení brainstormu.
+
+**Brainstorm session:** 6 decisions locked v jedné session ([2026-05-03 spec](docs/superpowers/specs/2026-05-03-bl8-trash-detection-design.md)):
+1. **Trash policy:** hard delete, žádný config flag (YAGNI na archive/mark — zamítnut 3× test surface).
+2. **Untrash recovery:** fresh download via main loop; UPSERT whitelist rozšířen o `'trashed' → 'downloaded'`.
+3. **Sentry alert:** hybrid — per-record trash silent (Loguru `info`), mass-detection guard captures s `error_kind='trash_mass_detection'`.
+4. **UI:** šedá pill `smazáno` (BL-7 analog), žádný strike-through, žádný filter chip.
+5. **UPSERT:** `'trashed'` přidán do whitelist.
+6. **Batch safety guard:** combo (>10 AND >50% downloaded) — abort + Sentry; sync pokračuje. Hard-coded konstanty `_TRASH_BATCH_ABSOLUTE=10`, `_TRASH_BATCH_RATIO=0.5`.
+
+**Architektura:** Approach X — nový `_detect_trashed` pre-pass v [sync.py](src/plaudsync/sync.py), runs first (mezi listing a `_retry_skipped_unknown_project`). Approach Y (rozšíření `_reclassify_recent`) zamítnut pro mísení concerns; Approach Z (per-record `/file/detail/{id}` check) zamítnut pro N+1 cost.
+
+**Files touched:**
+- [src/plaudsync/plaud_client.py](src/plaudsync/plaud_client.py) — `list_trashed()` metoda (mirror `list_recordings` s `is_trash=1`).
+- [src/plaudsync/sync.py](src/plaudsync/sync.py) — `_detect_trashed` pre-pass + `_hard_delete_local` helper + wiring v `run_sync`. Aggregace `trashed_failed` do `failed_count`.
+- [src/plaudsync/state.py](src/plaudsync/state.py) — `_SCHEMA` CHECK rozšířen o `'trashed'`, nová migrace `_migrate_status_add_trashed`, UPSERT whitelist rozšířen.
+- [src/plaudsync/ui/state_reader.py](src/plaudsync/ui/state_reader.py) — Pydantic Literal type rozšířen.
+- [frontend/src/api/types.ts](frontend/src/api/types.ts) — `RecordingStatus` union rozšířen.
+- [frontend/src/pages/Dashboard/ProjectBadge.tsx](frontend/src/pages/Dashboard/ProjectBadge.tsx) — nová `'trashed'` větev s šedou pill před existující skipped větví.
+- [tests/cassettes/test_sync/test_sync_happy_path_writes_file_and_updates_state.yaml](tests/cassettes/test_sync/test_sync_happy_path_writes_file_and_updates_state.yaml) — přidána `is_trash=1` empty-list interakce.
+
+**Tests added (10 nových):**
+- 7× trash detection (`tests/test_sync_trash_detection.py`): happy path, idempotent re-run, failed-row untouched, batch safety guard fires (20 downloaded / 11 trashed = 55 %), batch guard pass (12 downloaded / 7 trashed = 58 % ale 7 ≤ 10), untrash recovery, unrelated trash IDs no-op.
+- 1× migration (`tests/test_state_migrations.py`): pre-BL-8 DB rebuilt to include `'trashed'` v CHECK, legacy rows preserved.
+- 2× implicit ve změně cassette (existující `test_sync_happy_path_writes_file_and_updates_state` musel přijmout nový `is_trash=1` API call v sync flow).
+
+**LoC odhad vs. realita:**
+- Backend stub odhad: ~150 LoC. Realita: ~125 LoC v sync.py + ~25 v plaud_client + ~40 v state.py = ~190 LoC. Migrace větší než odhad (full table rebuild s 14 sloupci).
+- Frontend stub odhad: 50 LoC. Realita: ~15 LoC (typ rozšíření 1 token + ProjectBadge větev 12 řádků). Stub overestimoval — žádná nová komponenta nepotřeba.
+- Tests: 10 nových (vs. stub odhad ~10).
+
+**Verification:**
+- 444 pytest passing (přidáno 10 nových, 0 regrese).
+- bandit clean — žádné nové issues z BL-8 (10 pre-existing low-severity findings v tray/ui subprocess + B101 asserts).
+- `tsc --noEmit` clean.
+- Frontend manual verification odložen na první real trash incident (no Vitest infra; BL-7 šel stejně).
+
+**Stubs:** [BL-8 stub](docs/superpowers/specs/2026-04-30-bl8-trash-detection-stub.md) superseded by [BL-8 design](docs/superpowers/specs/2026-05-03-bl8-trash-detection-design.md). Status header v stubu se aktualizuje samostatně.
+
+**Out of scope (explicit forward-compat notes pro BL-9 candidate):**
+- Trashed `status='failed'` / `status='skipped'` rows — DB hygiene, žádné lokální soubory k mazání.
+- Plaud auto-purge (Plaud's own retention) — pokud Plaud purgne před PlaudSync detection, DB row stays `'downloaded'`, files orphan. Reconciliation pass (DB ∪ active ∪ trashed) by byl plný BL-9 scope.
+
+**Kill criteria delta:** žádné triggernuté. Bug class byl architectural gap (PlaudSync neměl signal mechanism pro Plaud-side state mutations) — preventivně shipnuto před prvním real incidentem. `_TRASH_BATCH_ABSOLUTE`/`_TRASH_BATCH_RATIO` jako hard-coded je explicitně volitelná pozice (kill criterion #19 dynamic surface), ne config flag — pokud false-positive guard trip nastane reálně >2×, zvážit konfiguraci.
+
+Backlog stav: BL-1 (progress bar), BL-5 (2 sub-cases open: folder-move detection + content drift), BL-6 (shipped), BL-7 (shipped), BL-8 (shipped). 1 active stub (BL-1) + 2 BL-5 sub-cases + 1 BL-9 candidate (orphan reconciliation, žádný stub yet).
+
+---
+
 ## 2026-05-03 — BL-7 shipped (surface ignored recordings)
 
 Implementace BL-7 stubu z 04-30. Skip-source nahrávky (`outcome.source == "skip"` — žádná strategie nematchla + `sync_unclassified=false`) už nejsou silently dropped — persisují do `recordings` tabulky se `status='skipped'` + `classification_source='skip'`.

@@ -1,7 +1,9 @@
 # BL-8 — Plaud-side trash detection (subset of BL-5)
 
-> **Status:** stub v0.1 (2026-04-30). NOT YET IMPLEMENTED. Backlog ticket
-> filed to capture requirements + design direction.
+> **Status:** SUPERSEDED by [2026-05-03-bl8-trash-detection-design.md](2026-05-03-bl8-trash-detection-design.md)
+> (locked design v1.0). Shipped 2026-05-03 in commit `6a99071`. This stub
+> remains for historical context — open decisions in §6 were resolved in
+> the design doc, plus one new decision (batch safety threshold).
 >
 > **Predecessor / Parent:** BL-5 stub (`2026-04-30-bl5-resync-mutations-stub.md`)
 > identified trash-detection as one of three remaining sub-cases. Hotfix F
