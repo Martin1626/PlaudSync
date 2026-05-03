@@ -140,7 +140,7 @@ def record_recording(
              classification_source, content_status, content_path,
              content_task_ids, plaud_folder_id),
         )
-    elif existing[0] in ("failed", "skipped_unknown_project") and status == "downloaded":
+    elif existing[0] in ("failed", "skipped_unknown_project", "skipped") and status == "downloaded":
         conn.execute(
             "UPDATE recordings SET title = ?, created_at_plaud = ?, "
             "downloaded_at = ?, local_path = ?, classifier_label = ?, "

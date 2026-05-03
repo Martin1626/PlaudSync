@@ -262,6 +262,34 @@ def test_record_recording_persists_plaud_folder_id(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_record_recording_upgrades_skipped_to_downloaded(tmp_path: Path) -> None:
+    """Hotfix L (2026-04-30): status='skipped' (audio gate decline) must be
+    upgradable to 'downloaded' when user re-enables download_audio. Pre-fix,
+    'skipped' was missing from the elif upgrade list → row stuck forever."""
+    conn = open_state(tmp_path)
+    run_id = start_sync_run(conn, "manual")
+
+    meta = _MetaStub(
+        plaud_id="rec-skip-1",
+        title="04-26 ALZA: kickoff",
+        created_at="2026-04-26T00:00:00+00:00",
+        file_size=2048,
+    )
+    record_recording(conn, meta, status="skipped",
+                     local_path="", run_id=run_id, classifier_label="ALZA")
+
+    record_recording(conn, meta, status="downloaded",
+                     local_path="/data/ALZA/file.mp3", run_id=run_id,
+                     classifier_label="ALZA")
+
+    row = conn.execute(
+        "SELECT status, local_path FROM recordings WHERE plaud_id = 'rec-skip-1'"
+    ).fetchone()
+    assert row[0] == "downloaded"
+    assert row[1] == "/data/ALZA/file.mp3"
+    conn.close()
+
+
 def test_record_recording_does_not_overwrite_downloaded(tmp_path: Path) -> None:
     """Immutability: a 'downloaded' row must not be downgraded to skipped."""
     conn = open_state(tmp_path)

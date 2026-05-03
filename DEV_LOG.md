@@ -4,6 +4,47 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-4 prod hotfix L (status='skipped' rows can't upgrade to 'downloaded')
+
+**Symptom:** User toggle-oval `download_audio=False` v 12:08-12:20 (testoval Settings), 2 recordings (`04-30 FHB: Rozšíření webhooků`, `04-30 Alza: orientace klecí`) byly synced jako `status='skipped'`. Po user-toggle download_audio=True zpět + Sync Now zůstaly recordings stále `status='skipped'`. UI ukazuje rotating arrow icon (skipped state) místo zeleného check.
+
+**Layer:** Layer 4 — DB persistence UPSERT logic.
+
+**Root cause:** `state.py::record_recording` UPSERT branch:
+```python
+elif existing[0] in ("failed", "skipped_unknown_project") and status == "downloaded":
+    # UPDATE
+```
+Status `'skipped'` (BL-X audio gate decline) **chybí** v upgrade-able seznamu. Když row je `'skipped'` a sync chce zapsat `'downloaded'`, padá to do else=noop branch → row stuck.
+
+**Test gap (post-mortem na user otázku „Jak to, že nebylo pokryto testy?"):**
+- BL-X Task 14 přidal test `test_download_audio_false_records_skipped_status` (jeden směr).
+- Druhý směr — `existing=skipped, incoming=downloaded → UPDATE` — chyběl.
+- Klasický „untested round-trip" pattern. Test pokrývá *vstup do stavu* ale ne *výstup ze stavu*.
+- Existující `test_record_recording_upgrades_skipped_to_downloaded` v `test_state_migrations.py` testoval jen `skipped_unknown_project`, ne nový BL-X 'skipped' význam.
+
+**Systémová chyba — proč to neproshlo audit:**
+- 10 hotfixů na BL-4/BL-X v jednom dni (A→L) signalizuje že ship rychlost překonala reálnou test maturity.
+- Většina nových testů jsou happy-path; **config-mutation scenarios** (toggle on→off→on) systematicky pod-pokryté.
+- Žádný formální state machine diagram pro `recordings.status` enum.
+
+**Fix (commit `<this commit>`):** Přidat `'skipped'` do elif upgrade-able statuses. + Test `test_record_recording_upgrades_skipped_to_downloaded` pro nový BL-X význam.
+
+**Tests:** 388 → 389 passing.
+
+**Impact na produkci:** Po Sync Now 2 stuck rows (`c1059621` FHB, `014ec19e` Alza) projdou main loop, `recording_exists_and_downloaded` returns False (status='skipped'≠'downloaded'), `_process_recording` zavolá `record_recording(status='downloaded')`, fix kicks in → UPDATE → MP3 sjede + .md generated.
+
+**Severity:** P2. UI signal že feature je rozbitá, ale data nejsou poškozená — re-sync to opraví.
+
+**Action items:**
+1. **State transition matrix test** — parametrized test pro všechny `(existing, incoming) → outcome` kombinace. Cca 16 cases. (BL-7 ticket?)
+2. **Two-step config-change test pattern** — pro každý config flag toggle on→off→on round-trip.
+3. **Audit při každém novém status enum value** — `state.py::record_recording` + tests.
+
+11 hotfixů celkem dnes na BL-4/BL-X. Eskaluje urgentnost stress-test review po cool-down.
+
+---
+
 ## 2026-04-30 — BL-4 prod hotfix K (retry pass missed plaud_folder_id persistence)
 
 **Symptom:** CPR row se po Hotfix I retry-pass folder fallback objevil v UI s badge `(neznámá složka)` přestože folder NÁZEV (`Školení`) byl správný a v filetag_cache existoval.
