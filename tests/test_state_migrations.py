@@ -290,6 +290,37 @@ def test_record_recording_upgrades_skipped_to_downloaded(tmp_path: Path) -> None
     conn.close()
 
 
+def test_open_state_migrates_pre_bl8_to_include_trashed_status(tmp_path: Path) -> None:
+    """BL-8 schema migration: pre-BL-8 DB (CHECK constraint without 'trashed')
+    gets rebuilt to accept the new status. Existing rows preserved."""
+    _seed_old_db(tmp_path)
+
+    conn = open_state(tmp_path)
+
+    sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='recordings'"
+    ).fetchone()[0]
+    assert "'trashed'" in sql, f"CHECK constraint must include 'trashed' after migration; got: {sql}"
+
+    legacy = conn.execute(
+        "SELECT plaud_id, status FROM recordings WHERE plaud_id = 'legacy-1'"
+    ).fetchone()
+    assert legacy == ("legacy-1", "downloaded"), \
+        "legacy row must survive BL-8 migration unchanged"
+
+    # Verify the new status value is actually accepted by the constraint.
+    conn.execute(
+        "UPDATE recordings SET status = 'trashed' WHERE plaud_id = 'legacy-1'"
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT status FROM recordings WHERE plaud_id = 'legacy-1'"
+    ).fetchone()
+    assert row[0] == "trashed"
+
+    conn.close()
+
+
 def test_record_recording_does_not_overwrite_downloaded(tmp_path: Path) -> None:
     """Immutability: a 'downloaded' row must not be downgraded to skipped."""
     conn = open_state(tmp_path)

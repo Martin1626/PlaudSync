@@ -144,6 +144,157 @@ def test_trash_detected_idempotent_when_files_already_missing(tmp_path: Path) ->
     conn.close()
 
 
+def test_trash_does_not_touch_failed_or_skipped_rows(tmp_path: Path) -> None:
+    """Decision: only status='downloaded' rows are affected. failed/skipped
+    rows trashed on Plaud stay in their original DB state (no local files
+    exist for those — out of BL-8 scope per design §7)."""
+    unclassified = tmp_path / "Unclassified"
+    unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified, projects={})
+    conn = open_state(tmp_path)
+    seed_run = start_sync_run(conn, "manual")
+
+    # Pre-seed a 'failed' row — no file on disk (failed = download failure).
+    now_iso = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
+        "downloaded_at, local_path, classifier_label, status, sync_run_id) "
+        "VALUES ('rec_failed', 'T', ?, ?, '', '_unclassified', 'failed', ?)",
+        (now_iso, now_iso, seed_run),
+    )
+    conn.commit()
+
+    # Plaud trashed the same recording (and another unrelated).
+    client = _TrashOnlyClient(trashed_ids=["rec_failed", "rec_unrelated"])
+    exit_code = run_sync(client, DefaultBucketClassifier(), conn, config, "manual")
+
+    assert exit_code == 0
+    row = conn.execute(
+        "SELECT status FROM recordings WHERE plaud_id = 'rec_failed'"
+    ).fetchone()
+    assert row[0] == "failed", "failed row must not be flipped to 'trashed'"
+
+    conn.close()
+
+
+def test_trash_batch_safety_guard_aborts_mass_detection(tmp_path: Path) -> None:
+    """Decision 6: when trash batch exceeds (>10 AND >50% of downloaded)
+    abort the entire pre-pass. No deletes, no DB writes, sync continues."""
+    unclassified = tmp_path / "Unclassified"
+    unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified, projects={})
+    conn = open_state(tmp_path)
+    seed_run = start_sync_run(conn, "manual")
+
+    # 20 downloaded rows; 11 of them in trash → 11/20 = 55% > 50%, 11 > 10.
+    files = []
+    for i in range(20):
+        f = unclassified / f"rec_{i:02d}.mp3"
+        f.write_bytes(b"audio")
+        files.append(f)
+        _seed_downloaded(
+            conn,
+            plaud_id=f"rec_{i:02d}",
+            title=f"T{i:02d}",
+            local_path=str(f),
+            run_id=seed_run,
+        )
+
+    trashed_ids = [f"rec_{i:02d}" for i in range(11)]  # 11 trashed
+    client = _TrashOnlyClient(trashed_ids=trashed_ids)
+    exit_code = run_sync(client, DefaultBucketClassifier(), conn, config, "manual")
+
+    assert exit_code == 0, "guard trip is not a failure — sync continues"
+    # All 20 files must remain on disk (guard aborted before deletion).
+    for f in files:
+        assert f.exists(), f"{f} must not be deleted when batch guard fires"
+    # All rows still 'downloaded'.
+    statuses = [r[0] for r in conn.execute(
+        "SELECT status FROM recordings ORDER BY plaud_id"
+    ).fetchall()]
+    assert all(s == "downloaded" for s in statuses), \
+        f"all rows must stay 'downloaded' on guard trip, got {statuses}"
+
+    conn.close()
+
+
+def test_trash_burst_below_absolute_threshold_proceeds(tmp_path: Path) -> None:
+    """Decision 6 boundary: 7/12 = 58% > 50%, but 7 ≤ 10 → guard does NOT
+    fire, all 7 deletes proceed. Validates the AND (not OR) semantic."""
+    unclassified = tmp_path / "Unclassified"
+    unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified, projects={})
+    conn = open_state(tmp_path)
+    seed_run = start_sync_run(conn, "manual")
+
+    files = []
+    for i in range(12):
+        f = unclassified / f"rec_{i:02d}.mp3"
+        f.write_bytes(b"audio")
+        files.append(f)
+        _seed_downloaded(
+            conn,
+            plaud_id=f"rec_{i:02d}",
+            title=f"T{i:02d}",
+            local_path=str(f),
+            run_id=seed_run,
+        )
+
+    trashed_ids = [f"rec_{i:02d}" for i in range(7)]  # 7 trashed
+    client = _TrashOnlyClient(trashed_ids=trashed_ids)
+    exit_code = run_sync(client, DefaultBucketClassifier(), conn, config, "manual")
+
+    assert exit_code == 0
+    # First 7 deleted, last 5 kept.
+    for i in range(7):
+        assert not files[i].exists(), f"rec_{i:02d} must be deleted"
+    for i in range(7, 12):
+        assert files[i].exists(), f"rec_{i:02d} must be kept"
+
+    conn.close()
+
+
+def test_untrash_recovery_via_main_loop(tmp_path: Path) -> None:
+    """Decision 2: when user un-trashes on Plaud, recording reappears in
+    is_trash=0 listing and main download loop fetches fresh. UPSERT must
+    allow 'trashed' → 'downloaded' transition."""
+    from unittest.mock import MagicMock
+
+    unclassified = tmp_path / "Unclassified"
+    unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified, projects={})
+    conn = open_state(tmp_path)
+    seed_run = start_sync_run(conn, "manual")
+
+    # Seed DB with status='trashed' (simulating prior trash detection).
+    now_iso = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
+        "downloaded_at, local_path, classifier_label, status, sync_run_id, file_size) "
+        "VALUES ('rec_untrashed', 'T', ?, ?, '', '_unclassified', 'trashed', ?, 1024)",
+        (now_iso, now_iso, seed_run),
+    )
+    conn.commit()
+
+    # Recording is back in active listing; trash list is empty.
+    live_meta = _trashed_meta("rec_untrashed")
+    client = MagicMock(spec=["list_recordings", "list_trashed", "download_audio"])
+    client.list_recordings.return_value = iter([live_meta])
+    client.list_trashed.return_value = iter([])
+    client.download_audio.return_value = iter([b"A" * 1024])
+
+    exit_code = run_sync(client, DefaultBucketClassifier(), conn, config, "manual")
+    assert exit_code == 0
+
+    row = conn.execute(
+        "SELECT status FROM recordings WHERE plaud_id = 'rec_untrashed'"
+    ).fetchone()
+    assert row[0] == "downloaded", \
+        f"untrashed row must transition 'trashed' → 'downloaded', got {row[0]!r}"
+
+    conn.close()
+
+
 def test_trash_listing_unrelated_to_downloaded_rows_is_noop(tmp_path: Path) -> None:
     """Trash listing has IDs not present in DB → no-op, no DB writes."""
     unclassified = tmp_path / "Unclassified"

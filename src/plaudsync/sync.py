@@ -82,6 +82,118 @@ def _meta_folder_id(meta: Any) -> str | None:
     return raw
 
 
+# BL-8 batch safety thresholds (Decision 6). Hard-coded; see design doc
+# 2026-05-03-bl8-trash-detection-design.md §2.6 for rationale on not
+# exposing as config.
+_TRASH_BATCH_ABSOLUTE = 10
+_TRASH_BATCH_RATIO = 0.5
+
+
+def _hard_delete_local(local_path: str | None, content_path: str | None) -> None:
+    """OS-level delete of MP3 + .md sourozenec. Missing files = no-op.
+
+    Idempotent: re-running on already-deleted paths is harmless. Caller
+    is responsible for catching unexpected OSError (permissions, locked
+    file) and treating the row as a per-record failure.
+    """
+    for path_str in (local_path, content_path):
+        if not path_str:
+            continue
+        path = Path(path_str)
+        if path.exists():
+            path.unlink()
+
+
+def _detect_trashed(
+    conn: sqlite3.Connection, client
+) -> tuple[int, int]:
+    """BL-8 pre-pass: detect Plaud-side trash and hard-delete locally.
+
+    Returns (trashed_count, failed_count).
+
+    Lists trashed recordings on Plaud (is_trash=1); intersects with local
+    rows where status='downloaded'. For each match, deletes MP3 + .md
+    sourozenec from disk and flips DB row to status='trashed'.
+
+    Includes batch safety guard (Decision 6 in design doc): aborts the
+    entire pre-pass if the trash batch is suspiciously large (>10 AND
+    >50% of downloaded rows). Sentry capture on guard trip; per-record
+    delete is silent (Loguru info only) per Decision 3.
+
+    Forward-compat: short-circuits if client lacks list_trashed (mocked
+    clients in unrelated tests).
+    """
+    if not hasattr(client, "list_trashed"):
+        return 0, 0
+    try:
+        trashed_ids = {meta.plaud_id for meta in client.list_trashed()}
+    except Exception as e:  # noqa: BLE001 — wide on purpose, capture into Sentry
+        logger.exception("list_trashed crashed")
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("error_kind", "trash_listing_failed")
+            scope.fingerprint = ["trash_listing_failed", type(e).__name__]
+            sentry_sdk.capture_exception(e)
+        return 0, 1
+
+    downloaded_rows = conn.execute(
+        "SELECT plaud_id, local_path, content_path FROM recordings "
+        "WHERE status = 'downloaded'"
+    ).fetchall()
+    downloaded_ids = {row[0] for row in downloaded_rows}
+    to_delete_ids = trashed_ids & downloaded_ids
+
+    if not to_delete_ids:
+        return 0, 0
+
+    # Decision 6: batch safety guard. Hard delete is destructive; if
+    # is_trash=1 listing returns suspiciously large overlap with downloaded,
+    # abort and alert rather than mass-delete.
+    if (
+        len(to_delete_ids) > _TRASH_BATCH_ABSOLUTE
+        and len(to_delete_ids) / max(len(downloaded_ids), 1) > _TRASH_BATCH_RATIO
+    ):
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("error_kind", "trash_mass_detection")
+            scope.set_tag("trashed_count", len(to_delete_ids))
+            scope.set_tag("downloaded_count", len(downloaded_ids))
+            scope.fingerprint = ["trash_mass_detection"]
+            sentry_sdk.capture_message("trash_mass_detection_aborted")
+        logger.warning(
+            "trash_mass_detection_aborted: would delete {} of {} downloaded — skipping",
+            len(to_delete_ids),
+            len(downloaded_ids),
+        )
+        return 0, 0
+
+    rows_by_id = {row[0]: row for row in downloaded_rows}
+    trashed_count = 0
+    failed_count = 0
+    for plaud_id in to_delete_ids:
+        _, local_path, content_path = rows_by_id[plaud_id]
+        try:
+            _hard_delete_local(local_path, content_path)
+            conn.execute(
+                "UPDATE recordings SET status = 'trashed' WHERE plaud_id = ?",
+                (plaud_id,),
+            )
+            conn.commit()
+            logger.bind(
+                plaud_id=plaud_id,
+                content_existed=bool(content_path),
+            ).info("trash_auto_delete")
+            trashed_count += 1
+        except Exception as e:  # noqa: BLE001
+            logger.bind(plaud_id=plaud_id).exception("trash_delete_failed")
+            with sentry_sdk.new_scope() as scope:
+                scope.set_tag("error_kind", "trash_delete_failed")
+                scope.set_tag("recording_id", plaud_id)
+                scope.fingerprint = ["trash_delete_failed", type(e).__name__]
+                sentry_sdk.capture_exception(e)
+            failed_count += 1
+
+    return trashed_count, failed_count
+
+
 def _reclassify_recent(
     conn: sqlite3.Connection,
     classifier: Classifier,
@@ -567,6 +679,18 @@ def run_sync(
         metas = list(client.list_recordings(since=None))
         live_metas = {m.plaud_id: m for m in metas}
 
+        # BL-8 trash detection: hard-delete local files for recordings the
+        # user trashed on Plaud. Runs first so subsequent retry/reclassify
+        # passes don't waste cycles on rows about to be deleted. Failures
+        # (per-row delete errors, list_trashed network failure) aggregate
+        # into failed_count. See design doc 2026-05-03-bl8-trash-detection-design.md.
+        try:
+            _trashed_count, trashed_failed = _detect_trashed(conn, client)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("detect_trashed pass crashed")
+            sentry_sdk.capture_exception(e)
+            _trashed_count, trashed_failed = 0, 1
+
         # Rolling retry pass for previously-skipped rows whose project may now
         # be in config. BL-3 — see specs/2026-04-26-bl3-skip-unknown-projects-design.md.
         # Uses NameClassifier (str-returning) since synthesized DB metas have
@@ -600,7 +724,7 @@ def run_sync(
 
         new_count = retry_downloaded + content_completed
         skipped_count = 0
-        failed_count = reclassify_failed + retry_failed + content_failed
+        failed_count = reclassify_failed + retry_failed + content_failed + trashed_failed
         total = len(metas)
 
         _emit("downloading", 0, total)

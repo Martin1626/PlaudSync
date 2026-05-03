@@ -3,7 +3,7 @@ export type SyncTrigger = "task_scheduler" | "ui_sync_now" | "manual";
 export type SyncOutcome = "success" | "partial_failure" | "failed";
 export type SyncPhase = "listing" | "downloading" | "categorizing" | "finalizing";
 export type ClassificationStatus = "matched" | "unclassified";
-export type RecordingStatus = "downloaded" | "failed" | "skipped";
+export type RecordingStatus = "downloaded" | "failed" | "skipped" | "trashed";
 
 export interface SyncProgress {
   phase: SyncPhase | null;

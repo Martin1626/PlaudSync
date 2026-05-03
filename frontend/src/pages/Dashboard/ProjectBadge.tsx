@@ -59,6 +59,21 @@ export default function ProjectBadge({
   folderName,
   status,
 }: Props) {
+  // BL-8: trashnuto na Plaude (lokální MP3+.md odstraněny). Per design
+  // 2026-05-03 Decision 4: BL-7 analog — šedá pilulka, no strike-through,
+  // no filter chip. User awareness preserved: row stays in list with
+  // visual "tohle už nelze otevřít" signal.
+  if (status === "trashed") {
+    return (
+      <span
+        className={classNames(PILL_BASE, GRAY)}
+        title="Záznam byl smazán na Plaude. Lokální kopie odstraněna."
+      >
+        smazáno
+      </span>
+    );
+  }
+
   // Sjednocený "ignorováno" badge pro všechny skipped rows (BL-7 follow-up
   // 2026-05-03): ať už source='skip' (BL-7), 'name'+project (BL-3
   // skipped_unknown_project), nebo audio-gate-off, user vidí konzistentní

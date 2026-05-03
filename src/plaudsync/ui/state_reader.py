@@ -39,11 +39,13 @@ class RecordingRowPayload(TypedDict):
     classification_status: Literal["matched", "unclassified"]
     project: str | None
     target_dir: str
-    status: Literal["downloaded", "failed", "skipped"]
+    status: Literal["downloaded", "failed", "skipped", "trashed"]
     # BL-6: source-aware project badge.
     # BL-7: 'skip' added — recording fell through all strategies +
     # sync_unclassified=false; persisted with status='skipped' and surfaced
     # as a gray "ignorováno" pill so the user has a visible signal.
+    # BL-8: 'trashed' added — recording was trashed on Plaud, local files
+    # hard-deleted; surfaced as a gray "smazáno" pill.
     classification_source: Literal["name", "folder", "none", "skip"] | None
     plaud_folder_name: str | None
 

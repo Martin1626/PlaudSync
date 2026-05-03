@@ -259,6 +259,31 @@ class PlaudClient:
                 yield meta
             skip += page_size
 
+    def list_trashed(self) -> Iterator[RecordingMeta]:
+        """Yield RecordingMeta for trashed recordings (is_trash=1).
+
+        Mirrors list_recordings but queries the trash bucket. No `since`
+        filter — trashed list is small and the user may have old trashed
+        items lingering. Pagination identical to active listing.
+        """
+        skip = 0
+        page_size = 50
+        while True:
+            url = f"{self._base_url}/file/simple/web"
+            resp = self._session.get(
+                url, params={"skip": skip, "limit": page_size, "is_trash": 1}
+            )
+            if resp.status_code == 401:
+                raise PlaudTokenExpired("token rejected mid-trash-listing")
+            resp.raise_for_status()
+            body = resp.json()
+            page = body.get("data_file_list") or []
+            if not page:
+                return
+            for raw in page:
+                yield RecordingMeta.from_raw(raw)
+            skip += page_size
+
     def download_audio(self, recording_id: str) -> Iterator[bytes]:
         """Two-step download: temp-url JSON → S3 stream.
 

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS recordings (
     downloaded_at         TEXT NOT NULL,
     local_path            TEXT NOT NULL,
     classifier_label      TEXT NOT NULL,
-    status                TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped','skipped_unknown_project')),
+    status                TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped','skipped_unknown_project','trashed')),
     sync_run_id           INTEGER REFERENCES sync_runs(run_id),
     file_size             INTEGER,
     content_status        TEXT,
@@ -140,7 +140,7 @@ def record_recording(
              classification_source, content_status, content_path,
              content_task_ids, plaud_folder_id),
         )
-    elif existing[0] in ("failed", "skipped_unknown_project", "skipped") and status == "downloaded":
+    elif existing[0] in ("failed", "skipped_unknown_project", "skipped", "trashed") and status == "downloaded":
         conn.execute(
             "UPDATE recordings SET title = ?, created_at_plaud = ?, "
             "downloaded_at = ?, local_path = ?, classifier_label = ?, "
@@ -218,6 +218,46 @@ def _migrate_add_plaud_folder_id_column(conn: sqlite3.Connection) -> None:
         pass
 
 
+def _migrate_status_add_trashed(conn: sqlite3.Connection) -> None:
+    """Rebuild recordings.status CHECK to include 'trashed' (BL-8).
+
+    Fires when current constraint lacks 'trashed'. Idempotent via early
+    return on detection. Runs after _migrate_status_check_constraint
+    (chains via successive table rebuilds).
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='recordings'"
+    ).fetchone()
+    if row is None or "'trashed'" in row[0]:
+        return
+    conn.executescript(
+        """
+        BEGIN;
+        CREATE TABLE recordings_new (
+            plaud_id              TEXT PRIMARY KEY,
+            title                 TEXT NOT NULL,
+            created_at_plaud      TEXT NOT NULL,
+            downloaded_at         TEXT NOT NULL,
+            local_path            TEXT NOT NULL,
+            classifier_label      TEXT NOT NULL,
+            status                TEXT NOT NULL CHECK (status IN ('downloaded','failed','skipped','skipped_unknown_project','trashed')),
+            sync_run_id           INTEGER REFERENCES sync_runs(run_id),
+            file_size             INTEGER,
+            content_status        TEXT,
+            content_path          TEXT,
+            content_task_ids      TEXT,
+            classification_source TEXT,
+            plaud_folder_id       TEXT
+        );
+        INSERT INTO recordings_new SELECT * FROM recordings;
+        DROP TABLE recordings;
+        ALTER TABLE recordings_new RENAME TO recordings;
+        CREATE INDEX IF NOT EXISTS idx_recordings_downloaded_at ON recordings(downloaded_at DESC);
+        COMMIT;
+        """
+    )
+
+
 def _migrate_add_content_columns(conn: sqlite3.Connection) -> None:
     """Add nullable BL-4 / BL-X columns to recordings for existing DBs.
 
@@ -250,5 +290,6 @@ def open_state(state_root: Path) -> sqlite3.Connection:
     _migrate_add_file_size_column(conn)
     _migrate_add_content_columns(conn)
     _migrate_add_plaud_folder_id_column(conn)
+    _migrate_status_add_trashed(conn)
     conn.commit()
     return conn
