@@ -4,6 +4,28 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — BL-7 + BL-8 stubs (UI completeness gaps)
+
+User otázka: „Můžu se spolehnout, že se v seznamu nahrávek zobrazují všechny? Jsou některé vyřazené apriori? Jak je to s těmi v koši?"
+
+Tři a-priori filtry surfacovaly:
+1. **`is_trash=0` v listing call** — trashed recordings nikdy nestaženy.
+2. **`outcome.source == "skip"`** — žádný klasifikační signal + `sync_unclassified=False` → no DB row → invisible.
+3. **`LIMIT 50`** v state_reader pagination (UI scroll/pagination not implemented).
+
+**Stubs filed:**
+
+- [BL-7](docs/superpowers/specs/2026-04-30-bl7-surface-ignored-recordings-stub.md) — surface ignored (skip-source) recordings in UI as gray pill so user has signal that PlaudSync saw them but had no strategy. Decision to lock: new `'ignored'` enum value vs. reuse `'skipped'` + source='skip' discriminator. Recommended: reuse (no schema migration). ~80 LoC + 6 tests.
+- [BL-8](docs/superpowers/specs/2026-04-30-bl8-trash-detection-stub.md) — dedicated subset of BL-5 (carved out from rename + folder-move + content-drift). Detects trashed recordings via separate `is_trash=1` listing call. Decisions: trash policy (hard / archive / mark), untrash recovery, UI strikethrough. ~150 LoC backend + 50 LoC frontend.
+
+**Trigger conditions:**
+- BL-7: independent of others, ship anytime. Soft prereq BL-6 (badge styling).
+- BL-8: 3 trash incidents in 30 days OR 14d post-BL-X soak (extended from BL-5's 7d due to hotfix-storm).
+
+Backlog stav po dnešku: BL-1, BL-5 (rename shipped, 2 sub-cases open), BL-6 (badge UI), BL-7 (ignored visibility), BL-8 (trash detection). 4 active stubs + BL-1 progress bar.
+
+---
+
 ## 2026-04-30 — Test gap audit + Hotfix M (classification_source persist on reclassify)
 
 **Trigger:** User question „Jak to, že nebylo pokryto testy?" po Hotfix L. Šel jsem systematicky napříč state machines + config flags hledat podobné gaps.
