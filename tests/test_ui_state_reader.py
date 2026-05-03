@@ -166,6 +166,56 @@ def test_recording_row_includes_source_and_folder_name_for_name(
     assert rec["project"] == "OEZ"
 
 
+def test_recording_row_project_resolves_canonical_case_from_config(
+    tmp_path: Path, conn: sqlite3.Connection,
+) -> None:
+    """BL-6 follow-up: badge shows configured project key (case-preserved),
+    not the title-extracted label. Two recordings with title labels in
+    different cases ('Foxconn', 'FOXCONN') both surface the configured
+    'FOXCONN' key on the wire."""
+    # Seed a config.yaml with one project keyed exactly 'FOXCONN'. tmp_path
+    # is absolute on every platform — config validator requires absolute
+    # paths so we anchor under tmp_path.
+    unclassified = tmp_path / "unclassified"
+    project_path = tmp_path / "FOXCONN"
+    (tmp_path / "config.yaml").write_text(
+        f"unclassified_dir: {unclassified}\n"
+        "projects:\n"
+        "  FOXCONN:\n"
+        f"    path: {project_path}\n"
+        "    plaud_folder_id: null\n",
+        encoding="utf-8",
+    )
+    _seed_filetag_cache(tmp_path, [])
+    _insert_recording(
+        conn, plaud_id="rec-mixed", classification_source="name",
+        plaud_folder_id=None, label="Foxconn",
+    )
+    _insert_recording(
+        conn, plaud_id="rec-upper", classification_source="name",
+        plaud_folder_id=None, label="FOXCONN",
+    )
+
+    snap = read_state_snapshot(conn, state_root=tmp_path)
+    projects = sorted(rec["project"] for rec in snap["recordings"])
+    assert projects == ["FOXCONN", "FOXCONN"]
+
+
+def test_recording_row_project_falls_back_to_raw_label_when_config_missing(
+    tmp_path: Path, conn: sqlite3.Connection,
+) -> None:
+    """When config.yaml absent or unparseable, project field falls back to
+    the raw classifier_label so UI doesn't go blank during a config error."""
+    _seed_filetag_cache(tmp_path, [])
+    _insert_recording(
+        conn, plaud_id="rec-noconfig", classification_source="name",
+        plaud_folder_id=None, label="Foxconn",
+    )
+
+    snap = read_state_snapshot(conn, state_root=tmp_path)
+    assert snap["recordings"][0]["project"] == "Foxconn"
+
+
 def test_recording_row_legacy_null_folder_id_shows_empty_plaud_folder(
     tmp_path: Path, conn: sqlite3.Connection,
 ) -> None:

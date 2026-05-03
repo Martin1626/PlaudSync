@@ -104,6 +104,22 @@ def _read_recordings(
         for f in (cache.load() or []):
             folder_name_by_id[f.id] = f.name
 
+    # BL-6 follow-up: resolve canonical project name from config.yaml.
+    # Recording's classifier_label is whatever case the title used ('Foxconn'
+    # vs 'FOXCONN'), but the badge should always show the configured key.
+    # Build a casefold→canonical map once per snapshot. Config IO failure
+    # (broken YAML, missing file) falls back to the raw label — degraded
+    # but non-blocking; user fixes in Settings.
+    project_canonical_by_casefold: dict[str, str] = {}
+    if state_root is not None:
+        try:
+            from plaudsync.config import load_config
+            cfg = load_config(state_root)
+            for key in cfg.projects:
+                project_canonical_by_casefold[key.casefold()] = key
+        except Exception:  # noqa: BLE001 — best-effort UI render
+            pass
+
     payload: list[RecordingRowPayload] = []
     for r in rows:
         (plaud_id, title, created_at, downloaded_at, local_path, label, status,
@@ -141,6 +157,17 @@ def _read_recordings(
         else:
             plaud_folder_display = folder_name_by_id.get(plaud_folder_id, "")
 
+        # Project text for the badge: use the configured canonical key when
+        # the label matches case-insensitively. Falls back to the raw label
+        # for unclassified rows or when config can't resolve (legacy /
+        # project removed from config after sync).
+        if is_unclassified:
+            project_display: str | None = None
+        else:
+            project_display = (
+                project_canonical_by_casefold.get(label.casefold(), label)
+            )
+
         payload.append({
             "plaud_id": plaud_id,
             "title": title,
@@ -148,7 +175,7 @@ def _read_recordings(
             "downloaded_at": downloaded_at,
             "plaud_folder": plaud_folder_display,
             "classification_status": "unclassified" if is_unclassified else "matched",
-            "project": None if is_unclassified else label,
+            "project": project_display,
             "target_dir": target_dir,
             "status": wire_status,
             "classification_source": classification_source,

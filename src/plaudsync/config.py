@@ -86,6 +86,20 @@ class Config:
                 return entry.path
         return None
 
+    def canonical_project_name(self, name: str) -> str | None:
+        """Return the configured project key with original case for a
+        case-insensitive name match. Returns None when name is not in config.
+
+        Used by UI state_reader to render the badge with the canonical label
+        the user typed in config.yaml, even when the recording title used a
+        different case (e.g. title 'Foxconn:' but config 'FOXCONN').
+        """
+        target = name.casefold()
+        for key in self.projects:
+            if key.casefold() == target:
+                return key
+        return None
+
     def lookup_by_folder_id(self, folder_id: str) -> str | None:
         """Reverse lookup: Plaud folder ID → project name (case-preserved)."""
         if not folder_id:
