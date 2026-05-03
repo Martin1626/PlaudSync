@@ -128,8 +128,11 @@ class RecordingRow(BaseModel):
     project: str | None = None
     target_dir: str
     status: Literal["downloaded", "failed", "skipped"]
-    # BL-6: source-aware project badge
-    classification_source: Literal["name", "folder", "none"] | None = None
+    # BL-6: source-aware project badge.
+    # BL-7: 'skip' added — recording fell through all strategies +
+    # sync_unclassified=false; persisted with status='skipped' so the UI
+    # can render a gray "ignorováno" pill.
+    classification_source: Literal["name", "folder", "none", "skip"] | None = None
     plaud_folder_name: str | None = None
 
 
