@@ -4,6 +4,62 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-04-30 — Test gap audit + Hotfix M (classification_source persist on reclassify)
+
+**Trigger:** User question „Jak to, že nebylo pokryto testy?" po Hotfix L. Šel jsem systematicky napříč state machines + config flags hledat podobné gaps.
+
+**Audit scope:**
+1. `recordings.status` transition matrix (4×4 = 16 cases)
+2. Config flag round-trip (toggle on→off→on) pro každý mutable flag
+3. `classification_source` transitions (name↔folder via Plaud rename)
+4. `content_status` round-trip (pending↔complete via partial emit, Hotfix H)
+
+**25 nových testů:**
+
+`tests/test_state_upsert_matrix.py` (17 testů):
+- `test_upgrade_to_downloaded_succeeds[failed/skipped/skipped_unknown_project]` — všechny 3 upgrade paths.
+- `test_downloaded_is_sticky_against_all_incoming[*]` — 4 cases verifying immutability.
+- `test_failure_to_failure_is_noop[*-*]` — 9 cases (3×3) verifying non-upgrade transitions preserve original.
+- `test_idempotent_reinsert_skipped` — same status twice = noop.
+
+`tests/test_config_roundtrip.py` (5 testů):
+- `test_download_audio_off_then_on_upgrades_skipped_to_downloaded` — Hotfix L scenario (production replay).
+- `test_download_audio_on_off_on_full_round_trip` — 3-step cycle, downloaded sticky against off.
+- `test_download_content_off_then_on_writes_md_on_second_sync` — **odhalil další known gap** (not_applicable nepřejde na pending při re-enable; documented, ne fix-uto teď).
+- `test_classify_by_folder_off_then_on_recovers_skipped_unknown_project` — Hotfix I retry path.
+- `test_sync_unclassified_off_drops_unknown_then_on_picks_up_new` — catch-all toggle.
+
+`tests/test_classification_source_transitions.py` (3 testy):
+- `test_classification_source_folder_to_name_after_plaud_rename` — folder→name via Plaud rename. **Odhalil Hotfix M bug** — `_reclassify_recent` UPDATE neprosadí classification_source.
+- `test_classification_source_persisted_when_label_unchanged` — title-only edit, source stays correct.
+- `test_classification_source_unchanged_for_idempotent_resync` — idempotent sanity.
+
+**Hotfix M (commit `<this commit>`):** `_reclassify_recent` SQL UPDATE doplněn o `classification_source = 'name'` (NameClassifier-only path; folder source je v WaterfallClassifier mimo tento retry pass). Jiný silent UI-cosmetic bug analogous to Hotfix K — folder/name source mismatch v DB by způsobil špatnou barvu BL-6 badge.
+
+**Lessons learned codified:**
+
+| Pattern | Test added |
+|---|---|
+| State enum upgrade transitions | UPSERT matrix (16 cases parametrized) |
+| State immutability (downloaded sticky) | 4 cases verifying preservation |
+| Config flag round-trip | 5 toggle scenarios |
+| Classification source transitions | 3 cases |
+| New column added to schema | (audit checklist below) |
+
+**Audit checklist pro budoucí změny schema (codified for future BLs):**
+- ✅ Existující `record_recording` UPSERT include nové kolonu v INSERT path?
+- ✅ Existující `record_recording` UPSERT include novou kolonu v UPDATE path? (Hotfix L gap)
+- ✅ `_reclassify_recent` UPDATE include novou kolonu? (Hotfix M gap)
+- ✅ `_retry_skipped_unknown_project` UPDATE include novou kolonu? (Hotfix K gap)
+- ✅ `_retry_pending_content` UPDATE include novou kolonu?
+- ✅ Test pro round-trip: write → re-write → verify column updated.
+
+Tato checklist je třeba aplikovat **PŘED** merge nového sloupce / status hodnoty. Budoucí hotfix-storm prevention.
+
+**Tests:** 389 → 414 (+25). 12 hotfixů + audit dnes.
+
+---
+
 ## 2026-04-30 — BL-4 prod hotfix L (status='skipped' rows can't upgrade to 'downloaded')
 
 **Symptom:** User toggle-oval `download_audio=False` v 12:08-12:20 (testoval Settings), 2 recordings (`04-30 FHB: Rozšíření webhooků`, `04-30 Alza: orientace klecí`) byly synced jako `status='skipped'`. Po user-toggle download_audio=True zpět + Sync Now zůstaly recordings stále `status='skipped'`. UI ukazuje rotating arrow icon (skipped state) místo zeleného check.

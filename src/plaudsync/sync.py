@@ -213,18 +213,26 @@ def _reclassify_recent(
                     old_md.rename(new_md)
                     new_content_path = str(new_md)
 
+            # Hotfix M (2026-04-30): persist classification_source on
+            # label change. _reclassify_recent uses NameClassifier so the
+            # only outcome here is source='name' (folder/none aren't
+            # available in this pass — they live in WaterfallClassifier).
+            # Pre-fix the column wasn't touched, so a folder→name rename
+            # left stale source='folder' in DB.
             if new_content_path is not None:
                 conn.execute(
                     "UPDATE recordings SET classifier_label = ?, local_path = ?, "
-                    "content_path = ?, title = ? WHERE plaud_id = ?",
+                    "content_path = ?, title = ?, classification_source = ? "
+                    "WHERE plaud_id = ?",
                     (label, str(new_path), new_content_path,
-                     effective_title, plaud_id),
+                     effective_title, "name", plaud_id),
                 )
             else:
                 conn.execute(
                     "UPDATE recordings SET classifier_label = ?, local_path = ?, "
-                    "title = ? WHERE plaud_id = ?",
-                    (label, str(new_path), effective_title, plaud_id),
+                    "title = ?, classification_source = ? "
+                    "WHERE plaud_id = ?",
+                    (label, str(new_path), effective_title, "name", plaud_id),
                 )
             conn.commit()
             moved += 1
