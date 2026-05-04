@@ -135,37 +135,43 @@ def _detect_trashed(
             sentry_sdk.capture_exception(e)
         return 0, 1
 
-    downloaded_rows = conn.execute(
+    # Scope expansion 2026-05-04: include all non-trashed rows, not just
+    # 'downloaded'. Skipped / skipped_unknown_project / failed rows that the
+    # user trashes on Plaud should also flip to 'trashed' so the UI signal
+    # ("smazáno") matches Plaud-side state. Original design §7 punted this
+    # as harmless but user-visible confusion ("ignorováno" stays forever
+    # for trashed-then-skipped rows) made it not harmless.
+    candidate_rows = conn.execute(
         "SELECT plaud_id, local_path, content_path FROM recordings "
-        "WHERE status = 'downloaded'"
+        "WHERE status != 'trashed'"
     ).fetchall()
-    downloaded_ids = {row[0] for row in downloaded_rows}
-    to_delete_ids = trashed_ids & downloaded_ids
+    candidate_ids = {row[0] for row in candidate_rows}
+    to_delete_ids = trashed_ids & candidate_ids
 
     if not to_delete_ids:
         return 0, 0
 
     # Decision 6: batch safety guard. Hard delete is destructive; if
-    # is_trash=1 listing returns suspiciously large overlap with downloaded,
-    # abort and alert rather than mass-delete.
+    # is_trash=1 listing returns suspiciously large overlap with our local
+    # rows, abort and alert rather than mass-flip.
     if (
         len(to_delete_ids) > _TRASH_BATCH_ABSOLUTE
-        and len(to_delete_ids) / max(len(downloaded_ids), 1) > _TRASH_BATCH_RATIO
+        and len(to_delete_ids) / max(len(candidate_ids), 1) > _TRASH_BATCH_RATIO
     ):
         with sentry_sdk.new_scope() as scope:
             scope.set_tag("error_kind", "trash_mass_detection")
             scope.set_tag("trashed_count", len(to_delete_ids))
-            scope.set_tag("downloaded_count", len(downloaded_ids))
+            scope.set_tag("candidate_count", len(candidate_ids))
             scope.fingerprint = ["trash_mass_detection"]
             sentry_sdk.capture_message("trash_mass_detection_aborted")
         logger.warning(
-            "trash_mass_detection_aborted: would delete {} of {} downloaded — skipping",
+            "trash_mass_detection_aborted: would flip {} of {} non-trashed — skipping",
             len(to_delete_ids),
-            len(downloaded_ids),
+            len(candidate_ids),
         )
         return 0, 0
 
-    rows_by_id = {row[0]: row for row in downloaded_rows}
+    rows_by_id = {row[0]: row for row in candidate_rows}
     trashed_count = 0
     failed_count = 0
     for plaud_id in to_delete_ids:
