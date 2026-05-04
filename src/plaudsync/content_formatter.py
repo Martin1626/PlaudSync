@@ -1,14 +1,14 @@
 """Format Plaud per-section JSON payloads into human-readable Markdown.
 
-`/file/detail/{id}` content_list returns JSON arrays for `outline` and
-`transaction` (transcript). Their text bodies fetched from S3 are JSON
-strings, not markdown. `auto_sum_note` (summary) returns markdown text
-already — passthrough.
+`/file/detail/{id}` content_list returns JSON for all 3 required types.
+Outline + transcript (`transaction`) bodies are JSON arrays. Summary
+(`auto_sum_note`) is a JSON object `{"ai_content": "<markdown>"}` since
+~2026-05 (pre-2026-05 it was plain markdown — handled via passthrough).
 
 Failure mode: JSON parse error / unexpected shape → return raw input.
-This makes the change additive — if Plaud changes the schema, the .md
-file regresses to the pre-2026-04-30 format (unformatted JSON in
-.md) but doesn't crash the sync.
+This makes the change additive — if Plaud changes the schema again,
+the .md file regresses to unformatted JSON in .md but doesn't crash
+the sync.
 """
 from __future__ import annotations
 
@@ -126,11 +126,34 @@ def format_transcript(raw: str) -> str:
     return "\n\n".join(blocks)
 
 
+def format_summary(raw: str) -> str:
+    """Extract markdown body from Plaud auto_sum_note JSON payload.
+
+    Input shape (since ~2026-05): ``{"ai_content": "<markdown>", ...}``.
+    Pre-2026-05 the payload was plain markdown — passthrough preserved
+    via the `not a JSON object` branch.
+
+    `\\n` literals inside the JSON string become real newlines via
+    `json.loads`, which is the whole point of this formatter.
+    """
+    try:
+        obj = json.loads(raw)
+    except (ValueError, TypeError):
+        return raw
+    if not isinstance(obj, dict):
+        return raw
+    body = obj.get("ai_content")
+    if not isinstance(body, str) or not body:
+        return raw
+    return body
+
+
 def format_section(section: str, raw: str) -> str:
     """Dispatch to per-section formatter. Unknown sections passthrough."""
     if section == "outline":
         return format_outline(raw)
     if section == "transcript":
         return format_transcript(raw)
-    # 'summary' (auto_sum_note) is plain markdown from Plaud — passthrough.
+    if section == "summary":
+        return format_summary(raw)
     return raw

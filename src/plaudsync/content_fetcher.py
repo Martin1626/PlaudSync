@@ -60,8 +60,6 @@ class ContentFetcher:
                 missing_any = True
                 continue
             raw = self._client.download_content_text(item)
-            # outline + transcript come as JSON arrays from Plaud; format
-            # to readable markdown. summary is markdown already → passthrough.
             sections[section] = format_section(section, raw)
 
         if missing_any:
