@@ -10,6 +10,7 @@ from plaudsync.content_formatter import (
     _format_timestamp,
     format_outline,
     format_section,
+    format_summary,
     format_transcript,
 )
 
@@ -168,11 +169,58 @@ def test_format_section_dispatches_transcript() -> None:
     assert out == "**X** [00:01]\nhi"
 
 
-def test_format_section_summary_passthrough() -> None:
-    """auto_sum_note is markdown from Plaud — not parsed."""
+def test_format_section_summary_passthrough_legacy_markdown() -> None:
+    """Legacy auto_sum_note shape: plain markdown (pre-2026-05). Not parsed."""
     md = "## Summary\n\nThis is **already** markdown."
     assert format_section("summary", md) == md
 
 
 def test_format_section_unknown_section_passthrough() -> None:
     assert format_section("unknown_kind", "raw text") == "raw text"
+
+
+# ---------------------------------------------------------------------------
+# format_summary (BL-? hotfix 2026-05-04 — Plaud now wraps summary in JSON)
+# ---------------------------------------------------------------------------
+
+def test_summary_extracts_ai_content_from_json_object() -> None:
+    """Plaud now returns auto_sum_note as JSON `{"ai_content": "<md>"}` —
+    `\\n` escape sequences must be unescaped to real newlines."""
+    raw = (
+        '{"ai_content":"## Informace o sch\\u016Fzce\\n> **Datum:** 04. kv\\u011Btna 2026\\n"}'
+    )
+    out = format_summary(raw)
+    assert out == "## Informace o schůzce\n> **Datum:** 04. května 2026\n"
+
+
+def test_summary_legacy_plain_markdown_passthrough() -> None:
+    """Backwards compat: pre-2026-05 plain markdown still works."""
+    md = "## Summary\n\nbody **bold** more."
+    assert format_summary(md) == md
+
+
+def test_summary_invalid_json_falls_back_to_raw() -> None:
+    raw = "{not valid json"
+    assert format_summary(raw) == raw
+
+
+def test_summary_json_without_ai_content_falls_back_to_raw() -> None:
+    """Unexpected dict shape → passthrough preserves debugging."""
+    raw = '{"other_field":"value"}'
+    assert format_summary(raw) == raw
+
+
+def test_summary_ai_content_non_string_falls_back_to_raw() -> None:
+    raw = '{"ai_content": 42}'
+    assert format_summary(raw) == raw
+
+
+def test_summary_ai_content_empty_falls_back_to_raw() -> None:
+    """Empty ai_content → passthrough so we keep debug visibility."""
+    raw = '{"ai_content": ""}'
+    assert format_summary(raw) == raw
+
+
+def test_format_section_dispatches_summary_json() -> None:
+    raw = '{"ai_content":"## X\\n\\nbody"}'
+    assert format_section("summary", raw) == "## X\n\nbody"
