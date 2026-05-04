@@ -125,14 +125,28 @@ def test_downloaded_is_sticky_against_all_incoming(tmp_path, attempted_status):
 # Non-upgrade transitions: must be noop (preserve original failure reason).
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("starting", ["failed", "skipped", "skipped_unknown_project"])
-@pytest.mark.parametrize("incoming", ["failed", "skipped", "skipped_unknown_project"])
+@pytest.mark.parametrize("starting,incoming", [
+    # 'failed' anchors all noop pairs — original failure context (Sentry
+    # fingerprint, error_kind tag) has diagnostic value across retries,
+    # so any transition involving 'failed' on either side is preserved.
+    ("failed", "failed"),
+    ("failed", "skipped"),
+    ("failed", "skipped_unknown_project"),
+    ("skipped", "failed"),
+    ("skipped_unknown_project", "failed"),
+    # NOTE: the 4 skipped ↔ skipped_unknown_project transitions are NOT in
+    # this list — they actively refresh metadata (and flip status when
+    # those two differ). See test_skipped_*_refreshes_metadata.
+])
 def test_failure_to_failure_is_noop(tmp_path, starting, incoming):
-    """Once a row is in a non-downloaded state, retries that produce
-    another non-downloaded state must NOT overwrite the original. The
-    original failure reason has diagnostic value (Sentry tagging, retry
-    pass behavior); recovering writes the success state via the upgrade
-    path tested above."""
+    """When 'failed' is involved on either side of a non-downloaded retry,
+    the row stays in its original state (status + metadata). Preserves
+    diagnostic context — the failure reason has Sentry fingerprint /
+    error_kind value across retries.
+
+    Recovery from these states is via the 'X → downloaded' upgrade path
+    tested above; metadata-only refresh is via the same-status / cross-
+    skipped paths tested below."""
     conn = open_state(tmp_path)
     plaud_id = _seed(conn, starting)
     run_id = start_sync_run(conn, "manual")
@@ -145,8 +159,7 @@ def test_failure_to_failure_is_noop(tmp_path, starting, incoming):
         run_id=run_id,
         classifier_label="MODIFIED",
     )
-    # Status preserved as the ORIGINAL starting value — incoming non-
-    # downloaded transitions are rejected.
+    # Status preserved as the ORIGINAL starting value.
     assert _row_status(conn, plaud_id) == starting
     conn.close()
 
@@ -226,6 +239,98 @@ def test_same_status_refreshes_title_and_classification(tmp_path, starting_statu
     assert row[3] == "folder-alza-abc"
     # status preserved
     assert _row_status(conn, plaud_id) == starting_status
+    conn.close()
+
+
+def test_skipped_to_skipped_unknown_project_refreshes_metadata(tmp_path):
+    """Bug 2026-05-04: a recording first synced with no name match (BL-7
+    skip-source, status='skipped') gets renamed on Plaud such that name
+    classification now extracts a project that isn't in config. New status
+    should be 'skipped_unknown_project' (BL-3 retry-eligible) AND metadata
+    should refresh — pre-fix this was a cross-status non-downloaded UPSERT
+    noop, leaving the row stuck in 'skipped' with stale metadata forever.
+
+    Symmetric path covered by next test (skipped_unknown_project → skipped)."""
+    conn = open_state(tmp_path)
+    plaud_id = "rec-skip-to-unknown"
+    run_id_1 = start_sync_run(conn, "manual")
+    record_recording(
+        conn,
+        _Meta(plaud_id=plaud_id, title="default-name",
+              created_at="2026-05-04T00:00:00+00:00"),
+        status="skipped",
+        local_path="",
+        run_id=run_id_1,
+        classifier_label="_unclassified",
+        classification_source="skip",
+    )
+
+    run_id_2 = start_sync_run(conn, "manual")
+    record_recording(
+        conn,
+        _Meta(plaud_id=plaud_id,
+              title="05-04 SomeProject: meeting notes",
+              created_at="2026-05-04T00:00:00+00:00"),
+        status="skipped_unknown_project",
+        local_path="",
+        run_id=run_id_2,
+        classifier_label="SomeProject",
+        classification_source="name",
+        plaud_folder_id="folder-x",
+    )
+
+    row = conn.execute(
+        "SELECT status, title, classifier_label, classification_source, "
+        "plaud_folder_id FROM recordings WHERE plaud_id = ?", (plaud_id,)
+    ).fetchone()
+    assert row[0] == "skipped_unknown_project", \
+        "status must flip skipped → skipped_unknown_project on rename"
+    assert row[1] == "05-04 SomeProject: meeting notes"
+    assert row[2] == "SomeProject"
+    assert row[3] == "name"
+    assert row[4] == "folder-x"
+    conn.close()
+
+
+def test_skipped_unknown_project_to_skipped_refreshes_metadata(tmp_path):
+    """Reverse direction: BL-3 row gets renamed on Plaud back to a default
+    name with no project hint → BL-7 skip-source bucket. Same UPSERT path."""
+    conn = open_state(tmp_path)
+    plaud_id = "rec-unknown-to-skip"
+    run_id_1 = start_sync_run(conn, "manual")
+    record_recording(
+        conn,
+        _Meta(plaud_id=plaud_id, title="04-30 SomeProject: original",
+              created_at="2026-04-30T00:00:00+00:00"),
+        status="skipped_unknown_project",
+        local_path="",
+        run_id=run_id_1,
+        classifier_label="SomeProject",
+        classification_source="name",
+    )
+
+    run_id_2 = start_sync_run(conn, "manual")
+    record_recording(
+        conn,
+        _Meta(plaud_id=plaud_id, title="2026-04-30 09:15:00",
+              created_at="2026-04-30T00:00:00+00:00"),
+        status="skipped",
+        local_path="",
+        run_id=run_id_2,
+        classifier_label="_unclassified",
+        classification_source="skip",
+        plaud_folder_id="folder-osobni",
+    )
+
+    row = conn.execute(
+        "SELECT status, title, classifier_label, classification_source, "
+        "plaud_folder_id FROM recordings WHERE plaud_id = ?", (plaud_id,)
+    ).fetchone()
+    assert row[0] == "skipped"
+    assert row[1] == "2026-04-30 09:15:00"
+    assert row[2] == "_unclassified"
+    assert row[3] == "skip"
+    assert row[4] == "folder-osobni"
     conn.close()
 
 
