@@ -200,6 +200,56 @@ def _detect_trashed(
     return trashed_count, failed_count
 
 
+def _refresh_folder_ids_for_downloaded(
+    conn: sqlite3.Connection, live_metas: dict
+) -> int:
+    """BL-5 sub-case (metadata only): refresh plaud_folder_id for already-
+    downloaded rows when Plaud-side folder placement has changed.
+
+    Returns count of rows updated.
+
+    The existing UPSERT in record_recording is intentionally a noop on
+    'downloaded' rows (sync-core spec Decision #5 — local file is on disk,
+    DB row must reflect that, status immutable). That immutability is
+    correct for the file itself but breaks metadata refresh: a recording
+    moved into / out of a Plaud folder after first sync was leaving DB
+    plaud_folder_id stale. UI then renders '—' instead of the new folder
+    name.
+
+    This pass closes the metadata gap WITHOUT touching the file. Full
+    folder-move detection (relocate the local file when the new folder
+    maps to a different config project) is the broader BL-5 sub-case
+    and is intentionally out of scope here — single responsibility per
+    pre-pass keeps the rollout safe.
+
+    Why no time window: folder moves can happen on old recordings too
+    (user organizing months-old archive). Cost is one DB SELECT and one
+    UPDATE per drifted row; bounded by collection size.
+    """
+    rows = conn.execute(
+        "SELECT plaud_id, plaud_folder_id FROM recordings WHERE status = 'downloaded'"
+    ).fetchall()
+    updated = 0
+    for plaud_id, db_folder_id in rows:
+        live_meta = live_metas.get(plaud_id)
+        if live_meta is None:
+            # Recording missing from active listing — could be trashed
+            # (handled by _detect_trashed) or pagination edge. Skip here.
+            continue
+        live_folder_id = _meta_folder_id(live_meta)
+        if live_folder_id == db_folder_id:
+            continue
+        conn.execute(
+            "UPDATE recordings SET plaud_folder_id = ? WHERE plaud_id = ?",
+            (live_folder_id, plaud_id),
+        )
+        updated += 1
+    if updated:
+        conn.commit()
+        logger.info("refreshed plaud_folder_id for {} downloaded rows", updated)
+    return updated
+
+
 def _reclassify_recent(
     conn: sqlite3.Connection,
     classifier: Classifier,
@@ -696,6 +746,18 @@ def run_sync(
             logger.exception("detect_trashed pass crashed")
             sentry_sdk.capture_exception(e)
             _trashed_count, trashed_failed = 0, 1
+
+        # BL-5 sub-case (metadata only): refresh plaud_folder_id for already-
+        # downloaded rows whose Plaud-side folder placement changed since
+        # download. UI consumes the refreshed ID via FiletagCache lookup.
+        # File is NOT moved — full folder-move detection remains the broader
+        # BL-5 sub-case (separate scope, separate test surface).
+        try:
+            _refresh_folder_ids_for_downloaded(conn, live_metas)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("refresh_folder_ids pass crashed")
+            sentry_sdk.capture_exception(e)
+            # Non-fatal: this is a metadata-only refresh, sync continues.
 
         # Rolling retry pass for previously-skipped rows whose project may now
         # be in config. BL-3 — see specs/2026-04-26-bl3-skip-unknown-projects-design.md.
