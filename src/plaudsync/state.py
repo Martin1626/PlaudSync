@@ -152,7 +152,26 @@ def record_recording(
              status, run_id, file_size, classification_source, content_status,
              content_path, content_task_ids, plaud_folder_id, plaud_id),
         )
+    elif existing[0] == status and status in ("skipped", "skipped_unknown_project"):
+        # Same-status metadata refresh (bug fix 2026-05-04). Plaud-side
+        # rename or re-classification (e.g. transcript dogenerated → new
+        # auto-name, user moved between folders) propagates to DB even
+        # though the row stays in the same non-downloaded status. Don't
+        # touch downloaded_at / local_path / file_size / content_* because
+        # the row was never downloaded — those stay at their seed values.
+        # 'failed' is intentionally excluded: original failure context has
+        # diagnostic value (Sentry fingerprint, error_kind tag).
+        conn.execute(
+            "UPDATE recordings SET title = ?, classifier_label = ?, "
+            "classification_source = ?, plaud_folder_id = ?, sync_run_id = ? "
+            "WHERE plaud_id = ?",
+            (title, classifier_label, classification_source,
+             plaud_folder_id, run_id, plaud_id),
+        )
     # else: existing.status == 'downloaded' → noop (immutable per Decision #5)
+    #       failed → failed → noop (preserve diagnostic context)
+    #       trashed → trashed → noop (preserve last-known title for UX)
+    #       cross-status non-downloaded → noop (no clear semantic)
     conn.commit()
 
 
