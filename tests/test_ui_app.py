@@ -144,6 +144,45 @@ def test_state_serializes_recording_with_skip_classification_source(
     assert rec["classification_status"] == "unclassified"
 
 
+def test_state_serializes_recording_with_trashed_status(
+    state_root: Path,
+) -> None:
+    """BL-8 regression: _detect_trashed pre-pass writes status='trashed' to DB
+    when user trashes a recording on Plaud. The /api/state Pydantic
+    response_model must accept 'trashed' in the Literal — pre-fix it listed
+    only ['downloaded','failed','skipped'] and crashed serialization with
+    HTTP 500, surfacing as the "Spojení s PlaudSync ztraceno" overlay
+    (3× retry failures). Same bug class as BL-7 skip-source and
+    BL-3 skipped_unknown_project. This test pins the wire contract.
+    """
+    from plaudsync.state import open_state
+
+    seed_conn = open_state(state_root)
+    seed_conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
+        "downloaded_at, local_path, classifier_label, status, "
+        "classification_source) "
+        "VALUES (?, ?, ?, ?, '', '_unclassified', 'trashed', 'name')",
+        (
+            "p1",
+            "04-22 Test: záznam smazaný na Plaude",
+            "2026-04-22T08:00:00+00:00",
+            "2026-04-22T08:01:00+00:00",
+        ),
+    )
+    seed_conn.commit()
+    seed_conn.close()
+
+    app = create_app(state_root)
+    with TestClient(app) as client:
+        resp = client.get("/api/state")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["recordings"]) == 1
+    assert body["recordings"][0]["status"] == "trashed"
+
+
 def test_auth_verify_missing_token_returns_token_missing(
     state_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
