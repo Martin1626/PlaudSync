@@ -109,6 +109,22 @@ export const SAMPLE_RECORDINGS_FULL: RecordingRow[] = [
     classification_source: "none",
     plaud_folder_name: null,
   },
+  // BL-8 trashed: user trashnul záznam na Plaude → _detect_trashed pre-pass
+  // hard-deletoval lokální MP3 + .md, DB row dostal status='trashed'.
+  // Wire status='trashed' → šedá "smazáno" pilulka s tooltipem.
+  {
+    plaud_id: "rec_006",
+    title: "04-22 Test záznam smazaný na Plaude",
+    created_at: "2026-04-22T14:00:00+02:00",
+    downloaded_at: "2026-04-22T14:01:00+02:00",
+    plaud_folder: "Inbox",
+    classification_status: "matched",
+    project: "ProjektAlfa",
+    target_dir: "C:\\Projects\\Alpha\\Recordings",
+    status: "trashed",
+    classification_source: "name",
+    plaud_folder_name: null,
+  },
   // BL-7 ignored: no strategy matched (no project code v titulu, folder není
   // mapován v configu, sync_unclassified=false). Wire status='skipped' +
   // classification_source='skip' → šedá "ignorováno" pilulka s tooltipem.
