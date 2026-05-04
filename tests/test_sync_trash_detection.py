@@ -144,35 +144,50 @@ def test_trash_detected_idempotent_when_files_already_missing(tmp_path: Path) ->
     conn.close()
 
 
-def test_trash_does_not_touch_failed_or_skipped_rows(tmp_path: Path) -> None:
-    """Decision: only status='downloaded' rows are affected. failed/skipped
-    rows trashed on Plaud stay in their original DB state (no local files
-    exist for those — out of BL-8 scope per design §7)."""
+def test_trash_detection_flips_non_downloaded_rows_no_files(tmp_path: Path) -> None:
+    """Reversal of original BL-8 scope decision: skipped/skipped_unknown_project/
+    failed rows that are trashed on Plaud should also flip to 'trashed' status.
+    Previously they stayed in their original state (UI showed "ignorováno"
+    forever even though Plaud had moved them to trash).
+
+    No local files to delete for non-downloaded rows (local_path is empty),
+    so the operation is a pure DB metadata flip."""
     unclassified = tmp_path / "Unclassified"
     unclassified.mkdir()
     config = Config(unclassified_dir=unclassified, projects={})
     conn = open_state(tmp_path)
     seed_run = start_sync_run(conn, "manual")
 
-    # Pre-seed a 'failed' row — no file on disk (failed = download failure).
     now_iso = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
-        "downloaded_at, local_path, classifier_label, status, sync_run_id) "
-        "VALUES ('rec_failed', 'T', ?, ?, '', '_unclassified', 'failed', ?)",
-        (now_iso, now_iso, seed_run),
-    )
+    # Three non-downloaded rows, each with a different status.
+    for plaud_id, status in (
+        ("rec_skipped", "skipped"),
+        ("rec_skipped_unknown", "skipped_unknown_project"),
+        ("rec_failed", "failed"),
+    ):
+        conn.execute(
+            "INSERT INTO recordings (plaud_id, title, created_at_plaud, "
+            "downloaded_at, local_path, classifier_label, status, sync_run_id) "
+            f"VALUES (?, 'T', ?, ?, '', '_unclassified', '{status}', ?)",
+            (plaud_id, now_iso, now_iso, seed_run),
+        )
     conn.commit()
 
-    # Plaud trashed the same recording (and another unrelated).
-    client = _TrashOnlyClient(trashed_ids=["rec_failed", "rec_unrelated"])
+    # All three trashed on Plaud + one unrelated trash ID.
+    client = _TrashOnlyClient(trashed_ids=[
+        "rec_skipped", "rec_skipped_unknown", "rec_failed", "rec_unrelated",
+    ])
     exit_code = run_sync(client, DefaultBucketClassifier(), conn, config, "manual")
 
     assert exit_code == 0
-    row = conn.execute(
-        "SELECT status FROM recordings WHERE plaud_id = 'rec_failed'"
-    ).fetchone()
-    assert row[0] == "failed", "failed row must not be flipped to 'trashed'"
+    rows = dict(conn.execute(
+        "SELECT plaud_id, status FROM recordings"
+    ).fetchall())
+    assert rows == {
+        "rec_skipped": "trashed",
+        "rec_skipped_unknown": "trashed",
+        "rec_failed": "trashed",
+    }
 
     conn.close()
 
