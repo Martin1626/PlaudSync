@@ -171,3 +171,85 @@ def test_idempotent_reinsert_skipped(tmp_path):
     )
     assert _row_status(conn, plaud_id) == "skipped"
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Same-status metadata refresh: title rename / classification update on
+# Plaud's side must propagate to DB even when the status stays the same.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("starting_status", ["skipped", "skipped_unknown_project"])
+def test_same_status_refreshes_title_and_classification(tmp_path, starting_status):
+    """Bug fix 2026-05-04: when Plaud generates a transcript and renames a
+    recording (default '2026-05-04 09:19:03' → 'ALZA: kickoff') and the new
+    title now hits a different classifier branch, DB row should reflect the
+    new title + label + source + folder. Pre-fix UPSERT was a noop on
+    same-status retries → UI displayed stale title forever.
+
+    Stays-as-skipped scenario: user has audio off + classify_by_name_require_folder
+    so even a name match downgrades to skip-source. Status doesn't transition
+    but the user-visible metadata (title, project label) does."""
+    conn = open_state(tmp_path)
+    plaud_id = "rec-renamed"
+    run_id_1 = start_sync_run(conn, "manual")
+    record_recording(
+        conn,
+        _Meta(plaud_id=plaud_id, title="2026-05-04 09:19:03",
+              created_at="2026-05-04T07:30:00+00:00"),
+        status=starting_status,
+        local_path="",
+        run_id=run_id_1,
+        classifier_label="_unclassified" if starting_status == "skipped" else "OldProj",
+        classification_source="skip" if starting_status == "skipped" else "name",
+    )
+    # Plaud rename + new classification on next sync
+    run_id_2 = start_sync_run(conn, "manual")
+    record_recording(
+        conn,
+        _Meta(plaud_id=plaud_id, title="2026-05-04 ALZA: kickoff sync s týmem",
+              created_at="2026-05-04T07:30:00+00:00"),
+        status=starting_status,  # still same status (e.g. audio off blocks transition)
+        local_path="",
+        run_id=run_id_2,
+        classifier_label="ALZA",
+        classification_source="name",
+        plaud_folder_id="folder-alza-abc",
+    )
+    row = conn.execute(
+        "SELECT title, classifier_label, classification_source, plaud_folder_id "
+        "FROM recordings WHERE plaud_id = ?", (plaud_id,)
+    ).fetchone()
+    assert row[0] == "2026-05-04 ALZA: kickoff sync s týmem", \
+        f"title must refresh on same-status retry, got {row[0]!r}"
+    assert row[1] == "ALZA"
+    assert row[2] == "name"
+    assert row[3] == "folder-alza-abc"
+    # status preserved
+    assert _row_status(conn, plaud_id) == starting_status
+    conn.close()
+
+
+def test_failed_to_failed_preserves_metadata(tmp_path):
+    """Counter-case: 'failed' rows preserve original failure metadata across
+    retries — the original error context (Sentry tag fingerprint) has
+    diagnostic value. Refresh only fires for skipped/skipped_unknown_project."""
+    conn = open_state(tmp_path)
+    plaud_id = _seed(conn, "failed")
+    run_id = start_sync_run(conn, "manual")
+    record_recording(
+        conn,
+        _Meta(plaud_id=plaud_id, title="modified-after-failure",
+              created_at="2026-04-30T00:00:00+00:00"),
+        status="failed",
+        local_path="",
+        run_id=run_id,
+        classifier_label="DIFFERENT",
+    )
+    row = conn.execute(
+        "SELECT title, classifier_label FROM recordings WHERE plaud_id = ?",
+        (plaud_id,),
+    ).fetchone()
+    # failed → failed is full noop (preserve original failure reason)
+    assert row[0] == "04-30 X: y", "failed→failed must preserve original title"
+    assert row[1] == "X", "failed→failed must preserve original classifier_label"
+    conn.close()
