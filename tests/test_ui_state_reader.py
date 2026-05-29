@@ -79,6 +79,56 @@ def test_snapshot_running_when_unfinished_run_present(conn: sqlite3.Connection) 
     assert snapshot["sync"]["started_at"] == "2026-04-25T13:00:00+00:00"
 
 
+def test_snapshot_idle_when_unfinished_run_is_stale_orphan(conn: sqlite3.Connection) -> None:
+    """A sync that crashes before finish_sync_run (e.g. mid-listing network
+    error) leaves a sync_runs row with finished_at NULL forever. If a later run
+    has since finished, that orphan is dead — the UI must not report 'running'
+    indefinitely. Regression: real stuck 'running' for ~24h after a 05-28 crash.
+    """
+    # Orphan: crashed run, never reached finish_sync_run.
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+        ("2026-05-28T13:36:28+00:00", "task_scheduler"),
+    )
+    # A later run completed successfully — proves the orphan is not live.
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, finished_at, exit_code, "
+        "recordings_new, recordings_skipped, recordings_failed, trigger) "
+        "VALUES (?, ?, 0, 1, 0, 0, ?)",
+        ("2026-05-29T11:50:00+00:00", "2026-05-29T11:50:03+00:00", "task_scheduler"),
+    )
+    conn.commit()
+
+    snapshot = read_state_snapshot(conn)
+
+    assert snapshot["sync"]["status"] == "idle"
+    assert snapshot["sync"]["last_run_outcome"] == "success"
+
+
+def test_snapshot_running_when_unfinished_run_newer_than_last_finished(
+    conn: sqlite3.Connection,
+) -> None:
+    """A genuinely active sync (unfinished, started after the last finished run)
+    must still report 'running'. Guards the orphan fix against over-correction.
+    """
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, finished_at, exit_code, "
+        "recordings_new, recordings_skipped, recordings_failed, trigger) "
+        "VALUES (?, ?, 0, 1, 0, 0, ?)",
+        ("2026-05-29T11:50:00+00:00", "2026-05-29T11:50:03+00:00", "task_scheduler"),
+    )
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+        ("2026-05-29T12:05:00+00:00", "ui_sync_now"),
+    )
+    conn.commit()
+
+    snapshot = read_state_snapshot(conn)
+
+    assert snapshot["sync"]["status"] == "running"
+    assert snapshot["sync"]["started_at"] == "2026-05-29T12:05:00+00:00"
+
+
 def test_snapshot_last_run_outcome_success_when_exit_zero(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT INTO sync_runs (started_at, finished_at, exit_code, "
