@@ -16,7 +16,23 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 **Kill criteria:** žádné netriggernuto.
 
-**Pozn. (mimo rozsah):** Při běhu suite odhaleny 2 pre-existing problémy nezávislé na této opravě — (1) `test_concurrent_reader_never_sees_partial_payload` je flaky (`write_progress` `os.replace` občas vyčerpá 20 retry pod těžkým souběžným čtením); (2) 3 selhávající testy v `test_sync_retry_skipped_live_title.py` (`downloaded == 0` místo 1). Oba selhávají i na původním kódu — vyžadují vlastní investigaci.
+**Pozn. (mimo rozsah):** Při běhu suite odhaleny 2 pre-existing problémy nezávislé na této opravě — (1) `test_concurrent_reader_never_sees_partial_payload` je flaky (`write_progress` `os.replace` občas vyčerpá 20 retry pod těžkým souběžným čtením); (2) 3 selhávající testy v `test_sync_retry_skipped_live_title.py` — viz následující záznam.
+
+---
+
+## 2026-05-29 — time-bomb v retry_skipped testech (absolutní datum vs. rolling okno)
+
+**Symptom:** 3 testy v `test_sync_retry_skipped_live_title.py` selhávaly `downloaded == 0` (čekáno 1), `failed == 0` (žádný exception → nešlo o crash, řádek se prostě nestáhl).
+
+**Root cause (systematic-debugging Phase 1–3):** NE produkční regrese. `_retry_skipped_unknown_project` selektuje jen řádky s `created_at_plaud >= now - days` (default 14). Testy psané 2026-04-30 seedovaly absolutní `created_at="2026-04-30…"`. Dnes (2026-05-29) je to 29 dní zpět → cutoff 2026-05-15 → `rows` prázdné → smyčka se nikdy nespustí. `classify()` i `lookup_project()` ověřeny izolovaně jako korektní; 454 ostatních testů procházelo → žádné jiné okno-bomby nehořely.
+
+**Fix:** [test_sync_retry_skipped_live_title.py](tests/test_sync_retry_skipped_live_title.py) — seed přes helper `_recent_iso()` (`now - 1d`) místo absolutního data. Suite 457 passed.
+
+**Audit ostatních windowed cest:** `_reclassify_recent` okno na `downloaded_at` (reclassify testy ho nastavují relativně → ok); `_retry_pending_content` na `created_at_plaud`, ale jeho testy už používají `datetime.now()` / `now - 15d` → ok. Time-bomba byla jen v tomto jednom souboru.
+
+**Lekce:** Testy rolling-window dotazů MUSÍ seedovat datum relativně k `now`, nikdy absolutní literál. Projekt nemá freezegun — relativní datum je idiomatický fallback.
+
+**Kill criteria:** žádné netriggernuto.
 
 ---
 
