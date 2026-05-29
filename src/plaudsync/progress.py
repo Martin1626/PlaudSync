@@ -79,7 +79,8 @@ def write_progress(
             except PermissionError:
                 if attempt == 29:
                     raise
-                time.sleep(random.uniform(0.001, 0.004))
+                # jitter is retry timing, not a security context
+                time.sleep(random.uniform(0.001, 0.004))  # nosec B311
     except Exception:
         try:
             os.unlink(tmp_path)
