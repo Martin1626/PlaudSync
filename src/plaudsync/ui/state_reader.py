@@ -68,9 +68,18 @@ def _outcome_for_exit_code(
 
 
 def _read_running(conn: sqlite3.Connection) -> tuple[str, str] | None:
+    # finished_at IS NULL alone does NOT mean "running": a sync that crashes
+    # before finish_sync_run (e.g. a mid-listing network error) leaves the row
+    # unfinished forever. Only treat it as live if it started AFTER the most
+    # recent finished run — a later completion proves any earlier unfinished
+    # row is dead. ISO-8601 timestamps sort chronologically as text.
     row = conn.execute(
         "SELECT started_at, trigger FROM sync_runs "
-        "WHERE finished_at IS NULL ORDER BY started_at DESC LIMIT 1"
+        "WHERE finished_at IS NULL "
+        "AND started_at > COALESCE("
+        "  (SELECT MAX(started_at) FROM sync_runs WHERE finished_at IS NOT NULL),"
+        "  '') "
+        "ORDER BY started_at DESC LIMIT 1"
     ).fetchone()
     return (row[0], row[1]) if row else None
 
