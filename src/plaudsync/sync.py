@@ -827,6 +827,20 @@ def run_sync(
             recordings_failed=failed_count,
         )
         return exit_code
+    except Exception:
+        # Crash before the normal finish_sync_run (e.g. a network error during
+        # listing). Close the run row as crashed (exit_code=1) so a later UI
+        # read does not treat the dead run as "running" forever — an orphan
+        # row with finished_at NULL is exactly that bug. Best-effort: never let
+        # this bookkeeping mask the original failure, which we re-raise.
+        try:
+            finish_sync_run(
+                conn, run_id, exit_code=1,
+                recordings_new=0, recordings_skipped=0, recordings_failed=0,
+            )
+        except Exception:
+            logger.exception("failed to mark crashed sync run as finished")
+        raise
     finally:
         if state_root is not None:
             clear_progress(state_root)
