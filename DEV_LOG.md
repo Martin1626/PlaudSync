@@ -4,6 +4,22 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-05-29 — flaky atomicity test (write_progress retry rezonance)
+
+**Symptom:** `test_concurrent_reader_never_sees_partial_payload` selhával ~30 % běhů (naměřeno 14/20). Ne aserce atomicity — `write_progress` raisoval `PermissionError [WinError 5/32]` z `os.replace`.
+
+**Root cause (systematic-debugging + měření):** Instrumentace 200-write burstu ukázala těžký chvost v počtu retry pokusů; občas (2/201 zápisů) narazil na strop 20 → raise. Příčina dvojí: (1) **produkční** — fixní lineární backoff (1..19 ms) **rezonuje** s rovnoměrně pollujícím čtenářem, takže všech 20 pokusů padne do momentu, kdy čtenář drží handle (Windows blokuje rename otevřeného souboru — stejná lock-race třída jako [[clear_progress fix]]); (2) **test** — zero-sleep reader drží soubor otevřený ~100 % wall-clocku, což je patologie, kterou žádný atomic-rename nepřežije a v produkci nikdy nenastane (UI polluje `/api/state` v HTTP kadenci, ne v těsné smyčce).
+
+**Měření strategií (30 burstů):** current (20, lineární) 5/30 failing; jitter (30, uniform 1–4 ms) 1/30. Jitter sám nestačí proti 100% duty čtenáři.
+
+**Fix:** [progress.py](src/plaudsync/progress.py) — jittered backoff (`random.uniform(0.001, 0.004)`, 30 pokusů): dekoreluje retry od rytmu čtenáře (~5× méně exhaustions, reálný produkční hardening). [test_progress.py](tests/test_progress.py) — reader `sleep(0.5 ms)` per poll: zachová concurrency tlak (tisíce čtení přes burst, atomicity check plně v platnosti) bez nepřežitelné patologie. **Ověřeno: 30/30 běhů pass, suite 458 passed.**
+
+**Lekce:** Retry-on-`os.replace`/`unlink` smyčky proti pollujícímu čtenáři MUSÍ jitterovat backoff (fixní schedule rezonuje). Stress testy nesmí modelovat kontenci, kterou cílová primitiva fyzicky nemůžou splnit.
+
+**Kill criteria:** žádné netriggernuto.
+
+---
+
 ## 2026-05-29 — clear_progress crash na Windows-locknutém progress.json
 
 **Symptom:** Opakovaný log ERROR `SchedulerThread: pipeline raised uncaught exception` (14.5., 17.5., 21.5., 29.5.) s finální `PermissionError: [WinError 32] … progress.json … využivá jiný proces`. Úspěšný sync běh se reportoval jako spadlá pipeline.
