@@ -4,6 +4,22 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-05-29 — clear_progress crash na Windows-locknutém progress.json
+
+**Symptom:** Opakovaný log ERROR `SchedulerThread: pipeline raised uncaught exception` (14.5., 17.5., 21.5., 29.5.) s finální `PermissionError: [WinError 32] … progress.json … využivá jiný proces`. Úspěšný sync běh se reportoval jako spadlá pipeline.
+
+**Layer (sync-debug):** Layer 4 (business/runtime logic) — env i síť čisté. Zbývající recent scheduler crashe (`SSLEOFError`, `ConnectionResetError`, `socket.gaierror`, urllib3 `ProtocolError`) jsou transientní síťové výpadky Plaud API, ne kódový bug.
+
+**Root cause:** `clear_progress()` běží v `run_sync` `finally` bloku ([sync.py:832](src/plaudsync/sync.py#L832)). Volala `target.unlink()` a chytala jen `FileNotFoundError`. Na Windows `os.unlink` selže s `WinError 32`, když UI poller drží `progress.json` otevřený (`read_progress` mid-read). Raise ve `finally` přepsal `exit_code` a propagoval se jako uncaught exception do scheduleru — ačkoliv `finish_sync_run` už zapsal úspěch do DB. `write_progress` přitom stejný Windows race na `os.replace` už řešil retry smyčkou; `clear_progress` ten vzor postrádal.
+
+**Fix:** [progress.py](src/plaudsync/progress.py) — `clear_progress` zrcadlí `write_progress`: retry s backoffem (20× ~1 ms) na `PermissionError`, po vyčerpání degraduje tiše (Loguru `warning` + ponechá stale soubor; další `write_progress` ho atomicky přepíše). Cleanup ve `finally` nikdy neraisuje. TDD: failing test `test_clear_progress_tolerates_locked_file` (drží otevřený handle) → green. Branch `fix/clear-progress-locked-file`.
+
+**Kill criteria:** žádné netriggernuto.
+
+**Pozn. (mimo rozsah):** Při běhu suite odhaleny 2 pre-existing problémy nezávislé na této opravě — (1) `test_concurrent_reader_never_sees_partial_payload` je flaky (`write_progress` `os.replace` občas vyčerpá 20 retry pod těžkým souběžným čtením); (2) 3 selhávající testy v `test_sync_retry_skipped_live_title.py` (`downloaded == 0` místo 1). Oba selhávají i na původním kódu — vyžadují vlastní investigaci.
+
+---
+
 ## 2026-05-03 — BL-8 shipped (Plaud-side trash detection)
 
 User otázka „Co se stane v lokálním úložišti, když záznam přesunu do koše na Plaude?" odhalila, že BL-8 dosud žil pouze jako stub a trigger conditions ještě nebyly splněny (3 incidenty / 14d soak). User se rozhodl ship-nout preemptivně po skončení brainstormu.
