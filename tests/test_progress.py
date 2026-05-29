@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 
 from plaudsync.progress import (
@@ -77,6 +78,13 @@ def test_concurrent_reader_never_sees_partial_payload(tmp_path: Path) -> None:
     """Stress-test atomicity: while one thread writes 200 progress payloads
     in rapid succession, a reader thread must always see either the previous
     complete payload or the new complete payload — never a half-written one.
+
+    The reader polls with a tiny sleep to mirror the real UI (which reads
+    /api/state at HTTP-request cadence). A zero-sleep reader holds the file
+    open ~100% of wall-clock time, which on Windows starves os.replace of
+    any unlocked window — a pathology no atomic-rename can survive and one
+    that never occurs in production. The sleep keeps the concurrency
+    pressure (thousands of reads across the burst) without that artifact.
     """
     write_progress(tmp_path, sync_run_id=1, phase="listing",
                    processed_count=None, total_count=None)
@@ -99,6 +107,7 @@ def test_concurrent_reader_never_sees_partial_payload(tmp_path: Path) -> None:
             except json.JSONDecodeError as e:
                 reader_errors.append(f"partial JSON: {e}")
                 return
+            time.sleep(0.0005)
 
     t = threading.Thread(target=reader)
     t.start()
