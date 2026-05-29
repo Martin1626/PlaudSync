@@ -79,6 +79,35 @@ def test_sync_skips_already_downloaded_by_pk(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_sync_closes_run_row_when_listing_crashes(tmp_path: Path) -> None:
+    """A network error during listing must not leave an orphan sync_runs row
+    (finished_at NULL). Otherwise the UI reads the dead run as 'running'
+    forever. The run must be closed as crashed AND the error must still
+    propagate. Regression: stuck 'running' after a 2026-05-28 mid-sync crash.
+    """
+    from plaudsync.classifier import DefaultBucketClassifier
+
+    unclassified = tmp_path / "U"
+    unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified, projects={})
+    conn = open_state(tmp_path)
+
+    class _CrashingClient:
+        def list_recordings(self, since=None):
+            raise ConnectionResetError("simulated mid-sync network drop")
+
+    with pytest.raises(ConnectionResetError):
+        run_sync(_CrashingClient(), DefaultBucketClassifier(), conn, config, "manual")
+
+    row = conn.execute(
+        "SELECT finished_at, exit_code FROM sync_runs ORDER BY run_id DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None, "no sync_runs row was created"
+    assert row[0] is not None, "crashed run left an orphan row (finished_at NULL)"
+    assert row[1] != 0, "crashed run must not be recorded as success (exit_code 0)"
+    conn.close()
+
+
 def test_sync_unlinks_partial_file_on_mid_stream_failure(tmp_path: Path) -> None:
     """Mid-stream exception during write must unlink the half-written file."""
     unclassified = tmp_path / "U"
