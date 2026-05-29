@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+from loguru import logger
+
 
 Phase = Literal["listing", "downloading", "finalizing"]
 
@@ -93,9 +95,25 @@ def read_progress(state_root: Path) -> dict | None:
 
 
 def clear_progress(state_root: Path) -> None:
-    """Remove progress.json. No-op when file does not exist."""
+    """Remove progress.json. No-op when file does not exist.
+
+    Runs in run_sync's finally block, so it must never raise — a raise here
+    masks the real exit code and reports a successful sync as a crashed
+    pipeline. On Windows os.unlink fails with PermissionError [WinError 32]
+    while the UI poller has the file open; retry with short backoff (same
+    pattern as write_progress's os.replace), then degrade quietly: a stale
+    progress.json is harmless, the next write_progress overwrites it.
+    """
     target = progress_path(state_root)
-    try:
-        target.unlink()
-    except FileNotFoundError:
-        pass
+    for attempt in range(20):
+        try:
+            target.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if attempt == 19:
+                logger.warning("clear_progress: progress.json still locked, "
+                               "leaving stale file for next run to overwrite")
+                return
+            time.sleep(0.001 * (attempt + 1))
