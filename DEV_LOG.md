@@ -4,6 +4,22 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-05-29 — zaseknutý „running" stav v UI (orphan sync_runs řádky)
+
+**Symptom:** Po ručním spuštění nové verze trayu uživatel hlásil, že „synchronizace běží podezřele dlouho". `/api/state` ukazovalo `sync.status=running` se `started_at=2026-05-28T13:36` (~24 h), ale `progress=null`, `sync.lock` volný, poslední běh úspěšně doběhl (~3 s). Žádný sync reálně neběžel.
+
+**Root cause:** [`_read_running`](src/plaudsync/ui/state_reader.py) bralo **jakýkoliv** `sync_runs` řádek s `finished_at IS NULL` jako „běžící". Běh, který spadne **před** `finish_sync_run` (síťová chyba uprostřed listingu/downloadu — viz orphan běhy 1028 @05:34 a 1061 @13:36 z 28.5., shodují se se scheduler crashy `ConnectionResetError`/`ProtocolError`), zůstane navždy nedokončený. Žádný liveness check → UI hlásí „running" donekonečna. NESOUVISÍ s clear_progress/jitter fixy (orphany jsou starší).
+
+**Fix (TDD):** [state_reader.py](src/plaudsync/ui/state_reader.py) — nedokončený běh je „running" jen pokud `started_at > MAX(started_at dokončených běhů)`; pozdější dokončení dokazuje, že starší nedokončený je mrtvý. Parameterless SQL subquery, ISO-8601 řadí jako text. Testy: orphan→idle (failing→green) + guard genuine-running→running. Suite 460 passed.
+
+**Reconcile živé DB:** 2 orphan řádky uzavřeny (`finished_at=started_at, exit_code=1`), scoped `started_at < MAX(finished started_at)` aby se neuzavřel živý běh. `/api/state` ihned `idle` (funguje i se starým readerem — žádný NULL-finished řádek nezbyl).
+
+**Lekce:** „nedokončený řádek" ≠ „běžící proces". Liveness se musí ověřit (novější dokončený běh / lock / PID), ne odvozovat z absence finished_at. Crash před finalizací je první třída, na kterou myslet u stavových příznaků.
+
+**Kill criteria:** žádné netriggernuto. Pozn.: opakované síťové crashe uprostřed syncu (28.5. 2×) by si zasloužily vlastní robustnost (graceful finish_sync_run i při výjimce v listing/download fázi) — kandidát na follow-up.
+
+---
+
 ## 2026-05-29 — flaky atomicity test (write_progress retry rezonance)
 
 **Symptom:** `test_concurrent_reader_never_sees_partial_payload` selhával ~30 % běhů (naměřeno 14/20). Ne aserce atomicity — `write_progress` raisoval `PermissionError [WinError 5/32]` z `os.replace`.
