@@ -4,6 +4,20 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-05-29 — orphan sync_runs řádky u zdroje (crash před finish_sync_run)
+
+**Follow-up na předchozí záznam** (read-side guard ve `_read_running`). Tady se opravuje **vznik** orphanů, ne jen jejich interpretace.
+
+**Root cause:** [`run_sync`](src/plaudsync/sync.py) volá `finish_sync_run` pouze na success cestě (po download loopu). Výjimka před ním — typicky `list(client.list_recordings())` na ř. 735 (síťový drop: `ConnectionResetError`/`ProtocolError`/`SSLEOFError`), případně neobalené passy `_retry_skipped_unknown_project`/`_reclassify_recent` — propagne přes `finally` (jen `clear_progress`) ven, takže řádek zůstane `finished_at=NULL`. To je přesně orphan, který UI hlásí jako „running" napořád.
+
+**Fix (TDD):** přidán `except Exception:` do `run_sync` — uzavře běh jako crashed (`exit_code=1`, counts 0) a re-raisne. Uzavření je best-effort (vlastní try/except + log), aby bookkeeping NIKDY nemaskoval původní výjimku — stejné poučení jako u [[clear_progress fix]] (finally/handler raise maskuje real error). Test `test_sync_closes_run_row_when_listing_crashes` (failing→green): crashing client → run_sync re-raisne ConnectionResetError, ale `sync_runs` řádek má `finished_at` set a `exit_code != 0`. Suite 461 passed.
+
+**Defense-in-depth:** read-side guard (`_read_running`) + write-side close (`run_sync except`) se doplňují — orphany už nevznikají, a kdyby přesto (starší řádky, jiná cesta), reader je nepovažuje za živé.
+
+**Kill criteria:** žádné netriggernuto.
+
+---
+
 ## 2026-05-29 — zaseknutý „running" stav v UI (orphan sync_runs řádky)
 
 **Symptom:** Po ručním spuštění nové verze trayu uživatel hlásil, že „synchronizace běží podezřele dlouho". `/api/state` ukazovalo `sync.status=running` se `started_at=2026-05-28T13:36` (~24 h), ale `progress=null`, `sync.lock` volný, poslední běh úspěšně doběhl (~3 s). Žádný sync reálně neběžel.
