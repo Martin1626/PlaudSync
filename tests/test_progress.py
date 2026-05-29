@@ -53,6 +53,22 @@ def test_clear_progress_missing_is_noop(tmp_path: Path) -> None:
     assert not progress_path(tmp_path).exists()
 
 
+def test_clear_progress_tolerates_locked_file(tmp_path: Path) -> None:
+    """clear_progress must NOT raise when a concurrent reader holds the file
+    open. On Windows os.unlink on an open file raises PermissionError
+    [WinError 32]; since clear_progress runs in run_sync's finally block, a
+    raise there masks the real exit code and reports a successful sync as a
+    crashed pipeline. Cleanup of a stale progress.json is non-critical — the
+    next write_progress overwrites it atomically — so it must degrade quietly.
+    """
+    write_progress(tmp_path, sync_run_id=1, phase="finalizing",
+                   processed_count=None, total_count=None)
+    target = progress_path(tmp_path)
+    # Hold an open handle for the whole call, mimicking the UI poller mid-read.
+    with target.open("r", encoding="utf-8"):
+        clear_progress(tmp_path)  # must return without raising even while locked
+
+
 def test_read_progress_missing_returns_none(tmp_path: Path) -> None:
     assert read_progress(tmp_path) is None
 
