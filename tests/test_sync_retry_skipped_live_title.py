@@ -11,7 +11,7 @@ Bug discovered 2026-04-30 (real-world: 04-30 Konzultace renamed to OEZ).
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -20,6 +20,16 @@ from plaudsync.classifiers.name import NameClassifier
 from plaudsync.config import Config, ProjectEntry
 from plaudsync.state import open_state
 from plaudsync.sync import _retry_skipped_unknown_project
+
+
+def _recent_iso(*, days_ago: int = 1) -> str:
+    """created_at within _retry_skipped_unknown_project's rolling `days` window.
+
+    Must be relative to now, NOT a hard-coded date: the retry pass only selects
+    rows with created_at_plaud >= now-`days`, so an absolute date silently ages
+    out of the window and the SELECT returns zero rows (downloaded == 0).
+    """
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
 
 
 def _seed_skipped(
@@ -71,7 +81,7 @@ def test_retry_uses_live_title_after_plaud_rename(tmp_path: Path) -> None:
 
     conn = _seed_skipped(
         tmp_path, plaud_id=plaud_id, db_title=db_title,
-        created_at="2026-04-30T05:15:03+00:00",
+        created_at=_recent_iso(),
     )
 
     # spec=["download_audio"] limits MagicMock attribute set so hasattr(
@@ -120,7 +130,7 @@ def test_retry_falls_back_to_db_title_when_live_meta_absent(tmp_path: Path) -> N
     db_title = "04-30 ALZA: kickoff"
     conn = _seed_skipped(
         tmp_path, plaud_id=plaud_id, db_title=db_title,
-        created_at="2026-04-30T09:00:00+00:00",
+        created_at=_recent_iso(),
     )
 
     # spec=["download_audio"] limits MagicMock attribute set so hasattr(
@@ -151,7 +161,7 @@ def test_retry_works_when_live_metas_is_none(tmp_path: Path) -> None:
     plaud_id = "rec_default_001"
     conn = _seed_skipped(
         tmp_path, plaud_id=plaud_id, db_title="04-30 ALZA: kickoff",
-        created_at="2026-04-30T09:00:00+00:00",
+        created_at=_recent_iso(),
     )
 
     # spec=["download_audio"] limits MagicMock attribute set so hasattr(
