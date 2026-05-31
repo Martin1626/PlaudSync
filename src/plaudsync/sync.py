@@ -32,6 +32,7 @@ from plaudsync.state import (
     last_successful_sync,
     record_recording,
     recording_exists_and_downloaded,
+    resolved_plaud_ids,
     start_sync_run,
 )
 
@@ -795,10 +796,16 @@ def run_sync(
         failed_count = reclassify_failed + retry_failed + content_failed + trashed_failed
         total = len(metas)
 
+        # Skip everything already settled (downloaded OR skipped) in ONE query,
+        # so per-run cost scales with NEW recordings, not total cloud size.
+        # Fetched after the retry/reclassify passes above so any status upgrades
+        # they made this run are reflected. Re-checking of settled skips is the
+        # bounded rolling passes' job, not the per-run main loop.
+        resolved = resolved_plaud_ids(conn)
         _emit("downloading", 0, total)
 
         for i, meta in enumerate(metas):
-            if recording_exists_and_downloaded(conn, meta.plaud_id):
+            if meta.plaud_id in resolved:
                 skipped_count += 1
                 _emit("downloading", i + 1, total)
                 continue

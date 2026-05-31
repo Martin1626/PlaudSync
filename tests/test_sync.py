@@ -252,3 +252,43 @@ def test_sync_routes_matched_title_to_project_folder(tmp_path: Path) -> None:
     assert row[0] == "Alza"  # adapter returns title-case as captured
     assert str(project_dir) in row[1]
     conn.close()
+
+
+def test_main_loop_skips_already_resolved_skips(tmp_path: Path) -> None:
+    """An already-'skipped' recording is not re-processed by the main loop
+    (no re-classify, no DB write) and does not inflate recordings_new on a
+    second run over the same listing."""
+    from plaudsync.classifier import DefaultBucketClassifier
+    from plaudsync.config import Config
+    from plaudsync.state import open_state, record_recording, start_sync_run
+    from plaudsync.sync import run_sync
+
+    unclassified = tmp_path / "U"; unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified, projects={})
+    conn = open_state(tmp_path)
+
+    class _M:
+        plaud_id = "rec_old"; title = "Náhodný název bez projektu"
+        created_at = "2026-05-20T10:00:00+00:00"
+        start_time_ms = 1747728000000; duration_seconds = 100; file_size = 4
+        plaud_folder = ""
+
+    # Pre-seed it as already skipped (settled).
+    rid = start_sync_run(conn, "manual")
+    record_recording(conn, _M(), status="skipped", local_path="", run_id=rid)
+
+    class _Client:
+        def list_recordings(self, since=None):
+            yield _M()
+        def download_audio(self, _):
+            raise AssertionError("must not download/re-process a settled skip")
+
+    exit_code = run_sync(_Client(), DefaultBucketClassifier(), conn, config, "manual")
+    assert exit_code == 0
+    row = conn.execute(
+        "SELECT recordings_new, recordings_skipped FROM sync_runs "
+        "ORDER BY run_id DESC LIMIT 1"
+    ).fetchone()
+    assert row[0] == 0          # not counted as new
+    assert row[1] == 1          # counted as skipped
+    conn.close()
