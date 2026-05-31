@@ -245,3 +245,41 @@ projects:
                for e in errors), (
         f"expected duplicate casefold error, got: {[e.message for e in errors]}"
     )
+
+
+def test_recheck_window_days_defaults_to_14_when_absent(tmp_path: Path) -> None:
+    unclassified = tmp_path / "U"; project = tmp_path / "A"
+    unclassified.mkdir(); project.mkdir()
+    _write_config(tmp_path, f"""
+unclassified_dir: {unclassified}
+projects:
+  Alfa: {project}
+""")
+    config = load_config(tmp_path)
+    assert config.recheck_window_days == 14
+
+
+def test_recheck_window_days_custom_value(tmp_path: Path) -> None:
+    unclassified = tmp_path / "U"; project = tmp_path / "A"
+    unclassified.mkdir(); project.mkdir()
+    _write_config(tmp_path, f"""
+unclassified_dir: {unclassified}
+projects:
+  Alfa: {project}
+recheck_window_days: 30
+""")
+    assert load_config(tmp_path).recheck_window_days == 30
+
+
+def test_recheck_window_days_rejects_non_positive(tmp_path: Path) -> None:
+    unclassified = tmp_path / "U"; project = tmp_path / "A"
+    unclassified.mkdir(); project.mkdir()
+    _write_config(tmp_path, f"""
+unclassified_dir: {unclassified}
+projects:
+  Alfa: {project}
+recheck_window_days: 0
+""")
+    with pytest.raises(ConfigValidationError) as exc:
+        load_config(tmp_path)
+    assert any("recheck_window_days" in e.message for e in exc.value.args[0])
