@@ -82,6 +82,10 @@ export function coerceConfigV4(
       result[k] = v;
     }
   }
+  const rw = parsed["recheck_window_days"];
+  if (typeof rw === "number" && Number.isFinite(rw)) {
+    result.recheck_window_days = rw;
+  }
   return result;
 }
 
@@ -94,6 +98,9 @@ export const CONFIG_DEFAULTS = {
   classify_by_folder: false,
   sync_unclassified: false,
 } as const;
+
+/** Default re-check look-back window (days) — mirrors backend Config. */
+export const RECHECK_WINDOW_DAYS_DEFAULT = 14;
 
 /** Read a flag with default fallback. */
 export function flagOrDefault(
@@ -152,6 +159,9 @@ export function serializeConfigV4(config: ConfigParsedV4): string {
   );
   lines.push(`classify_by_folder: ${flagOrDefault(config, "classify_by_folder")}`);
   lines.push(`sync_unclassified: ${flagOrDefault(config, "sync_unclassified")}`);
+  lines.push(
+    `recheck_window_days: ${config.recheck_window_days ?? RECHECK_WINDOW_DAYS_DEFAULT}`,
+  );
 
   return lines.join("\n") + "\n";
 }

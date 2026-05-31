@@ -113,6 +113,7 @@ export interface ConfigParsedV4 {
   classify_by_name_require_folder?: boolean;
   classify_by_folder?: boolean;
   sync_unclassified?: boolean;
+  recheck_window_days?: number;
 }
 
 export interface ConfigResponse {
