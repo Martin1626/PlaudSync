@@ -19,7 +19,7 @@ import { useFolders, useRefreshFolders, useSaveConfig } from "@/api/hooks";
 import type { ConfigParsedV4, ProjectEntry } from "@/api/types";
 import { useBanners } from "@/context/BannersContext";
 import { useToasts } from "@/context/ToastsContext";
-import { flagOrDefault, serializeConfigV4 } from "@/utils/configYaml";
+import { flagOrDefault, RECHECK_WINDOW_DAYS_DEFAULT, serializeConfigV4 } from "@/utils/configYaml";
 
 interface Props {
   /** Coerced parsed config from current /api/config. */
@@ -36,6 +36,7 @@ interface FormState {
   classify_by_name_require_folder: boolean;
   classify_by_folder: boolean;
   sync_unclassified: boolean;
+  recheck_window_days: number;
   /** Project name → ProjectEntry (preserves insertion order). */
   projects: Map<string, ProjectEntry>;
   unclassified_dir: string;
@@ -55,6 +56,7 @@ function _initFormState(config: ConfigParsedV4): FormState {
     ),
     classify_by_folder: flagOrDefault(config, "classify_by_folder"),
     sync_unclassified: flagOrDefault(config, "sync_unclassified"),
+    recheck_window_days: config.recheck_window_days ?? RECHECK_WINDOW_DAYS_DEFAULT,
     projects,
     unclassified_dir: config.unclassified_dir,
   };
@@ -74,6 +76,7 @@ function _formStateToConfig(state: FormState): ConfigParsedV4 {
     classify_by_name_require_folder: state.classify_by_name_require_folder,
     classify_by_folder: state.classify_by_folder,
     sync_unclassified: state.sync_unclassified,
+    recheck_window_days: state.recheck_window_days,
   };
 }
 
@@ -296,6 +299,27 @@ export default function BlxSettingsPanel({ config, onSaved }: Props) {
               Alespoň jedna strategie musí být aktivní — jinak Save selže.
             </div>
           )}
+          <label className="block pt-1">
+            <span className="text-[13px] text-gray-800">
+              Re-kontrolovat záznamy zpětně (dní)
+            </span>
+            <p className="text-[12px] text-gray-500 mt-0.5">
+              Jak daleko zpět se přehodnocují přeskočené záznamy (přejmenování,
+              přesun složky, přidání projektu). Starší se už nezpracovávají.
+            </p>
+            <input
+              type="number"
+              min={1}
+              value={state.recheck_window_days}
+              onChange={(e) =>
+                setState((s) => ({
+                  ...s,
+                  recheck_window_days: Math.max(1, Number(e.target.value) || 1),
+                }))
+              }
+              className="mt-1 w-28 rounded-md border-gray-300 text-sm"
+            />
+          </label>
         </fieldset>
 
         {/* ----- Cesty na disk ----- */}
