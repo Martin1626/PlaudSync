@@ -4,6 +4,28 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-05-31 — recheck window config + process-only-new main loop (feature)
+
+**Cíl (uživatel):** s rostoucím Plaud cloudem nesmí čas zpracování růst kontrolováním starých, už neměnných záznamů; okno re-kontroly konfigurovatelné (default 14 dní). Symptom před opravou: `recordings_new=88` na každém běhu (přeskočené nahrávky re-zpracovávané donekonečna hlavní smyčkou).
+
+**Brainstorm + spec + plán:** [spec](docs/superpowers/specs/2026-05-31-recheck-window-config-design.md), [plán](docs/superpowers/plans/2026-05-31-recheck-window-config.md). Zvolen přístup B (proces jen nové + delegace re-kontroly na bounded passy). Subagent-driven exekuce (10 tasků, per-task spec+quality review).
+
+**Implementace:**
+- `Config.recheck_window_days: int = 14` + `_validate_positive_int` (config.py), serializace + default YAML (config_io.py), frontend round-trip + Settings číselný input.
+- `resolved_plaud_ids()` (state.py) — set downloaded/skipped (NE failed).
+- Hlavní smyčka ([sync.py](src/plaudsync/sync.py)) zpracuje jen **nikdy neviděné** záznamy (jeden prefetch dotaz → O(1) test); `failed` se retryuje.
+- Tři rolling passy řízené `config.recheck_window_days`.
+
+**Klíčové non-obvious rozhodnutí (rework během exekuce):** Plán nejdřív rozšiřoval query retry passu + bespoke folder/catch-all logiku. Při Task 7 regresi vyšlo najevo, že to nereplikuje artifact-gate chování hlavní smyčky (5 recovery testů padlo: download_audio/sync_unclassified/classify_by_folder flip + project-added). Po konzultaci s uživatelem (recovery **omezená oknem**, plná parita) byl `_retry_skipped_unknown_project` **přepsán na delegaci na `_process_recording`** s `WaterfallClassifier` — jeden sdílený code path, plná recovery parita, **keyed na live listing meta** (řádek chybějící v listingu = trashnutý/smazaný → ponechán, trash-safe konzistentní s BL-8). 4 testy aktualizovány na novou sémantiku (recovery jen pro nahrávky přítomné v listingu).
+
+**Lekce:** Recovery skipnutých nahrávek a hlavní download MUSÍ sdílet jeden code path (`_process_recording`). Dva paralelní implementace klasifikace/gate/download drift-ují (Fix A, Hotfix I/K, a teď tohle). Delegace > duplikace.
+
+**Verifikace:** suite 472 passed, bandit 0 High/Medium, /security-review čistý (rework je security improvement — konsoliduje na hardened path). **Live běh: `recordings_new` 88 → 0** (run 1111); 35 skipů v okně re-kontrolováno, 53 starších už ne → výkonný cíl splněn.
+
+**Kill criteria:** žádné netriggernuto. Follow-up (log only): rename `_retry_skipped_unknown_project` → `_retry_recent_skipped` (název už neodpovídá rozšířenému scope).
+
+---
+
 ## 2026-05-29 — orphan sync_runs řádky u zdroje (crash před finish_sync_run)
 
 **Follow-up na předchozí záznam** (read-side guard ve `_read_running`). Tady se opravuje **vznik** orphanů, ne jen jejich interpretace.

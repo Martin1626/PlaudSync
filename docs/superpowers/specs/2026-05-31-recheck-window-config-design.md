@@ -122,34 +122,44 @@ The three rolling passes currently hardcode `days=14`
 
 Pass `days=config.recheck_window_days` to all three.
 
-**Extend `_retry_skipped_unknown_project`** to cover both skip statuses:
+**Rework `_retry_skipped_unknown_project` to delegate to `_process_recording`**
+(this superseded the initial query-widening sketch during implementation — see
+the 2026-05-31 DEV_LOG entry). The pass now:
 
 ```sql
-WHERE status IN ('skipped', 'skipped_unknown_project')
-  AND created_at_plaud >= ?   -- now - recheck_window_days
+SELECT plaud_id FROM recordings
+WHERE created_at_plaud >= ?                                 -- now - recheck_window_days
+  AND status IN ('skipped', 'skipped_unknown_project')
 ```
 
-Rationale: with the main loop no longer re-checking skips, an *unclassified*
-(`status='skipped'`) recording that the user renames on Plaud (so its title now
-matches a project) must still be recovered within the window. The pass already
-re-classifies against the live title (Fix A) and supports folder fallback via
-`live_metas`, so widening the query is sufficient. The UPSERT path
-`skipped → downloaded` is already supported (Hotfix L). Docstring updated to say
-"recent skips (any skip reason)".
+then, for each row **present in the live listing** (`live_metas`), calls the
+shared `_process_recording(live_meta, WaterfallClassifier(config), config, …)`.
+A row absent from the listing is left untouched (it was trashed/removed on
+Plaud — recovering it would contradict BL-8 trash detection).
 
-**Recovery triggers preserved within the window** (the main loop used to do all
-of these via the full WaterfallClassifier; the bounded pass must match them so
-delegation is regression-free):
+Rationale: delegating to `_process_recording` gives the bounded pass **full
+recovery parity** with the main loop through one code path, instead of
+re-implementing (and drifting from) the classify/gate/download/content logic.
+All recovery triggers are handled by the shared `WaterfallClassifier` +
+`_process_recording` gates, within the window:
 
-1. **Title rename** → live-title re-classify (existing, Fix A).
-2. **Folder move** → live-folder lookup via `lookup_by_folder_id` when
-   `classify_by_folder=true` (existing).
-3. **`sync_unclassified` flipped false→true** → when neither name nor folder
-   matches but `config.sync_unclassified` is now true, the pass downloads the
-   recording to `unclassified_dir` (label `_unclassified`) instead of
-   `continue`-ing. This replaces the catch-all the unbounded main loop used to
-   apply; without it, flipping the flag would no longer recover already-skipped
-   unclassified recordings (regression). Bounded by the same window.
+1. **Title rename** → WaterfallClassifier on the live title.
+2. **Folder move** → WaterfallClassifier folder strategy via the live folder
+   (`classify_by_folder=true`).
+3. **Project added to config** → name match now resolves to a configured project.
+4. **`sync_unclassified` flipped false→true** → WaterfallClassifier catch-all →
+   `_process_recording` downloads to `unclassified_dir`.
+5. **Re-enabled artifact toggle** (`download_audio`/`download_content` off→on) →
+   `_process_recording`'s artifact gates download; when toggles are off it
+   re-records as skipped (no wrongful download). This is why delegation is
+   required — a bespoke query/gate could not match this without duplicating
+   `_process_recording`.
+
+Recovery is **keyed to the live listing meta** (current title/folder), not the
+stale DB row. The `classifier` parameter is retained for signature stability but
+ignored (a `WaterfallClassifier` is built from config internally). The UPSERT
+path `skipped → downloaded` is already supported (Hotfix L), and
+`record_recording` refreshes title/label/source/folder on that transition.
 
 ### 4.4 UI Settings field
 
