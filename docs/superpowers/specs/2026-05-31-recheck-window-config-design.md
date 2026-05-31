@@ -133,9 +133,23 @@ Rationale: with the main loop no longer re-checking skips, an *unclassified*
 (`status='skipped'`) recording that the user renames on Plaud (so its title now
 matches a project) must still be recovered within the window. The pass already
 re-classifies against the live title (Fix A) and supports folder fallback via
-`live_metas`, so widening the query is sufficient; no other body change. The
-UPSERT path `skipped → downloaded` is already supported (Hotfix L). Docstring
-updated to say "recent skips (any skip reason)".
+`live_metas`, so widening the query is sufficient. The UPSERT path
+`skipped → downloaded` is already supported (Hotfix L). Docstring updated to say
+"recent skips (any skip reason)".
+
+**Recovery triggers preserved within the window** (the main loop used to do all
+of these via the full WaterfallClassifier; the bounded pass must match them so
+delegation is regression-free):
+
+1. **Title rename** → live-title re-classify (existing, Fix A).
+2. **Folder move** → live-folder lookup via `lookup_by_folder_id` when
+   `classify_by_folder=true` (existing).
+3. **`sync_unclassified` flipped false→true** → when neither name nor folder
+   matches but `config.sync_unclassified` is now true, the pass downloads the
+   recording to `unclassified_dir` (label `_unclassified`) instead of
+   `continue`-ing. This replaces the catch-all the unbounded main loop used to
+   apply; without it, flipping the flag would no longer recover already-skipped
+   unclassified recordings (regression). Bounded by the same window.
 
 ### 4.4 UI Settings field
 
@@ -180,8 +194,12 @@ Backend (pytest):
   `record_recording` write, `recordings_new` unchanged); a never-seen recording
   **is** processed; a `failed` recording **is** retried.
 - Steady state: second run over the same listing yields `recordings_new == 0`.
-- Retry pass: an unclassified (`status='skipped'`) recording renamed within the
-  window → recovered (downloaded); the same outside the window → not recovered.
+- Retry pass — recovery within the window, not recovered outside it, for each
+  trigger: (a) `skipped_unknown_project` whose project is added to config;
+  (b) `skipped` (unclassified) renamed on Plaud so the title now matches;
+  (c) `skipped` whose folder now maps to a project (`classify_by_folder=true`);
+  (d) `skipped` (unclassified) after `sync_unclassified` is flipped true →
+  downloaded to `unclassified_dir`.
 - Config: absent key defaults to 14; `recheck_window_days <= 0` → validation
   error; round-trip through `config_io` preserves the value.
 
