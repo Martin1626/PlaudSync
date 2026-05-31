@@ -259,3 +259,45 @@ def test_retry_recovers_skip_after_folder_move(tmp_path: Path) -> None:
     ).fetchone()
     assert row == ("downloaded", "OEZ", "folder")
     conn.close()
+
+
+def test_retry_ignores_artifact_disabled_matched_skip(tmp_path: Path) -> None:
+    """A recording matched to a known project but skipped because BOTH artifact
+    toggles are off (classification_source='name') must NOT be re-downloaded by
+    the retry pass — that would override the user's download_audio=false."""
+    project_dir = tmp_path / "OEZ"; unclassified = tmp_path / "U"
+    project_dir.mkdir(); unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified,
+                    projects={"OEZ": ProjectEntry(path=project_dir)},
+                    download_audio=False, download_content=False)
+
+    plaud_id = "rec_artifact_off"
+    conn = open_state(tmp_path)
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+        (datetime.now(timezone.utc).isoformat(), "manual"),
+    )
+    conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, downloaded_at, "
+        "local_path, classifier_label, classification_source, status, sync_run_id, file_size) "
+        "VALUES (?, ?, ?, ?, '', 'OEZ', 'name', 'skipped', 1, 1024)",
+        (plaud_id, "05-20 OEZ: schuzka", _recent_iso(),
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+    client = MagicMock(spec=["download_audio"])
+    client.download_audio.return_value = iter([b"A" * 1024])
+    live_metas = {plaud_id: _live_meta(plaud_id, "05-20 OEZ: schuzka")}
+
+    downloaded, failed = _retry_skipped_unknown_project(
+        conn, client, NameClassifier(), config, run_id=1,
+        live_metas=live_metas, days=14,
+    )
+    assert downloaded == 0
+    client.download_audio.assert_not_called()
+    row = conn.execute(
+        "SELECT status FROM recordings WHERE plaud_id = ?", (plaud_id,)
+    ).fetchone()
+    assert row[0] == "skipped"
+    conn.close()

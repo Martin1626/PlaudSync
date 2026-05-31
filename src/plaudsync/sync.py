@@ -442,8 +442,9 @@ def _retry_skipped_unknown_project(
     rows = conn.execute(
         "SELECT plaud_id, title, created_at_plaud, file_size "
         "FROM recordings "
-        "WHERE status IN ('skipped', 'skipped_unknown_project') "
-        "AND created_at_plaud >= ?",
+        "WHERE created_at_plaud >= ? "
+        "AND (status = 'skipped_unknown_project' "
+        "     OR (status = 'skipped' AND classification_source = 'skip'))",
         (cutoff,),
     ).fetchall()
 
