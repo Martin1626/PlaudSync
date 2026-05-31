@@ -646,12 +646,14 @@ def run_sync(
             sentry_sdk.capture_exception(e)
             # Non-fatal: this is a metadata-only refresh, sync continues.
 
-        # Rolling retry pass for previously-skipped rows whose project may now
-        # be in config. BL-3 — see specs/2026-04-26-bl3-skip-unknown-projects-design.md.
-        # Uses NameClassifier (str-returning) since synthesized DB metas have
-        # no plaud_folder context. Fix A: live title from listing reused.
+        # Rolling retry pass: re-process recent skipped rows (any skip reason)
+        # within the recheck window via the shared _process_recording path
+        # (full WaterfallClassifier recovery — rename / folder / project-added /
+        # sync_unclassified / re-enabled artifact toggles), keyed to the live
+        # listing meta. The classifier arg is ignored (built internally); pass
+        # None. See specs/2026-05-31-recheck-window-config-design.md.
         retry_downloaded, retry_failed = _retry_skipped_unknown_project(
-            conn, client, NameClassifier(), config, run_id, live_metas,
+            conn, client, None, config, run_id, live_metas,
             days=config.recheck_window_days,
         )
 
