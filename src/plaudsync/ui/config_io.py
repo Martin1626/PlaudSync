@@ -41,6 +41,10 @@ projects:
   ProjektAlfa: ${STATE_ROOT}\\Recordings\\ProjektAlfa
   KlientBeta: ${STATE_ROOT}\\Recordings\\KlientBeta
   Interní: ${STATE_ROOT}\\Recordings\\Interní
+
+# Jak daleko zpět (dní) se re-kontrolují přeskočené záznamy (rename / přesun
+# složky / přidání projektu). Starší se už nezpracovávají. Výchozí: 14.
+recheck_window_days: 14
 """
 
 
@@ -74,6 +78,7 @@ def _config_to_dict(config: Config) -> dict:
         "classify_by_name_require_folder": config.classify_by_name_require_folder,
         "classify_by_folder": config.classify_by_folder,
         "sync_unclassified": config.sync_unclassified,
+        "recheck_window_days": config.recheck_window_days,
     }
 
 

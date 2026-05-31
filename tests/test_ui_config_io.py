@@ -41,6 +41,21 @@ def test_read_returns_raw_parsed_for_valid_yaml(tmp_path: Path) -> None:
     assert payload["parse_error"] is None
 
 
+def test_config_payload_includes_recheck_window_days(tmp_path: Path) -> None:
+    from plaudsync.ui.config_io import read_config_payload
+    unclassified = tmp_path / "U"; project = tmp_path / "A"
+    unclassified.mkdir(); project.mkdir()
+    (tmp_path / "config.yaml").write_text(
+        f"unclassified_dir: {unclassified}\n"
+        f"projects:\n  Alfa: {project}\n"
+        f"recheck_window_days: 21\n",
+        encoding="utf-8",
+    )
+    payload = read_config_payload(tmp_path)
+    assert payload["parsed"] is not None
+    assert payload["parsed"]["recheck_window_days"] == 21
+
+
 def test_read_returns_parse_error_for_broken_yaml(tmp_path: Path) -> None:
     _write(tmp_path, "unclassified_dir: : invalid [\n")
 
