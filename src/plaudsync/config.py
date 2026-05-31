@@ -56,6 +56,9 @@ class Config:
     classify_by_name_require_folder: bool = False
     classify_by_folder: bool = False
     sync_unclassified: bool = False
+    # Rolling re-check look-back window (days). Settled skips older than this
+    # are no longer re-evaluated, so per-run cost does not grow with cloud size.
+    recheck_window_days: int = 14
     # DEPRECATED — removed in BL-4/BL-X Task 14 cleanup pass.
     # Kept as no-op attribute so existing test fixtures continue to construct
     # Config(...). Loader logs a deprecation warning when YAML still has the key.
@@ -174,6 +177,23 @@ def _validate_bool(
     return value
 
 
+def _validate_positive_int(
+    data: dict, key: str, default: int, errors: list[ConfigParseError],
+) -> int:
+    value = data.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        errors.append(ConfigParseError(
+            0, f"{key}: must be a positive integer, got {type(value).__name__}",
+        ))
+        return default
+    if value < 1:
+        errors.append(ConfigParseError(
+            0, f"{key}: must be >= 1, got {value}",
+        ))
+        return default
+    return value
+
+
 def load_config(state_root: Path) -> Config:
     config_path = state_root / "config.yaml"
     raw_text = config_path.read_text(encoding="utf-8")
@@ -250,6 +270,7 @@ def load_config(state_root: Path) -> Config:
     )
     classify_by_folder = _validate_bool(data, "classify_by_folder", False, errors)
     sync_unclassified = _validate_bool(data, "sync_unclassified", False, errors)
+    recheck_window_days = _validate_positive_int(data, "recheck_window_days", 14, errors)
 
     # Deprecated key — log warning, do not validate further.
     if "sync_only_foldered" in data:
@@ -282,4 +303,5 @@ def load_config(state_root: Path) -> Config:
         classify_by_name_require_folder=classify_by_name_require_folder,
         classify_by_folder=classify_by_folder,
         sync_unclassified=sync_unclassified,
+        recheck_window_days=recheck_window_days,
     )
