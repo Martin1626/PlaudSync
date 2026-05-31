@@ -487,16 +487,28 @@ def _retry_skipped_unknown_project(
                         classification_source = "folder"
                         folder_hit = True
                 if not folder_hit:
-                    continue
+                    # sync_unclassified catch-all: the main loop used to apply
+                    # this before it stopped re-checking skips. Without it,
+                    # flipping the flag true would never recover already-skipped
+                    # unclassified recordings. Bounded by the same window.
+                    if not config.sync_unclassified:
+                        continue
+                    label = "_unclassified"
+                    classification_source = "none"
 
             # Use live title for filename slug + DB persistence (Fix A —
             # otherwise file lands with stale slug like the original
             # 'Konzultace' from before the user renamed on Plaud).
             effective_title = meta_like.title  # type: ignore[attr-defined]
 
-            result = ClassificationResult(
-                status="matched", project=label, matched_date=None,
-            )
+            if label == "_unclassified":
+                result = ClassificationResult(
+                    status="unclassified", project=None, matched_date=None,
+                )
+            else:
+                result = ClassificationResult(
+                    status="matched", project=label, matched_date=None,
+                )
             date_prefix = created_at[:10]
             filename = f"{date_prefix}_{_slugify(effective_title)}.mp3"
             target_path = resolve_target_path(

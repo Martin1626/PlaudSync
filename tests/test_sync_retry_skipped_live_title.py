@@ -301,3 +301,79 @@ def test_retry_ignores_artifact_disabled_matched_skip(tmp_path: Path) -> None:
     ).fetchone()
     assert row[0] == "skipped"
     conn.close()
+
+
+def test_retry_recovers_unclassified_when_sync_unclassified_on(tmp_path: Path) -> None:
+    """With sync_unclassified=true, a still-unclassified recent skip is
+    downloaded to unclassified_dir by the retry pass (replaces the catch-all
+    the main loop used to apply before it stopped re-checking skips)."""
+    unclassified = tmp_path / "U"; unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified, projects={},
+                    sync_unclassified=True)
+
+    plaud_id = "rec_uncl_catchall"
+    conn = open_state(tmp_path)
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+        (datetime.now(timezone.utc).isoformat(), "manual"),
+    )
+    conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, downloaded_at, "
+        "local_path, classifier_label, classification_source, status, sync_run_id, file_size) "
+        "VALUES (?, ?, ?, ?, '', '_unclassified', 'skip', 'skipped', 1, 1024)",
+        (plaud_id, "2026-05-20 09:12:46", _recent_iso(),
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+    client = MagicMock(spec=["download_audio"])
+    client.download_audio.return_value = iter([b"A" * 1024])
+    # Live title still does not match any project -> stays unclassified.
+    live_metas = {plaud_id: _live_meta(plaud_id, "2026-05-20 09:12:46", plaud_folder="")}
+
+    downloaded, failed = _retry_skipped_unknown_project(
+        conn, client, NameClassifier(), config, run_id=1,
+        live_metas=live_metas, days=14,
+    )
+    assert downloaded == 1
+    mp3 = list(unclassified.rglob("*.mp3"))
+    assert len(mp3) == 1                      # landed in unclassified_dir
+    row = conn.execute(
+        "SELECT status, classifier_label FROM recordings WHERE plaud_id = ?",
+        (plaud_id,),
+    ).fetchone()
+    assert row == ("downloaded", "_unclassified")
+    conn.close()
+
+
+def test_retry_leaves_unclassified_skip_when_sync_unclassified_off(tmp_path: Path) -> None:
+    """Without sync_unclassified, an unmatched skip stays skipped (no download)."""
+    unclassified = tmp_path / "U"; unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified, projects={})  # sync_unclassified defaults False
+
+    plaud_id = "rec_uncl_off"
+    conn = open_state(tmp_path)
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+        (datetime.now(timezone.utc).isoformat(), "manual"),
+    )
+    conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, downloaded_at, "
+        "local_path, classifier_label, classification_source, status, sync_run_id, file_size) "
+        "VALUES (?, ?, ?, ?, '', '_unclassified', 'skip', 'skipped', 1, 1024)",
+        (plaud_id, "2026-05-20 09:12:46", _recent_iso(),
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+    client = MagicMock(spec=["download_audio"])
+    client.download_audio.return_value = iter([b"A" * 1024])
+    live_metas = {plaud_id: _live_meta(plaud_id, "2026-05-20 09:12:46", plaud_folder="")}
+
+    downloaded, failed = _retry_skipped_unknown_project(
+        conn, client, NameClassifier(), config, run_id=1,
+        live_metas=live_metas, days=14,
+    )
+    assert downloaded == 0
+    client.download_audio.assert_not_called()
+    conn.close()
