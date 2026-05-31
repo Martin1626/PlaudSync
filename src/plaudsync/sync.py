@@ -31,7 +31,6 @@ from plaudsync.state import (
     finish_sync_run,
     last_successful_sync,
     record_recording,
-    recording_exists_and_downloaded,
     resolved_plaud_ids,
     start_sync_run,
 )
@@ -727,12 +726,12 @@ def run_sync(
 
         # Pre-fetch full listing ONCE per sync run. Used by:
         # - retry_skipped_unknown_project pass (live title lookup — Fix A)
-        # - main download loop (with recording_exists_and_downloaded dedup)
+        # - main download loop (skips already-settled via resolved_plaud_ids)
         # Fix B (BL-X 2026-04-30): drop `since` filter entirely. Plaud's
         # `start_time` is recording start, NOT upload time — a delayed
         # upload of an older recording was permanently missed by the prior
         # `since=last_successful_sync.finished_at` filter. Existing dedup
-        # via recording_exists_and_downloaded keeps cost bounded.
+        # via resolved_plaud_ids() keeps cost bounded.
         metas = list(client.list_recordings(since=None))
         live_metas = {m.plaud_id: m for m in metas}
 
