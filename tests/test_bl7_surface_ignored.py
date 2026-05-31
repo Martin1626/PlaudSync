@@ -15,6 +15,7 @@ Edge cases covered:
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +55,7 @@ def _rec(
 ) -> dict:
     return {
         "plaud_id": plaud_id, "title": title,
-        "created_at": "2026-04-30T09:00:00+00:00",
+        "created_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
         "start_time_ms": 1745000000000, "duration_seconds": 60,
         "file_size": file_size, "plaud_folder": folder,
     }

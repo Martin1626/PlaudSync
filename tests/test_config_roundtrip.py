@@ -11,6 +11,7 @@ test the round-trip: original-on → toggle-off → toggle-on. This catches
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,7 +48,7 @@ def _rec(plaud_id: str, title: str, folder: str = "_unknown",
          file_size: int = 4) -> dict:
     return {
         "plaud_id": plaud_id, "title": title,
-        "created_at": "2026-04-30T09:00:00+00:00",
+        "created_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
         "start_time_ms": 1745000000000, "duration_seconds": 60,
         "file_size": file_size, "plaud_folder": folder,
     }

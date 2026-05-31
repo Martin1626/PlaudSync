@@ -419,177 +419,51 @@ def _reclassify_recent(
 def _retry_skipped_unknown_project(
     conn: sqlite3.Connection,
     client,
-    classifier: Classifier,
+    classifier: Classifier,  # ignored — kept for call-site/test signature stability
     config: Config,
     run_id: int,
     live_metas: dict | None = None,
     *,
     days: int = 14,
 ) -> tuple[int, int]:
-    """Re-evaluate recent skipped rows (any skip reason) and
-    created_at_plaud within the last `days` days. If the project is now
-    present in config, download the audio and update the row.
+    """Re-process recent skipped rows (any skip reason) within the last `days`
+    days through the SHARED _process_recording path, using the live listing
+    meta. This gives full recovery parity with the main loop — rename, folder
+    move, project added to config, sync_unclassified flip, and re-enabled
+    artifact toggles all recover, with the same artifact gates — but bounded by
+    the window so old settled skips are not re-checked.
 
-    Fix A (BL-X 2026-04-30): when ``live_metas`` is provided, classify
-    against the LIVE Plaud title — handles the case where user renamed
-    the recording on Plaud after PlaudSync's first failed sync. Without
-    this, retry pass would loop on the stale DB title forever.
+    ``classifier`` is ignored; a WaterfallClassifier is built from config so the
+    folder and unclassified-catch-all strategies apply (the live meta carries
+    the Plaud folder + current title). A row absent from ``live_metas`` (removed
+    or trashed on Plaud) is left untouched.
 
-    Returns (downloaded_count, failed_count).
+    Returns (recovered_count, failed_count) where recovered = rows that became
+    'downloaded' this pass.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     rows = conn.execute(
-        "SELECT plaud_id, title, created_at_plaud, file_size "
-        "FROM recordings "
+        "SELECT plaud_id FROM recordings "
         "WHERE created_at_plaud >= ? "
-        "AND (status = 'skipped_unknown_project' "
-        "     OR (status = 'skipped' AND classification_source = 'skip'))",
+        "AND status IN ('skipped', 'skipped_unknown_project')",
         (cutoff,),
     ).fetchall()
 
-    downloaded = 0
+    wf = WaterfallClassifier(config)
+    recovered = 0
     failed = 0
-    for plaud_id, title, created_at, expected_size in rows:
+    for (plaud_id,) in rows:
+        live_meta = live_metas.get(plaud_id) if live_metas else None
+        if live_meta is None:
+            continue
         try:
-            class _MetaLike:
-                pass
-            meta_like = _MetaLike()
-            meta_like.plaud_id = plaud_id  # type: ignore[attr-defined]
-            # Fix A: prefer live title from listing (Plaud-side rename detection).
-            live_meta = live_metas.get(plaud_id) if live_metas else None
-            live_title = getattr(live_meta, "title", None) if live_meta else None
-            meta_like.title = live_title if live_title else title  # type: ignore[attr-defined]
-            meta_like.created_at = created_at  # type: ignore[attr-defined]
-
-            label = classifier.classify(meta_like)
-            classification_source = "name"
-            # Hotfix K (2026-04-30): folder ID for the row's plaud_folder_id
-            # column. Sourced from live_meta when available; persisted via
-            # the UPDATE below regardless of which strategy classified.
-            row_folder_id: str | None = None
-            if live_meta is not None:
-                live_folder = getattr(live_meta, "plaud_folder", None)
-                if live_folder and live_folder != "_unknown":
-                    row_folder_id = live_folder
-            if label == "_unclassified" or config.lookup_project(label) is None:
-                # Hotfix I (2026-04-30): legacy skipped_unknown_project rows
-                # may also benefit from folder fallback now that
-                # WaterfallClassifier supports it. Use live folder from
-                # listing — synthesized DB metas don't have plaud_folder.
-                folder_hit = False
-                if (config.classify_by_folder
-                        and live_meta is not None
-                        and row_folder_id is not None):
-                    folder_label = config.lookup_by_folder_id(row_folder_id)
-                    if folder_label is not None:
-                        label = folder_label
-                        classification_source = "folder"
-                        folder_hit = True
-                if not folder_hit:
-                    # sync_unclassified catch-all: the main loop used to apply
-                    # this before it stopped re-checking skips. Without it,
-                    # flipping the flag true would never recover already-skipped
-                    # unclassified recordings. Bounded by the same window.
-                    if not config.sync_unclassified:
-                        continue
-                    label = "_unclassified"
-                    classification_source = "none"
-
-            # Use live title for filename slug + DB persistence (Fix A —
-            # otherwise file lands with stale slug like the original
-            # 'Konzultace' from before the user renamed on Plaud).
-            effective_title = meta_like.title  # type: ignore[attr-defined]
-
-            if label == "_unclassified":
-                result = ClassificationResult(
-                    status="unclassified", project=None, matched_date=None,
-                )
-            else:
-                result = ClassificationResult(
-                    status="matched", project=label, matched_date=None,
-                )
-            date_prefix = created_at[:10]
-            filename = f"{date_prefix}_{_slugify(effective_title)}.mp3"
-            target_path = resolve_target_path(
-                result, plaud_folder="(retry)", config=config, filename=filename,
-            )
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-
-            bytes_written = 0
-            try:
-                with open(target_path, "wb") as f:
-                    for chunk in client.download_audio(plaud_id):
-                        f.write(chunk)
-                        bytes_written += len(chunk)
-            except Exception:
-                target_path.unlink(missing_ok=True)
-                raise
-
-            if expected_size and bytes_written != expected_size:
-                target_path.unlink(missing_ok=True)
-                raise PlaudDownloadCorrupted(
-                    f"size mismatch on retry: expected={expected_size}, "
-                    f"written={bytes_written}"
-                )
-
-            # BL-4 Task 17: content artifact pass for retry-downloaded recording.
-            # Folder context is unknown (we synthesized meta from DB row), so
-            # content gate's plaud_folder check would always reject. Use the
-            # config flag + label to decide; assume folder check passed
-            # (otherwise the original sync wouldn't have ingested it).
-            content_status: str | None = "not_applicable"
-            content_path: str | None = None
-            content_task_ids_json: str | None = None
-            if (config.download_content
-                    and label and label != "_unclassified"
-                    and hasattr(client, "fetch_detail")):
-                try:
-                    fetch_outcome = ContentFetcher(client).fetch_artifacts(plaud_id)
-                except Exception as e:  # noqa: BLE001
-                    logger.bind(recording_id=plaud_id).exception(
-                        "retry_skipped content fetch failed"
-                    )
-                    with sentry_sdk.new_scope() as scope:
-                        scope.set_tag("error_kind", "content_fetch_failed")
-                        scope.set_tag("recording_id", plaud_id)
-                        sentry_sdk.capture_exception(e)
-                    content_status = "pending"
-                else:
-                    if fetch_outcome.task_ids:
-                        content_task_ids_json = json.dumps(fetch_outcome.task_ids)
-                    if fetch_outcome.status == "complete":
-                        md_path = target_path.with_suffix(".md")
-                        meta_like.plaud_id = plaud_id  # type: ignore[attr-defined]
-                        md_text = compose_markdown(
-                            meta=meta_like,
-                            detail=fetch_outcome.detail,
-                            sections=fetch_outcome.sections,
-                            project=label,
-                            classification_source=classification_source,
-                        )
-                        md_path.write_text(md_text, encoding="utf-8")
-                        content_status = "complete"
-                        content_path = str(md_path)
-                    else:
-                        content_status = fetch_outcome.status
-
-            conn.execute(
-                "UPDATE recordings SET status = 'downloaded', "
-                "title = ?, "
-                "local_path = ?, classifier_label = ?, downloaded_at = ?, "
-                "sync_run_id = ?, classification_source = ?, "
-                "plaud_folder_id = ?, "
-                "content_status = ?, content_path = ?, content_task_ids = ? "
-                "WHERE plaud_id = ?",
-                (effective_title, str(target_path), label,
-                 datetime.now(timezone.utc).isoformat(), run_id,
-                 classification_source, row_folder_id,
-                 content_status, content_path,
-                 content_task_ids_json, plaud_id),
-            )
-            conn.commit()
-            downloaded += 1
+            _process_recording(live_meta, client, wf, config, conn, run_id)
+            row = conn.execute(
+                "SELECT status FROM recordings WHERE plaud_id = ?", (plaud_id,)
+            ).fetchone()
+            if row is not None and row[0] == "downloaded":
+                recovered += 1
         except Exception as e:  # noqa: BLE001
             logger.bind(recording_id=plaud_id).exception("retry_skipped failed")
             with sentry_sdk.new_scope() as scope:
@@ -599,7 +473,7 @@ def _retry_skipped_unknown_project(
                 sentry_sdk.capture_exception(e)
             failed += 1
 
-    return downloaded, failed
+    return recovered, failed
 
 
 def _retry_pending_content(

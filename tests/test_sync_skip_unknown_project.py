@@ -80,16 +80,21 @@ def test_unknown_project_is_skipped_not_downloaded(tmp_path: Path) -> None:
     conn.close()
 
 
-class _ClientNoListing:
-    """Returns no new recordings on listing, but supports download_audio
-    when retry pass calls it for previously-skipped rows."""
+class _ClientRelisting:
+    """Re-lists previously-seen recordings in the live listing (the recording
+    still exists on Plaud) and supports download_audio when the retry pass
+    calls it. The retry pass is keyed to the live listing meta, so recovery
+    requires the recording to appear here — exactly as it does in production."""
 
-    def __init__(self, audio_bytes: dict[str, bytes]) -> None:
+    def __init__(
+        self, audio_bytes: dict[str, bytes], metas: list[_MetaStub] | None = None
+    ) -> None:
         self._audio = audio_bytes
+        self._metas = metas or []
         self.download_calls: list[str] = []
 
     def list_recordings(self, since=None):
-        return iter([])
+        yield from self._metas
 
     def download_audio(self, plaud_id: str):
         self.download_calls.append(plaud_id)
@@ -132,7 +137,19 @@ def test_skipped_recording_retried_after_config_update(tmp_path: Path) -> None:
         unclassified_dir=unclassified,
         projects={"ALZA": alza_dir, "UNKNOWN": unknown_dir},
     )
-    client_v2 = _ClientNoListing({"rec-retry-1": b"the-audio-bytes"})
+    # The recording still exists on Plaud — it re-appears in the live listing.
+    # The retry pass is keyed to the live meta (current title/folder), so it
+    # recovers the now-configured project from this listing entry.
+    client_v2 = _ClientRelisting(
+        {"rec-retry-1": b"the-audio-bytes"},
+        metas=[
+            _MetaStub(
+                plaud_id="rec-retry-1",
+                title="04-26 UNKNOWN: bar",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        ],
+    )
 
     exit_v2 = run_sync(client_v2, CategorizationClassifier(), conn, config_v2, "manual")
     assert exit_v2 == 0
@@ -195,7 +212,7 @@ def test_skipped_recording_outside_14d_window_not_retried(tmp_path: Path) -> Non
         classifier_label="UNKNOWN",
     )
 
-    client = _ClientNoListing({"rec-old-1": b"should-never-be-fetched"})
+    client = _ClientRelisting({"rec-old-1": b"should-never-be-fetched"})
     exit_code = run_sync(client, CategorizationClassifier(), conn, config, "manual")
 
     assert exit_code == 0
@@ -240,7 +257,21 @@ def test_retry_detects_size_mismatch(tmp_path: Path) -> None:
 
     config_v2 = Config(unclassified_dir=unclassified,
                        projects={"UNKNOWN": unknown_dir})
-    client_v2 = _ClientNoListing({"rec-truncated": b"only-30-bytes-not-100--padding"})
+    # Recording still on Plaud — re-appears in the live listing with the
+    # expected file_size=100. The retry pass routes it through
+    # _process_recording, whose size check trips when download yields fewer
+    # bytes (30) than the listing's file_size (100).
+    client_v2 = _ClientRelisting(
+        {"rec-truncated": b"only-30-bytes-not-100--padding"},
+        metas=[
+            _MetaStub(
+                plaud_id="rec-truncated",
+                title="04-26 UNKNOWN: trunc",
+                created_at=datetime.now(timezone.utc).isoformat(),
+                file_size=100,
+            )
+        ],
+    )
 
     exit_code = run_sync(client_v2, CategorizationClassifier(), conn,
                          config_v2, "manual")

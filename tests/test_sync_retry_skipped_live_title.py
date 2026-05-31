@@ -114,9 +114,12 @@ def test_retry_uses_live_title_after_plaud_rename(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_retry_falls_back_to_db_title_when_live_meta_absent(tmp_path: Path) -> None:
-    """Recording removed/trashed on Plaud — live_metas dict has no entry.
-    Retry pass falls back to DB title (existing pre-fix behavior)."""
+def test_retry_leaves_skip_untouched_when_absent_from_listing(tmp_path: Path) -> None:
+    """A recording absent from the live listing is treated as removed/trashed
+    on Plaud and left untouched — recovery is keyed to the live meta (current
+    title/folder). We never re-download something gone from Plaud, consistent
+    with BL-8 trash detection. The stale DB title is intentionally NOT used as
+    a fallback: a row with no live_metas entry stays skipped."""
     project_dir = tmp_path / "ALZA"
     unclassified = tmp_path / "U"
     project_dir.mkdir()
@@ -138,17 +141,24 @@ def test_retry_falls_back_to_db_title_when_live_meta_absent(tmp_path: Path) -> N
     client = MagicMock(spec=["download_audio"])
     client.download_audio.return_value = iter([b"A" * 1024])
 
-    # live_metas={} simulates Plaud-side removal/trash
+    # live_metas={} simulates Plaud-side removal/trash — no live meta to key on.
     downloaded, failed = _retry_skipped_unknown_project(
         conn, client, NameClassifier(), config, run_id=1,
         live_metas={}, days=14,
     )
-    assert downloaded == 1  # DB title was already valid → still works
+    assert downloaded == 0  # absent from listing → not recovered
+    client.download_audio.assert_not_called()
+    row = conn.execute(
+        "SELECT status FROM recordings WHERE plaud_id = ?", (plaud_id,),
+    ).fetchone()
+    assert row[0] == "skipped_unknown_project"  # status unchanged
     conn.close()
 
 
-def test_retry_works_when_live_metas_is_none(tmp_path: Path) -> None:
-    """Pre-Fix-A callers passing live_metas=None must keep working."""
+def test_retry_recovers_nothing_when_live_metas_is_none(tmp_path: Path) -> None:
+    """run_sync always supplies live_metas built from the listing; if none is
+    provided (defensive default), the pass has no live meta to key recovery on
+    and recovers nothing — no crash, no download."""
     project_dir = tmp_path / "ALZA"
     unclassified = tmp_path / "U"
     project_dir.mkdir()
@@ -173,7 +183,8 @@ def test_retry_works_when_live_metas_is_none(tmp_path: Path) -> None:
         conn, client, NameClassifier(), config, run_id=1, days=14,
         # live_metas not passed — defaults to None
     )
-    assert downloaded == 1
+    assert downloaded == 0
+    client.download_audio.assert_not_called()
     conn.close()
 
 
