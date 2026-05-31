@@ -90,6 +90,19 @@ def recording_exists_and_downloaded(conn: sqlite3.Connection, plaud_id: str) -> 
     return row is not None
 
 
+def resolved_plaud_ids(conn: sqlite3.Connection) -> set[str]:
+    """plaud_ids already settled — downloaded OR skipped. The main loop skips
+    these so per-run work is proportional to new recordings, not total cloud
+    size. 'failed' is deliberately excluded so failed downloads are retried.
+    Re-checking of settled skips is the bounded rolling passes' job.
+    """
+    rows = conn.execute(
+        "SELECT plaud_id FROM recordings "
+        "WHERE status IN ('downloaded', 'skipped', 'skipped_unknown_project')"
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
 def record_recording(
     conn: sqlite3.Connection,
     meta: object,  # duck-typed: needs .plaud_id, .title, .created_at; .file_size optional

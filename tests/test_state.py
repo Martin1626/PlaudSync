@@ -117,3 +117,23 @@ def test_recording_exists_and_downloaded(tmp_path: Path) -> None:
                      local_path="C:/A/rec.mp3", run_id=rid)
     assert recording_exists_and_downloaded(conn, "rec_003")
     conn.close()
+
+
+def test_resolved_plaud_ids_excludes_failed(tmp_path: Path) -> None:
+    from plaudsync.state import (
+        open_state, record_recording, resolved_plaud_ids, start_sync_run,
+    )
+
+    class _Meta:
+        def __init__(self, pid): self.plaud_id = pid; self.title = "T"; self.created_at = "2026-05-20T10:00:00+00:00"
+
+    conn = open_state(tmp_path)
+    rid = start_sync_run(conn, "manual")
+    record_recording(conn, _Meta("dl"), status="downloaded", local_path="x.mp3", run_id=rid)
+    record_recording(conn, _Meta("sk"), status="skipped", local_path="", run_id=rid)
+    record_recording(conn, _Meta("su"), status="skipped_unknown_project", local_path="", run_id=rid)
+    record_recording(conn, _Meta("fa"), status="failed", local_path="", run_id=rid)
+
+    ids = resolved_plaud_ids(conn)
+    assert ids == {"dl", "sk", "su"}      # failed is retryable -> excluded
+    conn.close()
