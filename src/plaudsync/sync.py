@@ -426,7 +426,7 @@ def _retry_skipped_unknown_project(
     *,
     days: int = 14,
 ) -> tuple[int, int]:
-    """Re-evaluate rows with status='skipped_unknown_project' and
+    """Re-evaluate recent skipped rows (any skip reason) and
     created_at_plaud within the last `days` days. If the project is now
     present in config, download the audio and update the row.
 
@@ -442,7 +442,7 @@ def _retry_skipped_unknown_project(
     rows = conn.execute(
         "SELECT plaud_id, title, created_at_plaud, file_size "
         "FROM recordings "
-        "WHERE status = 'skipped_unknown_project' "
+        "WHERE status IN ('skipped', 'skipped_unknown_project') "
         "AND created_at_plaud >= ?",
         (cutoff,),
     ).fetchall()
@@ -764,7 +764,8 @@ def run_sync(
         # Uses NameClassifier (str-returning) since synthesized DB metas have
         # no plaud_folder context. Fix A: live title from listing reused.
         retry_downloaded, retry_failed = _retry_skipped_unknown_project(
-            conn, client, NameClassifier(), config, run_id, live_metas, days=14,
+            conn, client, NameClassifier(), config, run_id, live_metas,
+            days=config.recheck_window_days,
         )
 
         # Rolling re-classify pass: re-evaluate recent downloaded rows against
@@ -774,7 +775,8 @@ def run_sync(
         # 2026-04-30). Uses NameClassifier (name-only); folder context absent
         # in DB. Failures roll into failed_count via exit_code.
         reclassify_moved, reclassify_failed = _reclassify_recent(
-            conn, NameClassifier(), config, run_id, live_metas, days=14,
+            conn, NameClassifier(), config, run_id, live_metas,
+            days=config.recheck_window_days,
         )
 
         # BL-4 Task 16: retry pending content (.md sourozenec generation).
@@ -783,7 +785,7 @@ def run_sync(
         # Older than 14d → not_applicable + Sentry content_stale alert.
         try:
             content_completed, content_failed = _retry_pending_content(
-                conn, client, days=14,
+                conn, client, days=config.recheck_window_days,
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("retry_pending_content pass crashed")

@@ -175,3 +175,87 @@ def test_retry_works_when_live_metas_is_none(tmp_path: Path) -> None:
     )
     assert downloaded == 1
     conn.close()
+
+
+def test_retry_recovers_renamed_unclassified_skip(tmp_path: Path) -> None:
+    """A plain 'skipped' (unclassified) recording renamed on Plaud so its title
+    now matches a configured project must be recovered by the retry pass within
+    the window — the main loop no longer re-checks skips."""
+    project_dir = tmp_path / "OEZ"; unclassified = tmp_path / "U"
+    project_dir.mkdir(); unclassified.mkdir()
+    config = Config(unclassified_dir=unclassified,
+                    projects={"OEZ": ProjectEntry(path=project_dir)})
+
+    plaud_id = "rec_uncl_001"
+    conn = open_state(tmp_path)
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+        (datetime.now(timezone.utc).isoformat(), "manual"),
+    )
+    conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, downloaded_at, "
+        "local_path, classifier_label, classification_source, status, sync_run_id, file_size) "
+        "VALUES (?, ?, ?, ?, '', '_unclassified', 'skip', 'skipped', 1, 1024)",
+        (plaud_id, "2026-05-20 09:12:46", _recent_iso(),
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+    client = MagicMock(spec=["download_audio"])
+    client.download_audio.return_value = iter([b"A" * 1024])
+    live_metas = {plaud_id: _live_meta(plaud_id, "05-20 OEZ: Úprava layoutu")}
+
+    downloaded, failed = _retry_skipped_unknown_project(
+        conn, client, NameClassifier(), config, run_id=1,
+        live_metas=live_metas, days=14,
+    )
+    assert downloaded == 1
+    row = conn.execute(
+        "SELECT status, classifier_label FROM recordings WHERE plaud_id = ?",
+        (plaud_id,),
+    ).fetchone()
+    assert row == ("downloaded", "OEZ")
+    conn.close()
+
+
+def test_retry_recovers_skip_after_folder_move(tmp_path: Path) -> None:
+    """A plain 'skipped' recording moved into a project-mapped Plaud folder is
+    recovered via folder fallback within the window (classify_by_folder=true)."""
+    project_dir = tmp_path / "OEZ"; unclassified = tmp_path / "U"
+    project_dir.mkdir(); unclassified.mkdir()
+    config = Config(
+        unclassified_dir=unclassified,
+        projects={"OEZ": ProjectEntry(path=project_dir, plaud_folder_id="fld_oez")},
+        classify_by_folder=True,
+    )
+
+    plaud_id = "rec_folder_move"
+    conn = open_state(tmp_path)
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, trigger) VALUES (?, ?)",
+        (datetime.now(timezone.utc).isoformat(), "manual"),
+    )
+    conn.execute(
+        "INSERT INTO recordings (plaud_id, title, created_at_plaud, downloaded_at, "
+        "local_path, classifier_label, classification_source, status, sync_run_id, file_size) "
+        "VALUES (?, ?, ?, ?, '', '_unclassified', 'skip', 'skipped', 1, 1024)",
+        (plaud_id, "2026-05-20 09:12:46", _recent_iso(),
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+    client = MagicMock(spec=["download_audio"])
+    client.download_audio.return_value = iter([b"A" * 1024])
+    live_metas = {plaud_id: _live_meta(plaud_id, "2026-05-20 09:12:46", plaud_folder="fld_oez")}
+
+    downloaded, failed = _retry_skipped_unknown_project(
+        conn, client, NameClassifier(), config, run_id=1,
+        live_metas=live_metas, days=14,
+    )
+    assert downloaded == 1
+    row = conn.execute(
+        "SELECT status, classifier_label, classification_source FROM recordings WHERE plaud_id = ?",
+        (plaud_id,),
+    ).fetchone()
+    assert row == ("downloaded", "OEZ", "folder")
+    conn.close()
