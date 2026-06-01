@@ -6,6 +6,8 @@ import threading
 import time
 from pathlib import Path
 
+from loguru import logger
+
 from plaudsync.progress import (
     clear_progress,
     progress_path,
@@ -68,6 +70,40 @@ def test_clear_progress_tolerates_locked_file(tmp_path: Path) -> None:
     # Hold an open handle for the whole call, mimicking the UI poller mid-read.
     with target.open("r", encoding="utf-8"):
         clear_progress(tmp_path)  # must return without raising even while locked
+
+
+def test_write_progress_degrades_quietly_when_target_persistently_locked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """write_progress must NOT raise when os.replace keeps failing with
+    PermissionError (e.g. an AV scan holding the target open, WinError 5, or a
+    reader on Windows, WinError 32). progress.json is a UI-only hint; raising
+    propagates up run_sync and reports an otherwise-successful sync as a
+    crashed pipeline (observed 2026-06-01 07:59 exit_code=1). Degrade quietly
+    (warn + return), mirroring clear_progress, and never leak the temp file.
+    """
+    import plaudsync.progress as progress_mod
+
+    def always_locked(src, dst):
+        raise PermissionError("[WinError 5] Access is denied")
+
+    monkeypatch.setattr(progress_mod.os, "replace", always_locked)
+    # Don't actually sleep through the retry budget — keep the test instant.
+    monkeypatch.setattr(progress_mod.time, "sleep", lambda *_a, **_k: None)
+
+    warnings: list[str] = []
+    sink_id = logger.add(lambda m: warnings.append(str(m)), level="WARNING")
+    try:
+        # Must return without raising even though every replace attempt fails.
+        write_progress(tmp_path, sync_run_id=7, phase="finalizing",
+                       processed_count=None, total_count=None)
+    finally:
+        logger.remove(sink_id)
+
+    assert any("write_progress" in w for w in warnings), \
+        f"expected a degraded-write warning, got: {warnings}"
+    leftovers = list((tmp_path / ".plaudsync").glob(".progress.*.tmp"))
+    assert leftovers == [], f"temp file leaked after locked write: {leftovers}"
 
 
 def test_read_progress_missing_returns_none(tmp_path: Path) -> None:
