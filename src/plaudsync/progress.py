@@ -68,19 +68,37 @@ def write_progress(
             f.flush()
             os.fsync(f.fileno())
         # Windows: os.replace can transiently fail with PermissionError when
-        # a reader has the destination briefly open. Retry with *jittered*
-        # backoff — a fixed schedule resonates with a steadily-polling reader
-        # so every attempt lands on an open handle; randomizing decorrelates
-        # the retry from the reader's rhythm (measured ~5x fewer exhaustions).
-        for attempt in range(30):
+        # the destination is held open — a fast reader (WinError 32) or a
+        # longer hold such as an AV scan touching the file (WinError 5).
+        # Retry with *jittered* backoff: a fixed schedule resonates with a
+        # steadily-polling reader so every attempt lands on an open handle;
+        # randomizing decorrelates the retry from the reader's rhythm
+        # (measured ~5x fewer exhaustions). The jitter ceiling *escalates*
+        # with the attempt count — tight early retries shake off a fast
+        # reader, widening ones ride out a multi-hundred-ms AV lock (total
+        # worst-case window ~2s vs the old ~75ms that crashed on 2026-06-01).
+        for attempt in range(60):
             try:
                 os.replace(tmp_path, target)
                 return
             except PermissionError:
-                if attempt == 29:
-                    raise
+                if attempt == 59:
+                    # progress.json is a UI-only hint; a failed update must not
+                    # crash the sync pipeline. Degrade quietly like
+                    # clear_progress — the next write_progress overwrites the
+                    # stale file. Drop the temp file we couldn't promote.
+                    logger.warning(
+                        "write_progress: target still locked after retries, "
+                        "skipping progress update"
+                    )
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    return
                 # jitter is retry timing, not a security context
-                time.sleep(random.uniform(0.001, 0.004))  # nosec B311
+                upper = min(0.004 + attempt * 0.01, 0.1)
+                time.sleep(random.uniform(0.001, upper))  # nosec B311
     except Exception:
         try:
             os.unlink(tmp_path)

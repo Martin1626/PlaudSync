@@ -4,6 +4,20 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-06-01 — write_progress: tichá degradace na trvalém zámku (produkční crash)
+
+**Symptom:** Log `c:\PlaudSync\.plaudsync\plaudsync.log` — jediný dnešní ERROR `SchedulerThread: pipeline raised uncaught exception` @07:59:32, traceback končí `PermissionError: [WinError 5] … .progress.*.tmp -> progress.json` ([progress.py](src/plaudsync/progress.py) `os.replace`, ř. 77). Jinak úspěšný běh (35 nahrávek zpracováno + skipnuto) se reportoval jako spadlá pipeline (`exit_code=1`). Scheduler crash NEpřežil fatálně — `except Exception` v [scheduler_loop.py](src/plaudsync/tray/scheduler_loop.py) ho zachytil, následující běh @12:00 prošel čistě.
+
+**Root cause:** Navazuje na [[write_progress retry rezonance]] (29.5.) a [[clear_progress fix]]. Jittered backoff (30 pokusů, 1–4 ms → ~75 ms okno) byl laděný na **rychle pollujícího čtenáře** (WinError 32). 1.6. ale šlo o **delší zámek** (WinError 5 — typicky AV scan dotýkající se cíle), který 75ms okno přečkalo a smyčka po vyčerpání **raisla**. Dvě mezery: (1) okno krátké na multi-set-ms zámek, (2) `write_progress` na rozdíl od `clear_progress` na exhaustion stále raisoval, ač je `progress.json` jen UI nápověda.
+
+**Fix (TDD):** [progress.py](src/plaudsync/progress.py) — (1) **eskalující** jitter strop (`min(0.004 + attempt*0.01, 0.1)`, 60 pokusů): těsné rané retry setřesou čtenáře, širší pozdější přečkají AV zámek (worst-case okno ~2 s vs. 75 ms); (2) na vyčerpání **degraduj tiše** (warn + úklid temp + return) místo raise — sjednoceno s `clear_progress`, další `write_progress` přepíše stale soubor. Test `test_write_progress_degrades_quietly_when_target_persistently_locked` (failing→green): monkeypatch `os.replace`→trvalý `PermissionError`, `sleep`→no-op; aserce že write neraisne, warne, a nenechá leaklý temp. Suite 473 passed, /review čistý ([]).
+
+**Lekce:** Best-effort UI artefakt (progress.json) NESMÍ shodit sync pipeline. Retry smyčka proti zámku potřebuje okno škálované na **nejdelší realistický** zámek (AV scan ≫ pollující čtenář), ne jen na nejčastější. Degradace > raise u všeho, co běží uvnitř/kolem `run_sync` finally/handler (stejné poučení jako [[clear_progress fix]] a orphan sync_runs).
+
+**Kill criteria:** žádné netriggernuto.
+
+---
+
 ## 2026-05-31 — recheck window config + process-only-new main loop (feature)
 
 **Cíl (uživatel):** s rostoucím Plaud cloudem nesmí čas zpracování růst kontrolováním starých, už neměnných záznamů; okno re-kontroly konfigurovatelné (default 14 dní). Symptom před opravou: `recordings_new=88` na každém běhu (přeskočené nahrávky re-zpracovávané donekonečna hlavní smyčkou).
