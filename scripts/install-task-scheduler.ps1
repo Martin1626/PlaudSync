@@ -14,6 +14,13 @@
     Absolute path to the PlaudSync repo (where .venv lives).
 .PARAMETER TaskName
     Scheduled task name. Default "PlaudSync".
+.PARAMETER TargetUser
+    The interactive desktop account the tray must run for, "DOMAIN\user".
+    Default = the account running this script. WARNING: if you run this script
+    from a `runas` / elevated terminal under a *different* account than the one
+    that actually logs into the desktop, the default bakes in the wrong user and
+    the logon trigger will never fire (the tray never autostarts). In that case
+    pass the real desktop login explicitly, e.g. -TargetUser "KVADOS\martint".
 
 .EXAMPLE
     PS> .\install-task-scheduler.ps1
@@ -30,11 +37,21 @@
 
 [CmdletBinding()]
 param(
-    [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
-    [string]$TaskName = "PlaudSync"
+    [string]$ProjectRoot,
+    [string]$TaskName = "PlaudSync",
+    [string]$TargetUser = "$env:USERDOMAIN\$env:USERNAME"
 )
 
 $ErrorActionPreference = "Stop"
+
+# Resolve repo root robustly. $PSScriptRoot is normally the script's folder, but
+# it can come back EMPTY under some `-File` / Start-Process -Verb RunAs elevated
+# invocations (a Join-Path on an empty string then throws). Resolve in the body
+# with a $MyInvocation fallback instead of in the param default.
+if (-not $ProjectRoot) {
+    $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+    $ProjectRoot = (Resolve-Path (Join-Path $scriptDir "..")).Path
+}
 
 $venvPython = Join-Path $ProjectRoot ".venv\Scripts\pythonw.exe"
 if (-not (Test-Path $venvPython)) {
@@ -55,10 +72,10 @@ $action = New-ScheduledTaskAction `
     -Argument "-m plaudsync tray" `
     -WorkingDirectory $ProjectRoot
 
-# Trigger: at user logon (current user only)
+# Trigger: at logon of the interactive desktop user (see -TargetUser note)
 $trigger = New-ScheduledTaskTrigger `
     -AtLogOn `
-    -User "$env:USERDOMAIN\$env:USERNAME"
+    -User $TargetUser
 
 # Settings: single instance, restart on failure 3× with 1 min interval
 $settings = New-ScheduledTaskSettingsSet `
@@ -71,17 +88,25 @@ $settings = New-ScheduledTaskSettingsSet `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -DisallowDemandStart:$false
 
-# Run as current user, only when logged on, standard token (not elevated)
+# Run as the interactive desktop user, only when logged on, standard token (not elevated)
 $principal = New-ScheduledTaskPrincipal `
-    -UserId "$env:USERDOMAIN\$env:USERNAME" `
+    -UserId $TargetUser `
     -LogonType Interactive `
     -RunLevel Limited
 
-# Replace existing task if present (idempotent)
-if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-    Write-Host "Removing existing task '$TaskName'..."
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-}
+# Replace existing task if present (idempotent). Unregister unconditionally
+# (SilentlyContinue swallows "not found") then register with -Force, which
+# overwrites an existing same-name task. We do NOT call schtasks.exe here:
+# under $ErrorActionPreference='Stop' its stderr ("not found") is wrapped as a
+# terminating NativeCommandError and halts the script.
+#
+# NOTE: this does NOT heal a *pure* orphaned TaskCache registry node
+# (HKLM\...\Schedule\TaskCache\Tree\<name> present but no task file) — that
+# rare corruption makes Register fail with ERROR_ALREADY_EXISTS (0x800700b7)
+# and must be cleared manually from an elevated shell:
+#   Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\$TaskName" -Recurse -Force
+Write-Host "Removing any existing '$TaskName' registration (a 'not found' here is fine)..."
+Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 
 Register-ScheduledTask `
     -TaskName $TaskName `
@@ -90,11 +115,12 @@ Register-ScheduledTask `
     -Settings $settings `
     -Principal $principal `
     -Description "PlaudSync tray-resident runtime: sync engine + UI launcher. Spustí se při loginu, restart 3× po failure (interval 1 min)." `
+    -Force `
     | Out-Null
 
 Write-Host ""
 Write-Host "Registered scheduled task '$TaskName':"
-Write-Host "  Trigger:    At logon ($env:USERDOMAIN\$env:USERNAME)"
+Write-Host "  Trigger:    At logon ($TargetUser)"
 Write-Host "  Action:     $venvPython -m plaudsync tray"
 Write-Host "  Restart:    3× po 1 min při failure"
 Write-Host "  Run-level:  Limited (standard user token)"
