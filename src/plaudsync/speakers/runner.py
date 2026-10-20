@@ -341,10 +341,11 @@ def _sample_change(
         # The user took the cluster over; a later return to our name is theirs, not ours.
         written.pop(cluster)
         _set_row_json(ctx, plaud_id, "written", written)
-    # Moved or un-named: a flag against the old person no longer applies.
+    # Moved or un-named: a flag against (or confirmation as) the old person no longer
+    # applies; an excluded sample stays excluded.
     ctx.conn.execute(
         "UPDATE speaker_embeddings SET review_status='none' "
-        "WHERE id=? AND review_status='flagged'",
+        "WHERE id=? AND review_status IN ('flagged','confirmed')",
         (eid,),
     )
     ctx.conn.commit()
