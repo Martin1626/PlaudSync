@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 
+import { useSpeakersQuery } from "@/api/hooks";
 import type { SyncState } from "@/api/types";
 import { classNames } from "@/utils/format";
 
@@ -11,12 +12,14 @@ interface Props {
 }
 
 export default function Header({ sync }: Props) {
+  const pending = useSpeakersQuery("flagged").data?.pending_count ?? 0;
   return (
     <header className="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-gray-200">
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center gap-6">
         <Logo />
         <nav className="flex items-center gap-1 ml-2">
           <NavTab to="/" label="Přehled" />
+          <NavTab to="/speakers" label="Řečníci" count={pending} />
           <NavTab to="/settings" label="Nastavení" />
         </nav>
         <div className="ml-auto">
@@ -30,9 +33,10 @@ export default function Header({ sync }: Props) {
 interface NavTabProps {
   to: string;
   label: string;
+  count?: number;
 }
 
-function NavTab({ to, label }: NavTabProps) {
+function NavTab({ to, label, count }: NavTabProps) {
   return (
     <NavLink
       to={to}
@@ -49,6 +53,11 @@ function NavTab({ to, label }: NavTabProps) {
       {({ isActive }) => (
         <>
           {label}
+          {count !== undefined && count > 0 && (
+            <span className="ml-1.5 inline-flex items-center justify-center min-w-5 px-1.5 text-xs font-semibold rounded-full bg-blue-600 text-white">
+              {count}
+            </span>
+          )}
           {isActive && (
             <span className="absolute -bottom-[13px] left-2 right-2 h-0.5 bg-blue-600 rounded-full" />
           )}
