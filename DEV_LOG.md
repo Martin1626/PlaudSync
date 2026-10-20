@@ -4,6 +4,29 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-10-20 — spike: auto-pojmenování speakerů (write-back + přesnost lokální galerie hlasů)
+
+**Cíl:** u nových schůzek doplnit jména speakerů z lokální galerie hlasů naplněné dřívějšími ručními přiřazeními v Plaudu; jména zapsat zpět do Plaud cloudu (přepis i shrnutí). Rozhodnutí z průzkumu (skill pruzkum): embeddingy lokálně přes **sherpa-onnx** (Apache-2, ONNX, bez PyTorch); Plaud `embeddings` mrtvé (pole v `/file/detail` je prázdné → `DetailMeta.speakers_count` je vždy 0, kandidát na bugfix). Revize BL-4 „embeddings NEVER“: hlasové otisky se smí ukládat lokálně, ne do cloudu.
+
+**Write-back ([scripts/spike_speaker_writeback.py](scripts/spike_speaker_writeback.py), živě na testovací nahrávce):** jméno žije na 3 místech — `trans_result` (`PATCH /file/{id}`) + content `transaction` a `transaction_polish` (`POST /ai/update_source_info`); původní shrnutí in-place přes `POST /ai/update_note_info` (payload z web app JS, zrušený auto-matching). Re-read PASS + ověřeno ve web i mobilní appce. Slepé uličky: `/ai/transsumm` (nová transkripce = reset jmen), `/ai/sum_new_note` (funguje, ale nová záložka shrnutí).
+
+**Přesnost ([scripts/spike_speaker_id.py](scripts/spike_speaker_id.py), read-only; cache přepisů/audia/modelů mimo repo v `%LOCALAPPDATA%\plaudsync\`):**
+- *Test 2 — historie (60 dní, 175 nahrávek):* 83 % přepsaných má ≥1 ručně pojmenovaného speakera, 59 % řeči pojmenováno, 59 osob, 44 testovatelných (≥2 nahrávky s ≥30 s). Žádný Plaud cluster nenese 2 jména; 9× jedno jméno přes 2 clustery (Plaud rozdělil osobu). Medián segmentu 7,6 s.
+- *Test 1 — leave-one-recording-out (54 nahrávek, 46 h, 211 pojmenovaných clusterů, 25 impostorů):* embedding na Plaud cluster (nejdelší segmenty ≥1,5 s, cap 120 s), galerie = centroid/osobu z ostatních nahrávek. **CAM++ (3D-Speaker) @ práh 0,70: precision 100 %, coverage 96,8 %, FAR 0/25, CPU 17 s/h audia → KC1–KC4 PASS.** Ostrý skok 0,65→0,70 (FAR 28 %→0) → produkčně **práh 0,75** (coverage 94,6 %). WeSpeaker ResNet34 (VoxCeleb) FAIL — skóre všech párů ≥0,8 (pravděpodobně feature mismatch), 44 s CPU/h.
+- *Test 3 — audio:* lokální „.mp3“ jsou OGG Opus 16 kHz mono, libsndfile dekóduje přímo. U 8/62 nahrávek končí přepis o 25–30 s později než audio → přeskočeny; příčina **neznámá** (zkrácený soubor vs. časový posun).
+- *Test 4 — připravenost (10 nejnovějších):* listing `is_trans`/`is_summary` se shoduje s content `task_status`; nepřepsané nahrávky mají prázdný `content_list`, mezistav nezachycen. Gate = listing flags + `task_status == 1`.
+- *Test 5 — tvary ve shrnutích:* jen `Speaker N` (anglicky i v českých shrnutích), obalené `[...]`, `*...*`, `**...:**`; regex `(?<!\w)Speaker N(?!\d)` je pokrývá. JSON-wrapped notes ve vzorku nebyly.
+
+**Lekce:** (1) Plný scan historie = ~1 400 API volání; spike skripty musí mít `--days` / `--limit` / `--delay` a cache od začátku (uživatel: šetřit Plaud API kvůli banu). (2) Celé dekódování 2h nahrávky = ~0,5–1 GB RAM → číst jen segmenty přes `SoundFile.seek`.
+
+**Ruční kontrola:** `spike_speaker_id.py review` vygeneruje lokální HTML (audio ukázky, mimo repo, po kontrole smazat) se spornými případy — 1× jiná osoba (0,65), 12× cizí hlas podobný osobě z galerie (0,60–0,69; podezření na varianty jmen), 9× správně pod prahem 0,75. Verdikty uživatele zatím nevyhodnoceny.
+
+**Otevřené:** GDPR čl. 9 (hlasy kolegů/klientů) → firma/DPO před produkcí (KC6); FAR jen na 25 impostorech (horní mez ~12 %) → ověřit v režimu „návrh + potvrzení“; souběh zápisů přes `file_version`; offset přepis vs. audio.
+
+**Kill criteria:** KC1–KC4 PASS (CAM++), KC5 OK (0 smíšených clusterů), KC6 otevřené.
+
+---
+
 ## 2026-06-01 — write_progress: tichá degradace na trvalém zámku (produkční crash)
 
 **Symptom:** Log `c:\PlaudSync\.plaudsync\plaudsync.log` — jediný dnešní ERROR `SchedulerThread: pipeline raised uncaught exception` @07:59:32, traceback končí `PermissionError: [WinError 5] … .progress.*.tmp -> progress.json` ([progress.py](src/plaudsync/progress.py) `os.replace`, ř. 77). Jinak úspěšný běh (35 nahrávek zpracováno + skipnuto) se reportoval jako spadlá pipeline (`exit_code=1`). Scheduler crash NEpřežil fatálně — `except Exception` v [scheduler_loop.py](src/plaudsync/tray/scheduler_loop.py) ho zachytil, následující běh @12:00 prošel čistě.
