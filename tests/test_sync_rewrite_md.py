@@ -75,3 +75,22 @@ def test_rewrite_md_no_content_path_returns_false(tmp_path: Path) -> None:
         client.fetch_detail.assert_not_called()
     finally:
         conn.close()
+
+
+def test_rewrite_md_pending_content_writes_nothing(tmp_path: Path) -> None:
+    # A content item not ready (e.g. summary being regenerated): a partial .md must not
+    # replace the complete one, since content_status stays 'complete' and nothing repairs it.
+    md = tmp_path / "rec1.md"
+    md.write_text("COMPLETE", encoding="utf-8")
+    conn = _seed(tmp_path, content_path=str(md))
+    try:
+        client = _client()
+        detail = client.fetch_detail.return_value
+        detail.content_list[2] = ContentItem(
+            data_id="d3", data_type="auto_sum_note", task_status=0,
+            data_link="", err_code="", err_msg="",
+        )
+        assert rewrite_md(conn, client, "rec1") is False
+        assert md.read_text(encoding="utf-8") == "COMPLETE"
+    finally:
+        conn.close()
