@@ -174,3 +174,15 @@ def test_real_model_two_clusters(audio):
     out = embed_clusters(audio, segs, embedder.load_extractor(_REAL))
     assert len(out) == 2
     assert all(c.embedding.shape[0] > 100 for c in out)
+
+
+def test_cluster_with_only_past_end_audio_dropped(audio):
+    segs = [_seg("Speaker 1", 0, 8), _seg("Speaker 1", 45, 60), _seg("Speaker 2", 8, 30)]
+    out = embed_clusters(audio, segs, _FakeExtractor())
+    assert [c.cluster for c in out] == ["Speaker 2"]
+
+
+def test_seconds_equals_readable_audio(audio):
+    segs = [_seg("Speaker 1", 0, 12), _seg("Speaker 1", 35, 45)]  # 12 s + 5 s readable of 10 s
+    out = embed_clusters(audio, segs, _FakeExtractor())
+    assert out[0].seconds == pytest.approx(17.0, abs=0.01)
