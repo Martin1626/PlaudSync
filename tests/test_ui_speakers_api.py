@@ -64,7 +64,7 @@ def test_list_default_flagged_only_named_sorted(client, db):
     a = add_sample(db, "r1", "S1", "Alice", consistency=0.9)
     b = add_sample(db, "r2", "S1", "Bob", consistency=0.4)
     c = add_sample(db, "r1", "S2", "Carol", consistency=None)
-    add_sample(db, "r1", "S3", None, origin="user", consistency=0.1)  # unnamed: hidden
+    add_sample(db, "r1", "S3", None, origin="user", status="none", consistency=0.1)  # unnamed: hidden
     add_sample(db, "r2", "S2", "Dave", status="confirmed", consistency=0.2)
     body = client.get("/api/speakers").json()
     assert [s["id"] for s in body["samples"]] == [b, a, c]
@@ -83,6 +83,7 @@ def test_list_all_includes_non_flagged(client, db):
     add_recording(db)
     add_sample(db, "r1", "S1", "Alice", status="confirmed")
     add_sample(db, "r1", "S2", "Bob", status="none")
+    add_sample(db, "r1", "S3", None, origin="user", status="none")  # unnamed: hidden
     assert len(client.get("/api/speakers?filter=all").json()["samples"]) == 2
     assert client.get("/api/speakers").json()["samples"] == []
 

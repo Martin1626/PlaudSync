@@ -410,6 +410,10 @@ def create_app(state_root: Path) -> FastAPI:
             },
         )
 
+    from plaudsync.ui.speakers_api import router as speakers_router
+
+    app.include_router(speakers_router)
+
     # Production: serve built React bundle. Dev (Vite at :5173) doesn't need this.
     # Mount AFTER all /api/* routes so it doesn't intercept them.
     static_dir = Path(__file__).parent / "static"
