@@ -33,6 +33,7 @@ def _configure_logging() -> None:
             sys.stderr,
             level=os.getenv("PLAUDSYNC_LOG_LEVEL", "INFO"),
             enqueue=True,
+            diagnose=False,
         )
     logger.add(
         log_path,
@@ -41,6 +42,9 @@ def _configure_logging() -> None:
         retention="7 days",
         enqueue=True,
         encoding="utf-8",
+        # diagnose would render local variables (speaker names, labels, transcript text)
+        # into exception tracebacks; backtrace (frames only) stays on.
+        diagnose=False,
     )
 
 
