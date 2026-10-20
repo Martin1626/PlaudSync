@@ -90,3 +90,36 @@ def test_json_wrapped_note_skipped():
 def test_no_summary_note_returns_false():
     c = _client([], [_note("Speaker 1", data_type="other")])
     assert fix_summary(c, "p", [("Speaker 1", "Bob")], set()) is False
+
+
+_WRITES = ("patch_trans_result", "update_transcript_source", "update_note")
+
+
+def _write_names(c):
+    return [x[0] for x in c.mock_calls if x[0] in _WRITES]
+
+
+def test_patch_trans_result_is_last_write():
+    c = _client(SEGS, [_note("Speaker 1 hi")], [_item("transaction", "a")])
+    apply_renames(c, "p", {"Speaker 1": "Bob"}, EXPECTED)
+    assert _write_names(c) == ["update_transcript_source", "update_note", "patch_trans_result"]
+
+
+def test_non_list_source_raises_and_writes_nothing():
+    c = _client(SEGS, [_note("Speaker 1 hi")], [_item("transaction", "a")])
+    c.download_content_text.side_effect = lambda item: json.dumps({"not": "a list"})
+    with pytest.raises(ValueError):
+        apply_renames(c, "p", {"Speaker 1": "Bob"}, EXPECTED)
+    assert _write_names(c) == []
+
+
+def test_source_write_failure_does_not_patch_and_retry_writes_all():
+    c = _client(SEGS, [_note("Speaker 1 hi")], [_item("transaction", "a")])
+    c.update_transcript_source.side_effect = RuntimeError("boom")
+    with pytest.raises(RuntimeError):
+        apply_renames(c, "p", {"Speaker 1": "Bob"}, EXPECTED)
+    c.patch_trans_result.assert_not_called()
+    c.update_transcript_source.side_effect = None
+    c.reset_mock()
+    assert apply_renames(c, "p", {"Speaker 1": "Bob"}, EXPECTED) == "written"
+    assert _write_names(c) == ["update_transcript_source", "update_note", "patch_trans_result"]
