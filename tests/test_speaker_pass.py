@@ -999,3 +999,106 @@ def test_queue_rename_of_auto_name_sets_auto_corrected(tmp_path, fakes, origin,
         ).fetchone() == ("B", "review", expected)
     finally:
         conn.close()
+
+
+# --- Final review I4: re-match stored unnamed clusters when the gallery grew (§5.3 2.5) ---
+
+P_VEC = _vec(0, 0, 1, 0)
+
+
+def _unnamed_recording(conn, pid="a1", *, marker="v1", checked_at=None, days=3):
+    _rec(conn, pid, _iso(timedelta(days=days)))
+    _speaker_row(conn, pid, labels={"Speaker 1": "Speaker 1"}, written={},
+                 checked_at=checked_at or _iso(timedelta(hours=1)), marker=marker)
+    return gallery.upsert_embedding(
+        conn, plaud_id=pid, cluster="Speaker 1", person=None, origin=None,
+        embedding=P_VEC, seconds=20.0, clip_segments=[(0, 1000)],
+    )
+
+
+def _teacher(conn, tmp_path, fakes, vec):
+    """b1: a new recording where the user named the speaker 'Petr'."""
+    _rec(conn, "b1", _iso(timedelta(days=1)), local_path=_audio(tmp_path))
+    fakes.embeddings = [ClusterEmbedding("Speaker 1", "Petr", vec, 20.0, [(0, 1000)])]
+
+
+def _client_for(transcripts: dict[str, dict[str, str]]) -> MagicMock:
+    client = MagicMock()
+    client.fetch_trans_result.side_effect = lambda pid: _segments(transcripts[pid])
+    return client
+
+
+def test_gallery_growth_names_stored_unnamed_cluster(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        eid = _unnamed_recording(conn)
+        _teacher(conn, tmp_path, fakes, P_VEC)
+        client = _client_for({"a1": {"Speaker 1": "Speaker 1"}, "b1": {"Speaker 1": "Petr"}})
+        live = {"a1": SimpleNamespace(edit_marker="v1"), "b1": SimpleNamespace(edit_marker="v1")}
+
+        result = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW,
+                                         live_metas=live)
+
+        assert result.named == 1 and result.failed == 0
+        fakes.apply_renames.assert_called_once_with(
+            client, "a1", {"Speaker 1": "Petr"}, {"Speaker 1": "Speaker 1"},
+        )
+        assert conn.execute(
+            "SELECT person, origin, auto_assigned FROM speaker_embeddings WHERE id=?", (eid,)
+        ).fetchone() == ("Petr", "auto", 1)
+        fakes.rewrite_md.assert_any_call(conn, client, "a1")
+    finally:
+        conn.close()
+
+
+def test_gallery_growth_without_hit_makes_no_plaud_calls(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _unnamed_recording(conn)
+        _teacher(conn, tmp_path, fakes, _vec(0, 0, 0, 1))
+        client = _client_for({"a1": {"Speaker 1": "Speaker 1"}, "b1": {"Speaker 1": "Petr"}})
+        live = {"a1": SimpleNamespace(edit_marker="v1"), "b1": SimpleNamespace(edit_marker="v1")}
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW,
+                                live_metas=live)
+
+        assert [c.args[0] for c in client.fetch_trans_result.call_args_list] == ["b1"]
+        fakes.apply_renames.assert_not_called()
+    finally:
+        conn.close()
+
+
+def test_gallery_growth_skips_recording_in_failure_backoff(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _unnamed_recording(conn, marker=None)  # failed 1 h ago: backing off
+        _teacher(conn, tmp_path, fakes, P_VEC)
+        client = _client_for({"a1": {"Speaker 1": "Speaker 1"}, "b1": {"Speaker 1": "Petr"}})
+        live = {"a1": SimpleNamespace(edit_marker="v1"), "b1": SimpleNamespace(edit_marker="v1")}
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW,
+                                live_metas=live)
+
+        assert [c.args[0] for c in client.fetch_trans_result.call_args_list] == ["b1"]
+    finally:
+        conn.close()
+
+
+def test_gallery_growth_rematch_capped_per_pass(tmp_path, fakes, monkeypatch):
+    monkeypatch.setattr(runner, "MAX_RESCORE_PER_PASS", 1)
+    conn = open_state(tmp_path)
+    try:
+        _unnamed_recording(conn, "a1", days=3)
+        _unnamed_recording(conn, "a2", days=2)
+        _teacher(conn, tmp_path, fakes, P_VEC)
+        client = _client_for({"a1": {"Speaker 1": "Speaker 1"},
+                              "a2": {"Speaker 1": "Speaker 1"}, "b1": {"Speaker 1": "Petr"}})
+        live = {p: SimpleNamespace(edit_marker="v1") for p in ("a1", "a2", "b1")}
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW,
+                                live_metas=live)
+
+        # Newest first: a2 is re-matched now; a1 is left for a later pass.
+        assert [c.args[0] for c in client.fetch_trans_result.call_args_list] == ["b1", "a2"]
+    finally:
+        conn.close()
