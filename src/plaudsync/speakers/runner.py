@@ -45,6 +45,10 @@ _SCOPE = (
 )
 
 
+class MdNotRewritten(RuntimeError):
+    """Plaud content was not complete, so the .md was left as it was."""
+
+
 @dataclass
 class SpeakerPassResult:
     named: int = 0
@@ -159,6 +163,12 @@ def _merge_row_json(ctx: SpeakerContext, plaud_id: str, column: str, update: dic
     _set_row_json(ctx, plaud_id, column, {**_row_json(ctx, plaud_id, column), **update})
 
 
+def _rewrite_md(ctx: SpeakerContext, plaud_id: str) -> None:
+    # Raising keeps the labels snapshot where it was, so the retry sees the change again.
+    if not rewrite_md(ctx.conn, ctx.client, plaud_id):
+        raise MdNotRewritten("md not rewritten: content not complete")
+
+
 def learn_recording(ctx: SpeakerContext, plaud_id: str) -> dict[str, str] | None:
     segments = ctx.client.fetch_trans_result(plaud_id)
     if segments is None:
@@ -250,7 +260,7 @@ def _name(ctx: SpeakerContext, plaud_id: str, labels: dict[str, str]) -> dict[st
         ctx.touched.add(person)
     # `labels` only after the .md rewrite: if anything above fails, the next re-check sees
     # our names as a label change, books them as auto and rewrites the .md then.
-    rewrite_md(ctx.conn, ctx.client, plaud_id)
+    _rewrite_md(ctx, plaud_id)
     _merge_row_json(ctx, plaud_id, "labels", renames)
     return renames
 
@@ -313,7 +323,7 @@ def recheck_recording(ctx: SpeakerContext, plaud_id: str) -> None:
     renames = _name(ctx, plaud_id, labels)
     ctx.result.named += len(renames)
     if changed and not renames:  # _name already rewrote the .md
-        rewrite_md(ctx.conn, ctx.client, plaud_id)
+        _rewrite_md(ctx, plaud_id)
 
     ctx.conn.execute(
         "UPDATE speaker_recordings SET labels=?, checked_at=?, edit_marker=? WHERE plaud_id=?",
@@ -356,7 +366,10 @@ def drain_review_queue(ctx: SpeakerContext) -> int:
             if cluster not in labels:
                 _drop_queue_entry(ctx, qid, plaud_id)
                 continue
-            if apply_renames(ctx.client, plaud_id, {cluster: new_name}, labels) != "written":
+            # Already carrying the name = an earlier attempt wrote it but did not finish.
+            if labels[cluster] != new_name and apply_renames(
+                ctx.client, plaud_id, {cluster: new_name}, labels
+            ) != "written":
                 continue
             set_person(ctx.conn, eid, new_name, "review")
             ctx.conn.execute(
@@ -371,7 +384,7 @@ def drain_review_queue(ctx: SpeakerContext) -> int:
             written = _row_json(ctx, plaud_id, "written")
             if written.pop(cluster, None) is not None:
                 _set_row_json(ctx, plaud_id, "written", written)
-            rewrite_md(ctx.conn, ctx.client, plaud_id)
+            _rewrite_md(ctx, plaud_id)  # on failure the entry stays open and is retried
             ctx.conn.execute(
                 "UPDATE speaker_review_queue SET done_at=? WHERE id=?",
                 (ctx.now.isoformat(), qid),

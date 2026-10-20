@@ -150,7 +150,10 @@ def test_backfill_resumes_after_interrupt(tmp_path, env):
         result = backfill.run_backfill(
             conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 8, 1), now=NOW
         )
-        assert calls["r1"] == learn_calls  # phase 1 not repeated
+        # Phase 1 not repeated. The one extra transcript read is phase 2's: the interrupted
+        # write left its intent in `written`, so Plaud's current labels are read first
+        # (final review I2: a retry must not blindly re-write names Plaud may already hold).
+        assert calls["r1"] == learn_calls + 1
         assert result.named == 1
         states = dict(conn.execute("SELECT plaud_id, state FROM speaker_recordings"))
         assert states == {"r1": "done", "r2": "done"}

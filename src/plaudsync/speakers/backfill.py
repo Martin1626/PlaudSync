@@ -19,6 +19,7 @@ from plaudsync.speakers.runner import (
     learn_recording,
     make_context,
     name_recording,
+    recheck_recording,
 )
 
 
@@ -91,15 +92,20 @@ def run_backfill(
 
     # Phase 2: name. Re-selected from the DB, so an interrupted run resumes here.
     pending = conn.execute(
-        "SELECT s.plaud_id, s.labels FROM speaker_recordings s "
+        "SELECT s.plaud_id, s.labels, s.written FROM speaker_recordings s "
         "JOIN recordings r ON r.plaud_id = s.plaud_id "
         f"WHERE s.state = 'learned' AND {_SCOPE} AND r.created_at_plaud >= ? "  # nosec B608
         "ORDER BY r.created_at_plaud",
         (since_iso,),
     ).fetchall()
-    for plaud_id, labels_json in pending:
+    for plaud_id, labels_json, written_json in pending:
         try:
-            result.named += name_recording(ctx, plaud_id, json.loads(labels_json))
+            if json.loads(written_json):
+                # An earlier attempt wrote (or meant to write) names: Plaud's current labels
+                # decide, so our names are booked as auto and the .md rewritten, not re-written.
+                recheck_recording(ctx, plaud_id)
+            else:
+                result.named += name_recording(ctx, plaud_id, json.loads(labels_json))
             conn.execute(
                 "UPDATE speaker_recordings SET state='done', checked_at=? WHERE plaud_id=?",
                 (ctx.now.isoformat(), plaud_id),
