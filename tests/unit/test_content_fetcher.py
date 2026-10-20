@@ -167,3 +167,27 @@ def test_partial_emit_status_pending_regardless_of_task_ids() -> None:
         assert outcome.sections == {
             "transcript": "t-text", "outline": "o-text",
         }, f"failed for task_ids={partial_task_ids}"
+
+
+# ---------------------------------------------------------------------------
+# speakers_count derived from transcript
+# ---------------------------------------------------------------------------
+
+def test_speakers_count_from_transcript() -> None:
+    import json
+
+    raw = json.dumps([
+        {"start_time": 0, "end_time": 1000, "content": "a", "speaker": "A"},
+        {"start_time": 1000, "end_time": 2000, "content": "b", "speaker": "B"},
+        {"start_time": 2000, "end_time": 3000, "content": "c", "speaker": "A"},
+    ])
+    client = MagicMock()
+    d = _detail(include=("transaction",))
+    d = DetailMeta(plaud_id=d.plaud_id, language=d.language, speakers_count=7,
+                   task_ids=d.task_ids, content_list=d.content_list)
+    client.fetch_detail.return_value = d
+    client.download_content_text.side_effect = [raw]
+
+    outcome = ContentFetcher(client).fetch_artifacts("rec1")
+
+    assert outcome.detail.speakers_count == 2
