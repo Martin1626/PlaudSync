@@ -36,6 +36,9 @@ RECHECK_INTERVAL = timedelta(hours=6)
 # checked_at for a row whose processing has not finished: always due for re-check.
 _UNCHECKED = "1970-01-01T00:00:00+00:00"
 
+# speaker_recordings states: 'learned' (backfill, not yet named), 'done' (re-checked by
+# sync), 'retry' (learning failed; tried again as new once RECHECK_INTERVAL has passed).
+
 _SCOPE = (
     "r.status = 'downloaded' AND r.content_status = 'complete' "
     "AND r.content_path IS NOT NULL"
@@ -78,7 +81,11 @@ def _cached(factory: Callable[[], Any]) -> Callable[[], Any]:
 def due_for_recheck(
     stored_marker: str | None, live_marker: str | None, checked_at: str, now: datetime
 ) -> bool:
-    if live_marker is not None:
+    if checked_at == _UNCHECKED:
+        return True
+    # A NULL stored marker means a failure backoff (or no marker known): the cadence
+    # applies, so a failing recording is not retried on every run.
+    if live_marker is not None and stored_marker is not None:
         return live_marker != stored_marker
     return now - datetime.fromisoformat(checked_at) >= RECHECK_INTERVAL
 
@@ -91,6 +98,35 @@ def _report(exc: Exception, recording_id: str | None) -> None:
             scope.set_tag("recording_id", recording_id)
         scope.fingerprint = ["speaker_naming_failed", type(exc).__name__]
         sentry_sdk.capture_exception(exc)
+
+
+def _back_off(ctx: SpeakerContext, plaud_id: str) -> None:
+    """After a failure: no Plaud calls for this recording until RECHECK_INTERVAL passed."""
+    try:
+        cur = ctx.conn.execute(
+            "UPDATE speaker_recordings SET checked_at=?, edit_marker=NULL WHERE plaud_id=?",
+            (ctx.now.isoformat(), plaud_id),
+        )
+        if cur.rowcount == 0:  # failed while learning: remember the attempt
+            ctx.conn.execute(
+                "INSERT INTO speaker_recordings (plaud_id, labels, written, edit_marker, "
+                "checked_at, state) VALUES (?, '{}', '{}', NULL, ?, 'retry')",
+                (plaud_id, ctx.now.isoformat()),
+            )
+        ctx.conn.commit()
+    except Exception:  # noqa: BLE001 — best effort; the failure itself is already reported
+        logger.bind(recording_id=plaud_id).exception("speaker backoff not recorded")
+
+
+def _attempt(ctx: SpeakerContext, plaud_id: str, step: Callable[[], Any]) -> bool:
+    try:
+        step()
+        return True
+    except Exception as exc:  # noqa: BLE001 — one recording must not stop the rest
+        _report(exc, plaud_id)
+        ctx.result.failed += 1
+        _back_off(ctx, plaud_id)
+        return False
 
 
 def _live_marker(ctx: SpeakerContext, plaud_id: str) -> str | None:
@@ -352,9 +388,9 @@ def _process_new(ctx: SpeakerContext, plaud_id: str) -> None:
     labels = learn_recording(ctx, plaud_id)
     if labels is None:
         return  # no transcript yet; still "new" next run
-    # Inserted as already-due: if naming fails below, the next run re-checks it.
+    # Inserted as already-due (replacing a 'retry' row); a naming failure below backs off.
     ctx.conn.execute(
-        "INSERT INTO speaker_recordings (plaud_id, labels, written, edit_marker, "
+        "INSERT OR REPLACE INTO speaker_recordings (plaud_id, labels, written, edit_marker, "
         "checked_at, state) VALUES (?, ?, '{}', NULL, ?, 'done')",
         (plaud_id, json.dumps(labels), _UNCHECKED),
     )
@@ -402,12 +438,14 @@ def run_speaker_pass(
     purge_unnamed(conn, window_cutoff=cutoff)
     drain_review_queue(ctx)
 
+    retry_before = (now - RECHECK_INTERVAL).isoformat()
     new_ids = [r[0] for r in conn.execute(
         "SELECT r.plaud_id FROM recordings r "
         "LEFT JOIN speaker_recordings s ON s.plaud_id = r.plaud_id "
-        f"WHERE {_SCOPE} AND r.created_at_plaud >= ? AND s.plaud_id IS NULL "  # nosec B608
+        f"WHERE {_SCOPE} AND r.created_at_plaud >= ? "  # nosec B608 - constant
+        "AND (s.plaud_id IS NULL OR (s.state = 'retry' AND s.checked_at <= ?)) "
         "ORDER BY r.created_at_plaud",
-        (cutoff,),
+        (cutoff, retry_before),
     ).fetchall() if _is_live(ctx, r[0])]
     # Selected before new rows are inserted, so a just-learned recording is not re-checked.
     recheck_ids = [pid for pid, marker, checked_at in conn.execute(
@@ -427,19 +465,11 @@ def run_speaker_pass(
             result.failed += 1
             new_ids = []
     for plaud_id in new_ids:
-        try:
-            _process_new(ctx, plaud_id)
-        except Exception as exc:  # noqa: BLE001
-            _report(exc, plaud_id)
-            result.failed += 1
+        _attempt(ctx, plaud_id, lambda pid=plaud_id: _process_new(ctx, pid))
 
     for plaud_id in recheck_ids:
-        try:
-            recheck_recording(ctx, plaud_id)
+        if _attempt(ctx, plaud_id, lambda pid=plaud_id: recheck_recording(ctx, pid)):
             result.rechecked += 1
-        except Exception as exc:  # noqa: BLE001
-            _report(exc, plaud_id)
-            result.failed += 1
 
     if ctx.touched:
         recompute_flags(conn, ctx.touched, window_cutoff=cutoff)

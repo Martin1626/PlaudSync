@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS speaker_recordings (
     written      TEXT NOT NULL,
     edit_marker  TEXT,
     checked_at   TEXT NOT NULL,
-    state        TEXT NOT NULL CHECK (state IN ('learned','done'))
+    state        TEXT NOT NULL CHECK (state IN ('learned','done','retry'))
 );
 
 CREATE TABLE IF NOT EXISTS speaker_embeddings (

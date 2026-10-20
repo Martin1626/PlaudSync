@@ -60,7 +60,8 @@ def run_backfill(
     new_ids = [r[0] for r in conn.execute(
         "SELECT r.plaud_id FROM recordings r "
         "LEFT JOIN speaker_recordings s ON s.plaud_id = r.plaud_id "
-        f"WHERE {_SCOPE} AND r.created_at_plaud >= ? AND s.plaud_id IS NULL "  # nosec B608
+        f"WHERE {_SCOPE} AND r.created_at_plaud >= ? "  # nosec B608 - constant
+        "AND (s.plaud_id IS NULL OR s.state = 'retry') "
         "ORDER BY r.created_at_plaud",
         (since_iso,),
     )]
@@ -79,8 +80,8 @@ def run_backfill(
             if labels is None:
                 continue  # no transcript yet; stays unprocessed
             conn.execute(
-                "INSERT INTO speaker_recordings (plaud_id, labels, written, edit_marker, "
-                "checked_at, state) VALUES (?, ?, '{}', NULL, ?, 'learned')",
+                "INSERT OR REPLACE INTO speaker_recordings (plaud_id, labels, written, "
+                "edit_marker, checked_at, state) VALUES (?, ?, '{}', NULL, ?, 'learned')",
                 (plaud_id, json.dumps(labels), ctx.now.isoformat()),
             )
             conn.commit()
