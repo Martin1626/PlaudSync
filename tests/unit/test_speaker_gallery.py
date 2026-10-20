@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from plaudsync.speakers import gallery
 from plaudsync.state import open_state
@@ -149,3 +150,41 @@ def test_pending_review_count_excludes_queued(tmp_path):
     conn.commit()
     assert gallery.pending_review_count(conn) == 2
     assert b
+
+
+class _UiActsMidway:
+    """Connection proxy: the review UI sets a status right after the flag pass read it."""
+
+    def __init__(self, conn, sample_id, status):
+        self._conn, self._sid, self._status, self._done = conn, sample_id, status, False
+
+    def execute(self, sql, *args):
+        cur = self._conn.execute(sql, *args)
+        if not self._done and "review_status" in sql and "WHERE person=?" in sql:
+            rows = cur.fetchall()
+            self._conn.execute(
+                "UPDATE speaker_embeddings SET review_status=? WHERE id=?",
+                (self._status, self._sid),
+            )
+            self._conn.commit()
+            self._done = True
+
+            class _Rows:
+                def fetchall(self):
+                    return rows
+
+            return _Rows()
+        return cur
+
+    def commit(self):
+        self._conn.commit()
+
+
+@pytest.mark.parametrize("ui_status", ["confirmed", "excluded"])
+def test_recompute_flags_keeps_concurrent_ui_decision(tmp_path, ui_status):
+    conn = open_state(tmp_path)
+    for i in range(3):
+        _add(conn, f"s{i}", "Speaker 1", "Anna", "user", _vec(1, 0.05 * i, 0, 0))
+    out = _add(conn, "o", "Speaker 1", "Anna", "user", _vec(0, 0, 1, 0))
+    gallery.recompute_flags(_UiActsMidway(conn, out, ui_status), {"Anna"}, window_cutoff=CUTOFF)
+    assert _status(conn, out) == ui_status
