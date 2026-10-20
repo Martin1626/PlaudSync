@@ -753,6 +753,20 @@ def run_sync(
                 failed_count += 1
             _emit("downloading", i + 1, total)
 
+        # Speaker naming: best-effort, never part of failed_count / exit code.
+        if config.speaker_naming and state_root is not None:
+            try:
+                # Function-local: speakers.runner imports rewrite_md from this module.
+                from plaudsync.speakers.runner import run_speaker_pass
+
+                run_speaker_pass(conn, client, config, state_root, live_metas=live_metas)
+            except Exception as e:  # noqa: BLE001 — wide on purpose, captured into Sentry
+                logger.exception("speaker pass crashed")
+                with sentry_sdk.new_scope() as scope:
+                    scope.set_tag("error_kind", "speaker_pass_crashed")
+                    scope.fingerprint = ["speaker_pass_crashed", type(e).__name__]
+                    sentry_sdk.capture_exception(e)
+
         _emit("finalizing", None, None)
 
         exit_code = 4 if failed_count > 0 else 0
