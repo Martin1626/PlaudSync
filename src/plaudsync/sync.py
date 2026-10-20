@@ -587,6 +587,44 @@ def _retry_pending_content(
     return completed, failed
 
 
+def rewrite_md(conn: sqlite3.Connection, client, plaud_id: str) -> bool:
+    """Regenerate the .md from fresh Plaud content at its current content_path.
+
+    Pure file rewrite: no DB columns change. Returns False without writing
+    when the row has no content_path or Plaud returned no sections.
+    """
+    row = conn.execute(
+        "SELECT title, created_at_plaud, content_path, "
+        "classifier_label, classification_source "
+        "FROM recordings WHERE plaud_id = ?",
+        (plaud_id,),
+    ).fetchone()
+    if row is None or not row[2]:
+        return False
+    title, created_at, content_path, label, source = row
+
+    class _MetaLike:
+        pass
+
+    meta = _MetaLike()
+    meta.plaud_id = plaud_id  # type: ignore[attr-defined]
+    meta.title = title  # type: ignore[attr-defined]
+    meta.created_at = created_at  # type: ignore[attr-defined]
+
+    outcome = ContentFetcher(client).fetch_artifacts(plaud_id)
+    if not outcome.sections:
+        return False
+    md_text = compose_markdown(
+        meta=meta,
+        detail=outcome.detail,
+        sections=outcome.sections,
+        project=label or "_unclassified",
+        classification_source=source or "name",
+    )
+    Path(content_path).write_text(md_text, encoding="utf-8")
+    return True
+
+
 def run_sync(
     client,
     classifier: Classifier,

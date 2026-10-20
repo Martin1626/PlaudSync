@@ -18,7 +18,8 @@ outline = 'outline', summary = 'auto_sum_note'.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from plaudsync.content_formatter import format_section
@@ -39,6 +40,21 @@ class FetchOutcome:
     detail: Any = None  # DetailMeta — exposed for caller (language, speakers)
 
 
+def _count_speakers(raw: str) -> int | None:
+    try:
+        items = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(items, list):
+        return None
+    names = {
+        s.strip()
+        for it in items
+        if isinstance(it, dict) and isinstance(s := it.get("speaker"), str) and s.strip()
+    }
+    return len(names)
+
+
 class ContentFetcher:
     def __init__(self, client: Any) -> None:
         self._client = client
@@ -53,6 +69,7 @@ class ContentFetcher:
         items_by_type = {it.data_type: it for it in detail.content_list}
         sections: dict[str, str] = {}
         missing_any = False
+        speakers: int | None = None
 
         for section, dtype in _REQUIRED_TYPES.items():
             item = items_by_type.get(dtype)
@@ -61,6 +78,11 @@ class ContentFetcher:
                 continue
             raw = self._client.download_content_text(item)
             sections[section] = format_section(section, raw)
+            if section == "transcript":
+                speakers = _count_speakers(raw)
+
+        if speakers is not None:
+            detail = replace(detail, speakers_count=speakers)
 
         if missing_any:
             return FetchOutcome(
