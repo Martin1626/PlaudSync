@@ -973,3 +973,29 @@ def test_queue_md_not_rewritten_entry_retried_without_plaud_rewrite(tmp_path, fa
         ).fetchone() == ("B", "review", "confirmed")
     finally:
         conn.close()
+
+
+# --- Final review I3: a review-UI rename of our auto name counts as a correction ---
+
+
+@pytest.mark.parametrize(("origin", "auto_assigned", "expected"), [
+    ("auto", True, 1),    # our in-window auto name corrected in review: kill criterion
+    ("auto", False, 0),   # backfill auto name: not counted (spec §5.7)
+    ("user", False, 0),   # the user's own name renamed: not an auto correction
+])
+def test_queue_rename_of_auto_name_sets_auto_corrected(tmp_path, fakes, origin,
+                                                       auto_assigned, expected):
+    conn = open_state(tmp_path)
+    try:
+        eid = _queued(conn)
+        gallery.set_person(conn, eid, "A", origin, auto_assigned=auto_assigned)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "A"})
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert conn.execute(
+            "SELECT person, origin, auto_corrected FROM speaker_embeddings WHERE id=?", (eid,)
+        ).fetchone() == ("B", "review", expected)
+    finally:
+        conn.close()
