@@ -13,7 +13,7 @@ def _seg(speaker, text="x"):
 
 def _item(data_type, data_id, status=1):
     return ContentItem(data_id=data_id, data_type=data_type, task_status=status,
-                       data_link="https://example.invalid/x", err_code="")
+                       data_link="https://example.invalid/x", err_code="", err_msg="")
 
 
 def _client(segments, notes, items=()):
