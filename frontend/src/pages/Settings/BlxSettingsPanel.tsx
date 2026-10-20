@@ -37,6 +37,7 @@ interface FormState {
   classify_by_folder: boolean;
   sync_unclassified: boolean;
   recheck_window_days: number;
+  speaker_naming: boolean;
   /** Project name → ProjectEntry (preserves insertion order). */
   projects: Map<string, ProjectEntry>;
   unclassified_dir: string;
@@ -57,6 +58,7 @@ function _initFormState(config: ConfigParsedV4): FormState {
     classify_by_folder: flagOrDefault(config, "classify_by_folder"),
     sync_unclassified: flagOrDefault(config, "sync_unclassified"),
     recheck_window_days: config.recheck_window_days ?? RECHECK_WINDOW_DAYS_DEFAULT,
+    speaker_naming: flagOrDefault(config, "speaker_naming"),
     projects,
     unclassified_dir: config.unclassified_dir,
   };
@@ -77,6 +79,7 @@ function _formStateToConfig(state: FormState): ConfigParsedV4 {
     classify_by_folder: state.classify_by_folder,
     sync_unclassified: state.sync_unclassified,
     recheck_window_days: state.recheck_window_days,
+    speaker_naming: state.speaker_naming,
   };
 }
 
@@ -320,6 +323,15 @@ export default function BlxSettingsPanel({ config, onSaved }: Props) {
               className="mt-1 w-28 rounded-md border-gray-300 text-sm"
             />
           </label>
+          <CheckboxRow
+            id="bl4-speaker-naming"
+            checked={state.speaker_naming}
+            onChange={(checked) =>
+              setState((s) => ({ ...s, speaker_naming: checked }))
+            }
+            label="Automaticky pojmenovávat řečníky (lokální galerie hlasů)"
+            description="Rozpozná známé hlasy podle lokální galerie a přepíše jména řečníků v Plaudu."
+          />
         </fieldset>
 
         {/* ----- Cesty na disk ----- */}

@@ -76,6 +76,7 @@ export function coerceConfigV4(
     "classify_by_name_require_folder",
     "classify_by_folder",
     "sync_unclassified",
+    "speaker_naming",
   ] as const) {
     const v = parsed[k];
     if (typeof v === "boolean") {
@@ -97,6 +98,7 @@ export const CONFIG_DEFAULTS = {
   classify_by_name_require_folder: false,
   classify_by_folder: false,
   sync_unclassified: false,
+  speaker_naming: false,
 } as const;
 
 /** Default re-check look-back window (days) — mirrors backend Config. */
@@ -162,6 +164,7 @@ export function serializeConfigV4(config: ConfigParsedV4): string {
   lines.push(
     `recheck_window_days: ${config.recheck_window_days ?? RECHECK_WINDOW_DAYS_DEFAULT}`,
   );
+  lines.push(`speaker_naming: ${flagOrDefault(config, "speaker_naming")}`);
 
   return lines.join("\n") + "\n";
 }

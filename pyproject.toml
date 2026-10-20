@@ -31,6 +31,10 @@ dependencies = [
     # Tray runtime: pystray icon + Pillow image rendering
     "pystray>=0.19,<1",
     "Pillow>=10.0,<12",
+    # Speaker naming: embeddings + audio segment reads
+    "sherpa-onnx>=1.13,<2",
+    "soundfile>=0.13",
+    "numpy>=2.0",
 ]
 
 [project.optional-dependencies]

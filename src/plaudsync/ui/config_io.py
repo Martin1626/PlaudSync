@@ -79,6 +79,7 @@ def _config_to_dict(config: Config) -> dict:
         "classify_by_folder": config.classify_by_folder,
         "sync_unclassified": config.sync_unclassified,
         "recheck_window_days": config.recheck_window_days,
+        "speaker_naming": config.speaker_naming,
     }
 
 

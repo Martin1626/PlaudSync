@@ -59,6 +59,7 @@ class Config:
     # Rolling re-check look-back window (days). Settled skips older than this
     # are no longer re-evaluated, so per-run cost does not grow with cloud size.
     recheck_window_days: int = 14
+    speaker_naming: bool = False
     # DEPRECATED — removed in BL-4/BL-X Task 14 cleanup pass.
     # Kept as no-op attribute so existing test fixtures continue to construct
     # Config(...). Loader logs a deprecation warning when YAML still has the key.
@@ -271,6 +272,7 @@ def load_config(state_root: Path) -> Config:
     classify_by_folder = _validate_bool(data, "classify_by_folder", False, errors)
     sync_unclassified = _validate_bool(data, "sync_unclassified", False, errors)
     recheck_window_days = _validate_positive_int(data, "recheck_window_days", 14, errors)
+    speaker_naming = _validate_bool(data, "speaker_naming", False, errors)
 
     # Deprecated key — log warning, do not validate further.
     if "sync_only_foldered" in data:
@@ -304,4 +306,5 @@ def load_config(state_root: Path) -> Config:
         classify_by_folder=classify_by_folder,
         sync_unclassified=sync_unclassified,
         recheck_window_days=recheck_window_days,
+        speaker_naming=speaker_naming,
     )

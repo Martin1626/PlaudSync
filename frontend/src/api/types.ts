@@ -114,6 +114,7 @@ export interface ConfigParsedV4 {
   classify_by_folder?: boolean;
   sync_unclassified?: boolean;
   recheck_window_days?: number;
+  speaker_naming?: boolean;
 }
 
 export interface ConfigResponse {
