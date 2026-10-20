@@ -164,3 +164,16 @@ def test_seed_returns_false_for_empty_config_yaml(tmp_path: Path) -> None:
     created = maybe_seed_default(tmp_path)
 
     assert created is False
+
+
+def test_config_to_dict_includes_speaker_naming(tmp_path: Path) -> None:
+    unclassified = tmp_path / "U"; project = tmp_path / "A"
+    unclassified.mkdir(); project.mkdir()
+    (tmp_path / "config.yaml").write_text(
+        f"unclassified_dir: {unclassified}\n"
+        f"projects:\n  Alfa: {project}\n"
+        f"speaker_naming: true\n",
+        encoding="utf-8",
+    )
+    payload = read_config_payload(tmp_path)
+    assert payload["parsed"]["speaker_naming"] is True

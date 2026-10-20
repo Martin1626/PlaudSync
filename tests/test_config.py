@@ -283,3 +283,31 @@ recheck_window_days: 0
     with pytest.raises(ConfigValidationError) as exc:
         load_config(tmp_path)
     assert any("recheck_window_days" in e.message for e in exc.value.args[0])
+
+
+def _speaker_cfg(tmp_path: Path, extra: str) -> None:
+    unclassified = tmp_path / "U"; project = tmp_path / "A"
+    unclassified.mkdir(); project.mkdir()
+    _write_config(tmp_path, f"""
+unclassified_dir: {unclassified}
+projects:
+  Alfa: {project}
+{extra}
+""")
+
+
+def test_speaker_naming_defaults_false(tmp_path: Path) -> None:
+    _speaker_cfg(tmp_path, "")
+    assert load_config(tmp_path).speaker_naming is False
+
+
+def test_speaker_naming_true_parsed(tmp_path: Path) -> None:
+    _speaker_cfg(tmp_path, "speaker_naming: true")
+    assert load_config(tmp_path).speaker_naming is True
+
+
+def test_speaker_naming_non_bool_rejected(tmp_path: Path) -> None:
+    _speaker_cfg(tmp_path, 'speaker_naming: "yes"')
+    with pytest.raises(ConfigValidationError) as exc:
+        load_config(tmp_path)
+    assert any("speaker_naming" in e.message for e in exc.value.args[0])
