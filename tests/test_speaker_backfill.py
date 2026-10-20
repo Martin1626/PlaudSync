@@ -195,3 +195,24 @@ def test_backfill_phase2_failure_counted_and_retried(tmp_path, env):
         ).fetchone()[0] == "done"
     finally:
         conn.close()
+
+
+def test_backfill_learns_retry_rows(tmp_path, env):
+    # A recording whose learning failed in the sync pass ('retry' row) is not "done":
+    # backfill learns it like a new one.
+    conn = open_state(tmp_path)
+    try:
+        _setup_two(conn, env)
+        conn.execute(
+            "INSERT INTO speaker_recordings (plaud_id, labels, written, checked_at, state) "
+            "VALUES ('r1', '{}', '{}', ?, 'retry')", (NOW.isoformat(),),
+        )
+        conn.commit()
+        result = backfill.run_backfill(
+            conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 8, 1), now=NOW
+        )
+        assert result.failed == 0 and result.named == 1
+        states = dict(conn.execute("SELECT plaud_id, state FROM speaker_recordings"))
+        assert states == {"r1": "done", "r2": "done"}
+    finally:
+        conn.close()
