@@ -32,8 +32,11 @@ from plaudsync.speakers.writeback import apply_renames, fix_summary
 from plaudsync.sync import rewrite_md
 
 RECHECK_INTERVAL = timedelta(hours=6)
+# New recordings learned per pass (~15 Plaud calls each). Newest first: those are the ones
+# the user opens next; a first-enable backlog drains over the next few runs.
+MAX_NEW_PER_PASS = 10
 # Recordings re-matched per pass after the gallery grew (each hit costs a naming step).
-MAX_RESCORE_PER_PASS = 10
+MAX_RESCORE_PER_PASS = MAX_NEW_PER_PASS
 
 # checked_at for a row whose processing has not finished: always due for re-check.
 _UNCHECKED = "1970-01-01T00:00:00+00:00"
@@ -510,9 +513,9 @@ def run_speaker_pass(
         "LEFT JOIN speaker_recordings s ON s.plaud_id = r.plaud_id "
         f"WHERE {_SCOPE} AND r.created_at_plaud >= ? "  # nosec B608 - constant
         "AND (s.plaud_id IS NULL OR (s.state = 'retry' AND s.checked_at <= ?)) "
-        "ORDER BY r.created_at_plaud",
+        "ORDER BY r.created_at_plaud DESC",
         (cutoff, retry_before),
-    ).fetchall() if _is_live(ctx, r[0])]
+    ).fetchall() if _is_live(ctx, r[0])][:MAX_NEW_PER_PASS]
     # Selected before new rows are inserted, so a just-learned recording is not re-checked.
     recheck_ids = [pid for pid, marker, checked_at in conn.execute(
         "SELECT s.plaud_id, s.edit_marker, s.checked_at FROM speaker_recordings s "
