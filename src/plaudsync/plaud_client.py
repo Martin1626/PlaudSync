@@ -5,10 +5,11 @@ probe semantics + listing/download interface.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import TracebackType
-from typing import Iterator
+from typing import Any, Iterator
 from urllib.parse import urlparse
 
 import requests
@@ -29,6 +30,8 @@ class RecordingMeta:
     duration_seconds: int
     file_size: int
     plaud_folder: str
+    # Listing `version_ms`: bumps on every edit, incl. speaker renames.
+    edit_marker: str | None = None
 
     @classmethod
     def from_raw(cls, raw: dict) -> "RecordingMeta":
@@ -67,6 +70,7 @@ class RecordingMeta:
             duration_seconds=duration_seconds,
             file_size=file_size,
             plaud_folder=plaud_folder or "_unknown",
+            edit_marker=str(raw["version_ms"]) if raw.get("version_ms") is not None else None,
         )
 
 
@@ -76,6 +80,10 @@ class PlaudRegionProbeFailed(Exception):
 
 class PlaudDownloadCorrupted(Exception):
     """Downloaded body size or hash does not match metadata."""
+
+
+class PlaudWriteRejected(Exception):
+    """A write returned HTTP 2xx, but the body has `status != 0`."""
 
 
 @dataclass(frozen=True)
@@ -359,6 +367,61 @@ class PlaudClient:
         with s3_session.get(item.data_link, stream=True, allow_redirects=False) as resp:
             resp.raise_for_status()
             return resp.content.decode("utf-8")
+
+    # ------------------------------------------------------------ speaker endpoints
+    # Undocumented web-app endpoints (see scripts/spike_speaker_writeback.py).
+
+    def _call(self, method: str, path: str, **kwargs: Any) -> Any:
+        resp = self._session.request(method, f"{self._base_url}{path}", timeout=60, **kwargs)
+        if resp.status_code == 401:
+            raise PlaudTokenExpired("token rejected by speaker endpoint")
+        resp.raise_for_status()
+        return resp.json()
+
+    def _write(self, method: str, path: str, payload: dict) -> None:
+        body = self._call(method, path, json=payload)
+        status = body.get("status") if isinstance(body, dict) else None
+        if status != 0:
+            raise PlaudWriteRejected(f"plaud write rejected: status={status}")
+
+    def fetch_trans_result(self, plaud_id: str) -> list[dict] | None:
+        body = self._call("POST", "/file/list", json=[plaud_id])
+        files = (body.get("data_file_list") if isinstance(body, dict) else None) or []
+        if not files:
+            return None
+        trans = files[0].get("trans_result")
+        return trans if isinstance(trans, list) else None
+
+    def patch_trans_result(self, plaud_id: str, segments: list[dict]) -> None:
+        self._write("PATCH", f"/file/{plaud_id}",
+                    {"trans_result": segments, "support_mul_summ": True})
+
+    def update_transcript_source(
+        self, plaud_id: str, source_type: str, source_id: str, segments: list[dict]
+    ) -> None:
+        self._write("POST", "/ai/update_source_info", {
+            "file_id": plaud_id,
+            "source_type": source_type,
+            "source_id": source_id,
+            "source_content": json.dumps(segments, ensure_ascii=False, separators=(",", ":")),
+        })
+
+    def fetch_notes(self, plaud_id: str) -> list[dict]:
+        body = self._call("GET", "/ai/query_note", headers={"file-id": plaud_id})
+        return (body.get("data") if isinstance(body, dict) else None) or []
+
+    def update_note(self, plaud_id: str, note: dict, content: str) -> None:
+        # Payload mirrors the web app's auto_sum_note save in its speaker-matching flow.
+        payload = {
+            "file_id": plaud_id,
+            "note_type": note.get("data_type"),
+            "note_title": note.get("data_title") or "",
+            "note_content": content,
+            "note_id": note.get("data_id"),
+        }
+        if note.get("data_type") != "auto_sum_note":
+            payload["note_tab_name"] = note.get("data_tab_name") or ""
+        self._write("POST", "/ai/update_note_info", payload)
 
     def verify(self) -> None:
         """Pre-flight check against the Plaud API.
