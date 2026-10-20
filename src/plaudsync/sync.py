@@ -591,7 +591,9 @@ def rewrite_md(conn: sqlite3.Connection, client, plaud_id: str) -> bool:
     """Regenerate the .md from fresh Plaud content at its current content_path.
 
     Pure file rewrite: no DB columns change. Returns False without writing
-    when the row has no content_path or Plaud returned no sections.
+    when the row has no content_path or Plaud's content is not complete: a
+    partial .md would silently replace a complete one, and with content_status
+    still 'complete' nothing would ever repair it.
     """
     row = conn.execute(
         "SELECT title, created_at_plaud, content_path, "
@@ -612,7 +614,7 @@ def rewrite_md(conn: sqlite3.Connection, client, plaud_id: str) -> bool:
     meta.created_at = created_at  # type: ignore[attr-defined]
 
     outcome = ContentFetcher(client).fetch_artifacts(plaud_id)
-    if not outcome.sections:
+    if outcome.status != "complete" or not outcome.sections:
         return False
     md_text = compose_markdown(
         meta=meta,
