@@ -30,3 +30,25 @@ def test_existing_ui_subcommand_still_works():
 def test_no_args_defaults_to_sync():
     ns = _parse_args([])
     assert ns.command is None
+
+
+def test_backfill_subcommand_parses():
+    ns = _parse_args(["speakers", "backfill", "--since", "2026-01-01", "--delay", "0.2"])
+    assert (ns.command, ns.speakers_command, ns.since, ns.delay) == (
+        "speakers", "backfill", "2026-01-01", 0.2,
+    )
+
+
+def test_cli_backfill_disabled_exits_7(tmp_path, monkeypatch):
+    import sys
+
+    from plaudsync import __main__ as cli
+
+    (tmp_path / "config.yaml").write_text(
+        f"unclassified_dir: {(tmp_path / 'U').as_posix()}\nprojects: {{}}\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("PLAUDSYNC_STATE_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["plaudsync", "speakers", "backfill", "--since", "2026-01-01"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 7
