@@ -34,7 +34,7 @@ def test_no_args_defaults_to_sync():
 
 def test_backfill_subcommand_parses():
     ns = _parse_args(["speakers", "backfill", "--since", "2026-01-01", "--delay", "0.2"])
-    assert (ns.command, ns.speakers_command, ns.since, ns.delay) == (
+    assert (ns.command, ns.speakers_command, ns.since.isoformat(), ns.delay) == (
         "speakers", "backfill", "2026-01-01", 0.2,
     )
 

@@ -91,6 +91,15 @@ def run_sync_pipeline() -> int:
     return _impl()
 
 
+def _iso_date(value: str):
+    from datetime import date
+
+    try:
+        return date.fromisoformat(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {value!r}") from e
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="plaudsync")
     subparsers = parser.add_subparsers(dest="command")
@@ -116,8 +125,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     sp_parser = subparsers.add_parser("speakers", help="Speaker naming tools.")
     sp_sub = sp_parser.add_subparsers(dest="speakers_command", required=True)
-    bf = sp_sub.add_parser("backfill", help="Learn + name speakers in older recordings.")
-    bf.add_argument("--since", required=True, help="YYYY-MM-DD (UTC midnight).")
+    bf = sp_sub.add_parser(
+        "backfill",
+        help="Learn + name speakers in older recordings. A failed recording is "
+        "retried by re-running backfill.",
+    )
+    bf.add_argument("--since", required=True, type=_iso_date, help="YYYY-MM-DD (UTC midnight).")
     bf.add_argument("--delay", type=float, default=1.0, help="Seconds between Plaud calls.")
 
     # No-argument invocation defaults to sync.
@@ -125,10 +138,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _run_speakers_backfill(args: argparse.Namespace) -> int:
-    from datetime import date
-
     from plaudsync.auth import load_token
-    from plaudsync.config import load_config
+    from plaudsync.config import ConfigValidationError, load_config
     from plaudsync.locking import SyncLock, SyncLockHeld
     from plaudsync.plaud_client import PlaudClient
     from plaudsync.speakers.backfill import run_backfill
@@ -139,11 +150,21 @@ def _run_speakers_backfill(args: argparse.Namespace) -> int:
         logger.error("PLAUDSYNC_STATE_ROOT not set")
         return 7
     state_root = Path(state_root_str)
-    config = load_config(state_root)
+    try:
+        config = load_config(state_root)
+    except FileNotFoundError:
+        logger.error("config.yaml not found in state_root")
+        return 7
+    except ConfigValidationError as e:
+        from plaudsync.sync_runner import _capture_sentry
+
+        logger.error("config invalid: {n} errors", n=len(e.args[0]))
+        _capture_sentry(e, fingerprint="config_validation_error", kind="config_validation_error")
+        return 7
     if not config.speaker_naming:
         logger.error("speaker_naming disabled in config")
         return 7
-    since = date.fromisoformat(args.since)
+    since = args.since
     try:
         with SyncLock(state_root / ".plaudsync" / "sync.lock"):
             token = load_token()
