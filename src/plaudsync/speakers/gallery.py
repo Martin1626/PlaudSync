@@ -113,20 +113,22 @@ def recompute_flags(
     for person in persons:
         eligible = {i: _vec(b) for i, _p, b in _eligible_rows(conn, person, window_cutoff)}
         samples = conn.execute(
-            "SELECT id, embedding, review_status FROM speaker_embeddings "
+            "SELECT id, embedding FROM speaker_embeddings "
             "WHERE person=? AND review_status != 'excluded'",
             (person,),
         ).fetchall()
-        for sid, blob, status in samples:
+        for sid, blob in samples:
             others = [v for i, v in eligible.items() if i != sid]
             if not others:
                 conn.execute("UPDATE speaker_embeddings SET consistency=NULL WHERE id=?", (sid,))
                 continue
             cons = float(np.dot(_unit(_vec(blob)), _unit(np.mean(others, axis=0))))
-            new_status = "flagged" if status == "none" and cons < FLAG_THRESHOLD else status
+            # Decided in SQL at write time: a UI confirm/exclude made since the read wins.
             conn.execute(
-                "UPDATE speaker_embeddings SET consistency=?, review_status=? WHERE id=?",
-                (cons, new_status, sid),
+                "UPDATE speaker_embeddings SET consistency=?, review_status = CASE "
+                "WHEN review_status = 'none' AND ? THEN 'flagged' ELSE review_status END "
+                "WHERE id=?",
+                (cons, int(cons < FLAG_THRESHOLD), sid),
             )
     conn.commit()
 
