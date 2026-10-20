@@ -1127,3 +1127,36 @@ def test_recheck_user_rename_resets_confirmation(tmp_path, fakes, before, new_la
         ).fetchone() == (after,)
     finally:
         conn.close()
+
+
+# --- Final review M5: new recordings per pass are capped, newest first ---
+
+
+def test_new_recordings_capped_per_pass_newest_first(tmp_path, fakes, monkeypatch):
+    assert runner.MAX_NEW_PER_PASS == 10
+    conn = open_state(tmp_path)
+    try:
+        audio = _audio(tmp_path)
+        ids = [f"n{i:02d}" for i in range(12)]  # n00 oldest ... n11 newest
+        for i, pid in enumerate(ids):
+            _rec(conn, pid, _iso(timedelta(days=13 - i)), local_path=audio)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 1": "Speaker 1"})
+        learned: list[str] = []
+        real_learn = runner.learn_recording
+
+        def spy(ctx, plaud_id):
+            learned.append(plaud_id)
+            return real_learn(ctx, plaud_id)
+
+        monkeypatch.setattr(runner, "learn_recording", spy)
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+        assert learned == ids[::-1][:10]
+
+        learned.clear()
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                now=NOW + timedelta(minutes=30))
+        assert learned == ["n01", "n00"]
+    finally:
+        conn.close()
