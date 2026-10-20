@@ -171,3 +171,27 @@ def test_backfill_auto_names_not_counted_for_kill_criterion(tmp_path, env):
         assert row == ("A", "auto", 0)
     finally:
         conn.close()
+
+
+def test_backfill_phase2_failure_counted_and_retried(tmp_path, env):
+    conn = open_state(tmp_path)
+    try:
+        _setup_two(conn, env)
+        env.apply_renames.side_effect = RuntimeError("boom")
+        result = backfill.run_backfill(
+            conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 8, 1), now=NOW
+        )
+        assert result.failed == 1
+        states = dict(conn.execute("SELECT plaud_id, state FROM speaker_recordings"))
+        assert states["r1"] == "learned"
+        env.apply_renames.side_effect = None
+        env.apply_renames.return_value = "written"
+        again = backfill.run_backfill(
+            conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 8, 1), now=NOW
+        )
+        assert again.failed == 0 and again.named == 1
+        assert conn.execute(
+            "SELECT state FROM speaker_recordings WHERE plaud_id='r1'"
+        ).fetchone()[0] == "done"
+    finally:
+        conn.close()

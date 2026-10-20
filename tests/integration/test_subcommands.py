@@ -52,3 +52,36 @@ def test_cli_backfill_disabled_exits_7(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 7
+
+
+def _run_backfill_cli(monkeypatch, *extra):
+    import sys
+
+    from plaudsync import __main__ as cli
+
+    monkeypatch.setattr(sys, "argv", ["plaudsync", "speakers", "backfill", *extra])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    return exc.value.code
+
+
+def test_cli_backfill_missing_config_exits_7(tmp_path, monkeypatch):
+    monkeypatch.setenv("PLAUDSYNC_STATE_ROOT", str(tmp_path))
+    assert _run_backfill_cli(monkeypatch, "--since", "2026-01-01") == 7
+
+
+def test_cli_backfill_invalid_config_exits_7(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_text("- not a mapping\n", encoding="utf-8")
+    monkeypatch.setenv("PLAUDSYNC_STATE_ROOT", str(tmp_path))
+    assert _run_backfill_cli(monkeypatch, "--since", "2026-01-01") == 7
+
+
+def test_cli_backfill_missing_state_root_exits_7(monkeypatch):
+    monkeypatch.delenv("PLAUDSYNC_STATE_ROOT", raising=False)
+    assert _run_backfill_cli(monkeypatch, "--since", "2026-01-01") == 7
+
+
+def test_cli_backfill_bad_since_is_usage_error():
+    with pytest.raises(SystemExit) as exc:
+        _parse_args(["speakers", "backfill", "--since", "yesterday"])
+    assert exc.value.code == 2
