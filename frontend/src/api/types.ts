@@ -190,3 +190,26 @@ export interface StartSyncFailure {
   message: string;
   exit_code?: number;
 }
+
+// ---------------- Speakers (mirrors ui/speakers_api.py) ----------------
+
+export interface SpeakerSample {
+  id: number;
+  person: string | null;
+  plaud_id: string;
+  recording_title: string;
+  recording_date: string;
+  consistency: number | null;
+  review_status: "none" | "flagged" | "confirmed" | "excluded";
+  origin: "user" | "auto" | "review" | null;
+  has_clip: boolean;
+  queued_name: string | null;
+}
+
+export interface SpeakersResponse {
+  samples: SpeakerSample[];
+  pending_count: number;
+  persons: string[];
+}
+
+export type SpeakersFilter = "flagged" | "all";

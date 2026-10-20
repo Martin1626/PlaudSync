@@ -8,9 +8,12 @@ import {
   fetchConfig,
   fetchFolders,
   fetchSchedule,
+  fetchSpeakers,
   fetchState,
   postAuthVerify,
   postFoldersRefresh,
+  postSpeakerAction,
+  postSpeakerRename,
   postStartSync,
   putConfig,
   putSchedule,
@@ -21,6 +24,8 @@ import type {
   ConfigSaveSuccess,
   FoldersResponse,
   Schedule,
+  SpeakersFilter,
+  SpeakersResponse,
   StartSyncResponse,
   StateResponse,
 } from "./types";
@@ -156,4 +161,48 @@ export function useRefreshFolders() {
       qc.setQueryData<FoldersResponse>(FOLDERS_QUERY_KEY, data);
     },
   });
+}
+
+// ---------------- Speaker review ----------------
+
+export const SPEAKERS_QUERY_KEY = ["speakers"] as const;
+
+export function useSpeakersQuery(filter: SpeakersFilter) {
+  return useQuery<SpeakersResponse>({
+    queryKey: [...SPEAKERS_QUERY_KEY, filter],
+    queryFn: () => fetchSpeakers(filter),
+    refetchInterval: () => {
+      if (typeof document !== "undefined" && document.hidden) return false;
+      return 30000;
+    },
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+    placeholderData: (prev) => prev,
+    retry: 3,
+    retryDelay: (attempt) => 100 * 2 ** attempt,
+  });
+}
+
+function useSpeakerMutation<V>(fn: (v: V) => Promise<void>) {
+  const qc = useQueryClient();
+  return useMutation<void, Error, V>({
+    mutationFn: fn,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: SPEAKERS_QUERY_KEY });
+    },
+  });
+}
+
+export function useConfirmSample() {
+  return useSpeakerMutation<number>((id) => postSpeakerAction(id, "confirm"));
+}
+
+export function useExcludeSample() {
+  return useSpeakerMutation<number>((id) => postSpeakerAction(id, "exclude"));
+}
+
+export function useRenameSample() {
+  return useSpeakerMutation<{ id: number; name: string }>(({ id, name }) =>
+    postSpeakerRename(id, name),
+  );
 }

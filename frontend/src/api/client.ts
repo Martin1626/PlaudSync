@@ -5,6 +5,8 @@ import type {
   ConfigSaveSuccess,
   FoldersResponse,
   Schedule,
+  SpeakersFilter,
+  SpeakersResponse,
   StartSyncResponse,
   StartSyncConflict,
   StateResponse,
@@ -240,4 +242,25 @@ export async function postStartSync(): Promise<StartSyncResponse> {
     }
     throw err;
   }
+}
+
+// ---------------- Speakers ----------------
+
+export function fetchSpeakers(filter: SpeakersFilter): Promise<SpeakersResponse> {
+  return fetchJson<SpeakersResponse>(`/api/speakers?filter=${filter}`);
+}
+
+export async function postSpeakerAction(
+  id: number,
+  action: "confirm" | "exclude",
+): Promise<void> {
+  await fetchJson<null>(`/api/speakers/${id}/${action}`, { method: "POST" });
+}
+
+export async function postSpeakerRename(id: number, name: string): Promise<void> {
+  await fetchJson<null>(`/api/speakers/${id}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
 }
