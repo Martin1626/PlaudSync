@@ -249,9 +249,11 @@ def test_recording_failure_counted_and_retried_next_run(tmp_path, fakes):
         result = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
 
         assert result.failed == 1
+        # I1 (final review): a learn failure leaves a 'retry' row so the next attempt
+        # waits the 6 h cadence instead of hitting Plaud on every run.
         assert conn.execute(
-            "SELECT COUNT(*) FROM speaker_recordings WHERE plaud_id='new1'"
-        ).fetchone()[0] == 0
+            "SELECT state, checked_at FROM speaker_recordings WHERE plaud_id='new1'"
+        ).fetchone() == ("retry", NOW.isoformat())
     finally:
         conn.close()
 
@@ -515,7 +517,9 @@ def test_crash_after_write_next_pass_treats_names_as_auto(tmp_path, fakes, monke
         # Plaud now carries our name; the next run must recognise it as our own write.
         client.fetch_trans_result.return_value = _segments({"Speaker 2": "A"})
         fakes.rewrite_md.reset_mock()
-        second = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+        # I1 (final review): the failed recording backs off for 6 h before the retry.
+        second = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                         now=NOW + timedelta(hours=7))
 
         assert second.failed == 0
         assert fakes.apply_renames.call_count == 1  # names written once
@@ -745,3 +749,128 @@ def test_recheck_without_transcript_not_stamped(tmp_path, fakes):
         fakes.rewrite_md.assert_not_called()
     finally:
         conn.close()
+
+
+# --- Final review I1: failing recordings back off to the 6 h cadence ---
+
+
+def test_learn_failure_backs_off_6h(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _rec(conn, "new1", _iso(timedelta(days=1)), local_path=_audio(tmp_path))
+        client = MagicMock()
+        client.fetch_trans_result.side_effect = RuntimeError("plaud 502")
+        live = {"new1": SimpleNamespace(plaud_id="new1", edit_marker="v1")}
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW,
+                                live_metas=live)
+        client.reset_mock()
+        result = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                         now=NOW + timedelta(hours=1), live_metas=live)
+
+        assert result.failed == 0
+        assert client.mock_calls == []
+
+        client.fetch_trans_result.side_effect = None
+        client.fetch_trans_result.return_value = _segments({"Speaker 1": "Speaker 1"})
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                now=NOW + timedelta(hours=7), live_metas=live)
+
+        client.fetch_trans_result.assert_called_once_with("new1")
+        assert conn.execute(
+            "SELECT state, edit_marker FROM speaker_recordings WHERE plaud_id='new1'"
+        ).fetchone() == ("done", "v1")
+    finally:
+        conn.close()
+
+
+def test_recheck_failure_backs_off_despite_live_marker(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _rechecked_recording(conn, checked_at=_iso(timedelta(hours=1)), marker="v1")
+        client = MagicMock()
+        client.fetch_trans_result.side_effect = RuntimeError("plaud 502")
+        live = {"r1": SimpleNamespace(plaud_id="r1", edit_marker="v2")}
+
+        first = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW,
+                                        live_metas=live)
+        assert first.failed == 1
+        assert conn.execute(
+            "SELECT checked_at, edit_marker, labels FROM speaker_recordings WHERE plaud_id='r1'"
+        ).fetchone() == (NOW.isoformat(), None, json.dumps({"Speaker 2": "A"}))
+
+        client.reset_mock()
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                now=NOW + timedelta(hours=1), live_metas=live)
+        assert client.mock_calls == []
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                now=NOW + timedelta(hours=7), live_metas=live)
+        client.fetch_trans_result.assert_called_once_with("r1")
+    finally:
+        conn.close()
+
+
+def test_naming_failure_after_learn_backs_off(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _new_recording_matching_a(conn, tmp_path, fakes)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "Speaker 2"})
+        fakes.apply_renames.side_effect = RuntimeError("plaud 502")
+        live = {"new1": SimpleNamespace(plaud_id="new1", edit_marker="v1")}
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW,
+                                live_metas=live)
+        assert fakes.apply_renames.call_count == 1
+        client.reset_mock()
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                now=NOW + timedelta(hours=1), live_metas=live)
+
+        assert client.mock_calls == []
+        assert fakes.apply_renames.call_count == 1
+
+        fakes.apply_renames.side_effect = None
+        result = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                         now=NOW + timedelta(hours=7), live_metas=live)
+        assert result.named == 1
+        assert _sample(conn) == ("A", "auto", 1, 0)
+    finally:
+        conn.close()
+
+
+def test_success_rechecks_once_after_own_write(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _new_recording_matching_a(conn, tmp_path, fakes)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "Speaker 2"})
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW,
+                                live_metas={"new1": SimpleNamespace(edit_marker="v1")})
+        assert conn.execute(
+            "SELECT edit_marker FROM speaker_recordings WHERE plaud_id='new1'"
+        ).fetchone() == ("v1",)
+
+        # Our write bumped version_ms: exactly one re-check, which stores the new marker.
+        bumped = {"new1": SimpleNamespace(edit_marker="v2")}
+        client.reset_mock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "A"})
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                now=NOW + timedelta(hours=1), live_metas=bumped)
+        client.fetch_trans_result.assert_called_once_with("new1")
+
+        client.reset_mock()
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                now=NOW + timedelta(hours=2), live_metas=bumped)
+        client.fetch_trans_result.assert_not_called()
+    finally:
+        conn.close()
+
+
+def test_due_for_recheck_null_stored_marker_uses_cadence():
+    fresh = _iso(timedelta(hours=1))
+    old = _iso(timedelta(hours=7))
+    # NULL stored marker = failure backoff (or no marker yet): cadence, not marker compare.
+    assert runner.due_for_recheck(None, "v1", fresh, NOW) is False
+    assert runner.due_for_recheck(None, "v1", old, NOW) is True
+    assert runner.due_for_recheck(None, "v1", runner._UNCHECKED, NOW) is True
