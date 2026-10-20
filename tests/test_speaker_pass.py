@@ -620,3 +620,128 @@ def test_queue_entry_cluster_gone_dropped(tmp_path, fakes):
         ).fetchone() == ("A", "user", "none")
     finally:
         conn.close()
+
+
+# --- Review fix round 1 ---
+
+
+def test_user_unnamed_cluster_never_auto_named_again(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _gallery_person_a(conn)
+        eid = _rechecked_recording(conn, checked_at=_iso(timedelta(hours=7)))
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "Speaker 2"})
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        fakes.apply_renames.assert_not_called()
+        assert conn.execute(
+            "SELECT person, origin, auto_corrected FROM speaker_embeddings WHERE id=?", (eid,)
+        ).fetchone() == (None, "user", 1)
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                now=NOW + timedelta(hours=7))
+
+        fakes.apply_renames.assert_not_called()
+        assert conn.execute(
+            "SELECT person, origin FROM speaker_embeddings WHERE id=?", (eid,)
+        ).fetchone() == (None, "user")
+    finally:
+        conn.close()
+
+
+def _two_cluster_recording(conn):
+    """r1: S1 named X by the user, S2 auto-named A by us; snapshot due for re-check."""
+    _rec(conn, "r1", _iso(timedelta(days=2)))
+    _speaker_row(conn, "r1", labels={"Speaker 1": "X", "Speaker 2": "A"},
+                 written={"Speaker 2": "A"}, checked_at=_iso(timedelta(hours=7)))
+    s1 = gallery.upsert_embedding(
+        conn, plaud_id="r1", cluster="Speaker 1", person="X", origin="user",
+        embedding=_vec(0, 0, 1, 0), seconds=20.0, clip_segments=[(0, 1000)],
+    )
+    s2 = gallery.upsert_embedding(
+        conn, plaud_id="r1", cluster="Speaker 2", person="A", origin="auto",
+        embedding=_vec(0, 0, 0, 1), seconds=20.0, clip_segments=[(0, 1000)],
+    )
+    gallery.set_person(conn, s2, "A", "auto", auto_assigned=True)
+    return s1, s2
+
+
+def _queue(conn, eid, new_name):
+    conn.execute(
+        "INSERT INTO speaker_review_queue (embedding_id, new_name, created_at) "
+        "VALUES (?, ?, ?)", (eid, new_name, _iso(timedelta(hours=2))),
+    )
+    conn.commit()
+
+
+def test_drain_keeps_unrelated_user_rename_for_recheck(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        s1, s2 = _two_cluster_recording(conn)
+        _queue(conn, s1, "C")
+        client = MagicMock()
+        client.fetch_trans_result.side_effect = [
+            _segments({"Speaker 1": "X", "Speaker 2": "B"}),  # drain: user renamed S2
+            _segments({"Speaker 1": "C", "Speaker 2": "B"}),  # re-check after our write
+        ]
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert conn.execute(
+            "SELECT person, origin, auto_corrected FROM speaker_embeddings WHERE id=?", (s2,)
+        ).fetchone() == ("B", "user", 1)
+        fakes.fix_summary.assert_called_once_with(client, "r1", [("A", "B")], {"C", "B"})
+        assert conn.execute(
+            "SELECT person, origin FROM speaker_embeddings WHERE id=?", (s1,)
+        ).fetchone() == ("C", "review")
+    finally:
+        conn.close()
+
+
+def test_drain_review_rename_replaces_our_written_name(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _s1, s2 = _two_cluster_recording(conn)
+        conn.execute("UPDATE speaker_recordings SET checked_at=? WHERE plaud_id='r1'",
+                     (NOW.isoformat(),))
+        conn.commit()
+        _queue(conn, s2, "B")
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 1": "X", "Speaker 2": "A"})
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert json.loads(conn.execute(
+            "SELECT written FROM speaker_recordings WHERE plaud_id='r1'"
+        ).fetchone()[0]) == {}
+
+        # The user later renames the cluster back to our old auto name: that is theirs.
+        client.fetch_trans_result.return_value = _segments({"Speaker 1": "X", "Speaker 2": "A"})
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                now=NOW + timedelta(hours=7))
+
+        assert conn.execute(
+            "SELECT person, origin FROM speaker_embeddings WHERE id=?", (s2,)
+        ).fetchone() == ("A", "user")
+    finally:
+        conn.close()
+
+
+def test_recheck_without_transcript_not_stamped(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        checked = _iso(timedelta(hours=7))
+        _rechecked_recording(conn, checked_at=checked)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = None
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert conn.execute(
+            "SELECT checked_at, labels FROM speaker_recordings WHERE plaud_id='r1'"
+        ).fetchone() == (checked, json.dumps({"Speaker 2": "A"}))
+        fakes.rewrite_md.assert_not_called()
+    finally:
+        conn.close()
