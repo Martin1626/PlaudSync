@@ -174,7 +174,16 @@ def name_recording(ctx: SpeakerContext, plaud_id: str, labels: dict[str, str]) -
 def _name(ctx: SpeakerContext, plaud_id: str, labels: dict[str, str]) -> dict[str, str]:
     """Match unnamed clusters and write the names; returns the renames written."""
     ids = embedding_ids(ctx.conn, plaud_id)
-    unnamed = [c for c, label in labels.items() if is_default_label(label) and c in ids]
+    # person NULL + origin 'user' = the user un-named it: never auto-name it again.
+    user_unnamed = {c for (c,) in ctx.conn.execute(
+        "SELECT cluster FROM speaker_embeddings "
+        "WHERE plaud_id=? AND person IS NULL AND origin='user'",
+        (plaud_id,),
+    )}
+    unnamed = [
+        c for c, label in labels.items()
+        if is_default_label(label) and c in ids and c not in user_unnamed
+    ]
     if not unnamed:
         return {}
     cents = centroids(ctx.conn, window_cutoff=ctx.window_cutoff)
@@ -246,7 +255,8 @@ def _sample_change(
         (eid,),
     )
     ctx.conn.commit()
-    set_person(ctx.conn, eid, target, "user" if target else None)
+    # Un-naming is a user decision too (origin 'user'), which keeps _name off this cluster.
+    set_person(ctx.conn, eid, target, "user")
     ctx.touched.update(p for p in (person, target) if p)
 
 
@@ -254,7 +264,9 @@ def recheck_recording(ctx: SpeakerContext, plaud_id: str) -> None:
     stored = _row_json(ctx, plaud_id, "labels")
     written = _row_json(ctx, plaud_id, "written")
     segments = ctx.client.fetch_trans_result(plaud_id)
-    labels = cluster_labels(segments) if segments is not None else dict(stored)
+    if segments is None:
+        return  # not stamped: stays due, retried next run
+    labels = cluster_labels(segments)
     changed = {c: (stored.get(c), new) for c, new in labels.items() if stored.get(c) != new}
 
     for cluster, (old, new) in changed.items():
@@ -262,7 +274,7 @@ def recheck_recording(ctx: SpeakerContext, plaud_id: str) -> None:
     pairs = [(old, new) for old, new in changed.values() if old is not None]
     if pairs:
         fix_summary(ctx.client, plaud_id, pairs, set(labels.values()))
-    renames = _name(ctx, plaud_id, labels) if segments is not None else {}
+    renames = _name(ctx, plaud_id, labels)
     ctx.result.named += len(renames)
     if changed and not renames:  # _name already rewrote the .md
         rewrite_md(ctx.conn, ctx.client, plaud_id)
@@ -316,12 +328,13 @@ def drain_review_queue(ctx: SpeakerContext) -> int:
             )
             ctx.conn.commit()
             ctx.touched.update(p for p in (old_person, new_name) if p)
-            # Our own write: keep the snapshot current so a re-check does not see a user edit.
-            ctx.conn.execute(
-                "UPDATE speaker_recordings SET labels=? WHERE plaud_id=?",
-                (json.dumps({**labels, cluster: new_name}), plaud_id),
-            )
-            ctx.conn.commit()
+            # Our own write: only this cluster enters the snapshot, so user edits on other
+            # clusters are still seen as changes by the next re-check.
+            _merge_row_json(ctx, plaud_id, "labels", {cluster: new_name})
+            # The review name replaces our auto name; a later return to it is the user's.
+            written = _row_json(ctx, plaud_id, "written")
+            if written.pop(cluster, None) is not None:
+                _set_row_json(ctx, plaud_id, "written", written)
             rewrite_md(ctx.conn, ctx.client, plaud_id)
             ctx.conn.execute(
                 "UPDATE speaker_review_queue SET done_at=? WHERE id=?",
