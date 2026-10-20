@@ -4,6 +4,14 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-10-20 — speaker naming: probes
+
+**Edit marker:** pending live probe ([scripts/probe_speaker_marker.py](scripts/probe_speaker_marker.py), zatím nespuštěno; `--save` na testovací nahrávce, ruční přejmenování speakera ve web app, `--compare`). Do té doby platí fallback: re-check nejvýš každých 6 h na nahrávku.
+
+**FLAG_THRESHOLD = 0.65** ([scripts/calibrate_flag_threshold.py](scripts/calibrate_flag_threshold.py), lokálně, bez API). Cosine pojmenovaného clusteru vs. centroid téže osoby z jiných nahrávek (CAM++, 186 řádků, 33 osob s ≥2 nahrávkami): p1 0,656, p5 0,748, p10 0,765, p25 0,841. Pod 0,60 jen 2 řádky (0,590; 0,599). Při 0,65 by se flagovalo 1,1 % označených řádků (limit 5 %); horní mez rozsahu 0,65 je tedy omezující, ne 5% limit.
+
+**Příkazy:** `.venv/Scripts/python.exe scripts/calibrate_flag_threshold.py`
+
 ## 2026-10-20 — spike: auto-pojmenování speakerů (write-back + přesnost lokální galerie hlasů)
 
 **Cíl:** u nových schůzek doplnit jména speakerů z lokální galerie hlasů naplněné dřívějšími ručními přiřazeními v Plaudu; jména zapsat zpět do Plaud cloudu (přepis i shrnutí). Rozhodnutí z průzkumu (skill pruzkum): embeddingy lokálně přes **sherpa-onnx** (Apache-2, ONNX, bez PyTorch); Plaud `embeddings` mrtvé (pole v `/file/detail` je prázdné → `DetailMeta.speakers_count` je vždy 0, kandidát na bugfix). Revize BL-4 „embeddings NEVER“: hlasové otisky se smí ukládat lokálně, ne do cloudu.
