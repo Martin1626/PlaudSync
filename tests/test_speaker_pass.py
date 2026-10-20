@@ -874,3 +874,102 @@ def test_due_for_recheck_null_stored_marker_uses_cadence():
     assert runner.due_for_recheck(None, "v1", fresh, NOW) is False
     assert runner.due_for_recheck(None, "v1", old, NOW) is True
     assert runner.due_for_recheck(None, "v1", runner._UNCHECKED, NOW) is True
+
+
+# --- Final review I2: an .md that could not be rewritten is a failure, retried later ---
+
+
+def test_new_recording_md_not_rewritten_retried_without_plaud_rewrite(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _new_recording_matching_a(conn, tmp_path, fakes)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "Speaker 2"})
+        fakes.rewrite_md.return_value = False  # content pending in Plaud
+
+        first = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert first.failed == 1
+        assert fakes.apply_renames.call_count == 1
+        stored = conn.execute(
+            "SELECT labels, written FROM speaker_recordings WHERE plaud_id='new1'"
+        ).fetchone()
+        assert json.loads(stored[0]) == {"Speaker 2": "Speaker 2"}  # snapshot not advanced
+        assert json.loads(stored[1]) == {"Speaker 2": "A"}
+
+        fakes.rewrite_md.return_value = True
+        fakes.rewrite_md.reset_mock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "A"})
+        second = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                         now=NOW + timedelta(hours=7))
+
+        assert second.failed == 0
+        assert fakes.apply_renames.call_count == 1  # Plaud not written again
+        fakes.rewrite_md.assert_called_once_with(conn, client, "new1")
+        assert _sample(conn) == ("A", "auto", 1, 0)
+        assert json.loads(conn.execute(
+            "SELECT labels FROM speaker_recordings WHERE plaud_id='new1'"
+        ).fetchone()[0]) == {"Speaker 2": "A"}
+    finally:
+        conn.close()
+
+
+def test_recheck_md_not_rewritten_keeps_snapshot(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        eid = _rechecked_recording(conn, checked_at=_iso(timedelta(hours=7)))
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "B"})
+        fakes.rewrite_md.return_value = False
+
+        first = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert first.failed == 1 and first.rechecked == 0
+        assert conn.execute(
+            "SELECT labels, checked_at, edit_marker FROM speaker_recordings WHERE plaud_id='r1'"
+        ).fetchone() == (json.dumps({"Speaker 2": "A"}), NOW.isoformat(), None)
+
+        fakes.rewrite_md.return_value = True
+        fakes.rewrite_md.reset_mock()
+        second = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                         now=NOW + timedelta(hours=7))
+
+        assert second.failed == 0 and second.rechecked == 1
+        fakes.rewrite_md.assert_called_once_with(conn, client, "r1")
+        assert json.loads(conn.execute(
+            "SELECT labels FROM speaker_recordings WHERE plaud_id='r1'"
+        ).fetchone()[0]) == {"Speaker 2": "B"}
+        assert conn.execute(
+            "SELECT person, origin, auto_corrected FROM speaker_embeddings WHERE id=?", (eid,)
+        ).fetchone() == ("B", "user", 1)
+    finally:
+        conn.close()
+
+
+def test_queue_md_not_rewritten_entry_retried_without_plaud_rewrite(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        eid = _queued(conn)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "A"})
+        fakes.rewrite_md.return_value = False
+
+        first = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert first.failed == 1
+        assert conn.execute("SELECT done_at FROM speaker_review_queue").fetchone() == (None,)
+
+        fakes.rewrite_md.return_value = True
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "B"})
+        second = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert second.failed == 0
+        assert fakes.apply_renames.call_count == 1  # Plaud already carries the name
+        assert conn.execute(
+            "SELECT done_at FROM speaker_review_queue"
+        ).fetchone() == (NOW.isoformat(),)
+        assert conn.execute(
+            "SELECT person, origin, review_status FROM speaker_embeddings WHERE id=?", (eid,)
+        ).fetchone() == ("B", "review", "confirmed")
+    finally:
+        conn.close()

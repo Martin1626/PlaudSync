@@ -216,3 +216,39 @@ def test_backfill_learns_retry_rows(tmp_path, env):
         assert states == {"r1": "done", "r2": "done"}
     finally:
         conn.close()
+
+
+def test_backfill_md_not_rewritten_retry_rewrites_without_plaud_rewrite(tmp_path, env):
+    conn = open_state(tmp_path)
+    try:
+        _setup_two(conn, env)
+        runner.rewrite_md.return_value = False  # content pending in Plaud
+        first = backfill.run_backfill(
+            conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 8, 1), now=NOW
+        )
+        assert first.failed == 1
+        assert conn.execute(
+            "SELECT state FROM speaker_recordings WHERE plaud_id='r1'"
+        ).fetchone()[0] == "learned"
+
+        # Plaud now carries our name; the retry must rewrite the .md, not write Plaud again.
+        runner.rewrite_md.return_value = True
+        runner.rewrite_md.reset_mock()
+        env.transcripts["r1"] = lambda: [
+            {**s, "content": "r1"} for s in _segments({"Speaker 1": "A"})
+        ]
+        again = backfill.run_backfill(
+            conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 8, 1), now=NOW
+        )
+        assert again.failed == 0
+        assert env.apply_renames.call_count == 1
+        assert runner.rewrite_md.call_count == 1  # client arg is the throttling proxy
+        assert runner.rewrite_md.call_args.args[2] == "r1"
+        assert conn.execute(
+            "SELECT state, labels FROM speaker_recordings WHERE plaud_id='r1'"
+        ).fetchone() == ("done", json.dumps({"Speaker 1": "A"}))
+        assert conn.execute(
+            "SELECT person, origin, auto_assigned FROM speaker_embeddings WHERE plaud_id='r1'"
+        ).fetchone() == ("A", "auto", 0)
+    finally:
+        conn.close()
