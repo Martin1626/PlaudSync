@@ -21,9 +21,11 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 **Ruční kontrola:** `spike_speaker_id.py review` vygeneruje lokální HTML (audio ukázky, mimo repo, po kontrole smazat) se spornými případy — 1× jiná osoba (0,65), 12× cizí hlas podobný osobě z galerie (0,60–0,69; podezření na varianty jmen), 9× správně pod prahem 0,75. **Verdikty uživatele (poslechem):** 2 clustery mají v Plaudu **chybné jméno** (hlas patří jiné osobě) — jeden z nich model přiřadil se skóre 0,72; všech 12 „cizích podobných“ jsou opravdu různí lidé (žádné varianty jmen), tj. skutečný impostor dosahuje 0,69. Po opravě ground truth (184 genuine / 27 impostorů): **práh 0,70 → FAR 3,7 % = KC4 FAIL; práh 0,75 → precision 100 %, coverage 95,1 %, FAR 0 % = PASS.** Produkční práh 0,75 potvrzen. Poučení: ruční štítky v Plaudu nejsou 100% spolehlivé — galerie potřebuje možnost vyřadit chybný vzorek a produkce režim „návrh + potvrzení“ s poslechem.
 
-**Otevřené:** GDPR čl. 9 (hlasy kolegů/klientů) → firma/DPO před produkcí (KC6); FAR jen na 25 impostorech (horní mez ~12 %) → ověřit v režimu „návrh + potvrzení“; souběh zápisů přes `file_version`; offset přepis vs. audio.
+**Doplněk (uživatel, 2026-10-20):** sporný případ 2 — testovaný i referenční hlas patří **téže osobě**; testovaný cluster je v Plaudu pod jiným jménem (chybný štítek, ne impostor). Na prahu 0,75 nic nemění. Otevřené pro návrh produkce: řešit aliasem jmen v galerii, nebo opravou štítku v Plaudu. **GDPR čl. 9 schválilo vedení firmy → KC6 uzavřeno.**
 
-**Kill criteria:** KC1–KC4 PASS (CAM++), KC5 OK (0 smíšených clusterů), KC6 otevřené.
+**Otevřené:** FAR jen na 27 impostorech (horní mez ~11 %) → ověřit v režimu „návrh + potvrzení“; souběh zápisů přes `file_version`; offset přepis vs. audio.
+
+**Kill criteria:** KC1–KC4 PASS (CAM++), KC5 OK (0 smíšených clusterů), KC6 PASS (GDPR schváleno 2026-10-20).
 
 ---
 
