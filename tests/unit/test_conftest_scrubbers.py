@@ -120,3 +120,21 @@ def test_signed_content_url_and_data_link_share_placeholder() -> None:
     out = _redact_response(_response(detail, "application/json"))
     link = json.loads(out["body"]["string"])["data"]["content_list"][0]["data_link"]
     assert link == redacted.uri
+
+
+def test_redacted_post_body_survives_vcr_refilter() -> None:
+    """VCR runs the whole request-filter chain twice while matching (POST
+    JSON bodies get json.loads'ed by filter_post_data_parameters), so the
+    redaction must be idempotent through that chain."""
+    import vcr
+
+    from tests.conftest import vcr_config
+
+    cfg = vcr_config.__wrapped__()
+    chain = vcr.VCR(**cfg)._build_before_record_request(cfg)
+    body = json.dumps({"note_content": "x" * 300}).encode()
+    req = Request("POST", "https://api-euc1.plaud.ai/ai/update_note_info", body,
+                  {"Content-Type": "application/json"})
+    once = chain(req)
+    twice = chain(once)
+    assert twice.body == b"<redacted-request-body>"
