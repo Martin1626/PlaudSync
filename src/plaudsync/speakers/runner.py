@@ -344,15 +344,15 @@ def _drop_queue_entry(ctx: SpeakerContext, queue_id: int, plaud_id: str | None) 
 
 def drain_review_queue(ctx: SpeakerContext) -> int:
     rows = ctx.conn.execute(
-        "SELECT q.id, e.id, q.new_name, e.plaud_id, e.cluster, e.person, "
-        f"COALESCE(({_SCOPE}), 0) "  # nosec B608 - constant
+        "SELECT q.id, e.id, q.new_name, e.plaud_id, e.cluster, e.person, e.origin, "
+        f"e.auto_assigned, COALESCE(({_SCOPE}), 0) "  # nosec B608 - constant
         "FROM speaker_review_queue q "
         "LEFT JOIN speaker_embeddings e ON e.id = q.embedding_id "
         "LEFT JOIN recordings r ON r.plaud_id = e.plaud_id "
         "WHERE q.done_at IS NULL ORDER BY q.id"
     ).fetchall()
     done = 0
-    for qid, eid, new_name, plaud_id, cluster, old_person, in_scope in rows:
+    for qid, eid, new_name, plaud_id, cluster, old_person, origin, auto_assigned,             in_scope in rows:
         if in_scope and not _is_live(ctx, plaud_id):
             continue
         try:
@@ -371,6 +371,11 @@ def drain_review_queue(ctx: SpeakerContext) -> int:
                 ctx.client, plaud_id, {cluster: new_name}, labels
             ) != "written":
                 continue
+            if origin == "auto" and auto_assigned and new_name != old_person:
+                # Our in-window auto name corrected in review: counts for the kill criterion.
+                ctx.conn.execute(
+                    "UPDATE speaker_embeddings SET auto_corrected=1 WHERE id=?", (eid,)
+                )
             set_person(ctx.conn, eid, new_name, "review")
             ctx.conn.execute(
                 "UPDATE speaker_embeddings SET review_status='confirmed' WHERE id=?", (eid,)
