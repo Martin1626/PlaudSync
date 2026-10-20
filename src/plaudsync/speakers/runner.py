@@ -367,6 +367,25 @@ def _process_new(ctx: SpeakerContext, plaud_id: str) -> None:
     ctx.conn.commit()
 
 
+def make_context(
+    conn: sqlite3.Connection,
+    client: Any,
+    config: Config,
+    state_root: Path,
+    *,
+    now: datetime | None = None,
+    live_metas: dict | None = None,
+    via_backfill: bool = False,
+) -> SpeakerContext:
+    now = now or datetime.now(timezone.utc)
+    return SpeakerContext(
+        conn=conn, client=client, config=config, state_root=state_root, now=now,
+        window_cutoff=(now - timedelta(days=config.recheck_window_days)).isoformat(),
+        extractor_factory=_cached(lambda: load_extractor(ensure_model(state_root))),
+        via_backfill=via_backfill, live_metas=live_metas,
+    )
+
+
 def run_speaker_pass(
     conn: sqlite3.Connection,
     client: Any,
@@ -376,14 +395,8 @@ def run_speaker_pass(
     now: datetime | None = None,
     live_metas: dict | None = None,
 ) -> SpeakerPassResult:
-    now = now or datetime.now(timezone.utc)
-    cutoff = (now - timedelta(days=config.recheck_window_days)).isoformat()
-    ctx = SpeakerContext(
-        conn=conn, client=client, config=config, state_root=state_root, now=now,
-        window_cutoff=cutoff,
-        extractor_factory=_cached(lambda: load_extractor(ensure_model(state_root))),
-        live_metas=live_metas,
-    )
+    ctx = make_context(conn, client, config, state_root, now=now, live_metas=live_metas)
+    now, cutoff = ctx.now, ctx.window_cutoff
     result = ctx.result
 
     purge_unnamed(conn, window_cutoff=cutoff)

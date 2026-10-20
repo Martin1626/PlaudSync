@@ -114,8 +114,51 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     uw_parser.add_argument("port", type=int, help="uvicorn port already running.")
 
+    sp_parser = subparsers.add_parser("speakers", help="Speaker naming tools.")
+    sp_sub = sp_parser.add_subparsers(dest="speakers_command", required=True)
+    bf = sp_sub.add_parser("backfill", help="Learn + name speakers in older recordings.")
+    bf.add_argument("--since", required=True, help="YYYY-MM-DD (UTC midnight).")
+    bf.add_argument("--delay", type=float, default=1.0, help="Seconds between Plaud calls.")
+
     # No-argument invocation defaults to sync.
     return parser.parse_args(argv)
+
+
+def _run_speakers_backfill(args: argparse.Namespace) -> int:
+    from datetime import date
+
+    from plaudsync.auth import load_token
+    from plaudsync.config import load_config
+    from plaudsync.locking import SyncLock, SyncLockHeld
+    from plaudsync.plaud_client import PlaudClient
+    from plaudsync.speakers.backfill import run_backfill
+    from plaudsync.state import open_state
+
+    state_root_str = os.getenv("PLAUDSYNC_STATE_ROOT")
+    if not state_root_str:
+        logger.error("PLAUDSYNC_STATE_ROOT not set")
+        return 7
+    state_root = Path(state_root_str)
+    config = load_config(state_root)
+    if not config.speaker_naming:
+        logger.error("speaker_naming disabled in config")
+        return 7
+    since = date.fromisoformat(args.since)
+    try:
+        with SyncLock(state_root / ".plaudsync" / "sync.lock"):
+            token = load_token()
+            conn = open_state(state_root)
+            try:
+                with PlaudClient(token) as client:
+                    result = run_backfill(
+                        conn, client, config, state_root, since=since, delay=args.delay
+                    )
+            finally:
+                conn.close()
+    except SyncLockHeld:
+        logger.info("skipping backfill, sync still active")
+        return 5
+    return 4 if result.failed > 0 else 0
 
 
 def main() -> int:
@@ -150,6 +193,8 @@ def main() -> int:
             from plaudsync.ui.runner import open_webview
             url = f"http://127.0.0.1:{args.port}/"
             raise SystemExit(open_webview(url))
+        if args.command == "speakers":
+            raise SystemExit(_run_speakers_backfill(args))
         # Default: run sync pipeline
         return run_sync_pipeline()
     except PlaudTokenExpired as e:
