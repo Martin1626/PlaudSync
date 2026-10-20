@@ -41,6 +41,41 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 
 CREATE INDEX IF NOT EXISTS idx_recordings_downloaded_at ON recordings(downloaded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sync_runs_started_at ON sync_runs(started_at DESC);
+
+CREATE TABLE IF NOT EXISTS speaker_recordings (
+    plaud_id     TEXT PRIMARY KEY,
+    labels       TEXT NOT NULL,
+    written      TEXT NOT NULL,
+    edit_marker  TEXT,
+    checked_at   TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('learned','done'))
+);
+
+CREATE TABLE IF NOT EXISTS speaker_embeddings (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    plaud_id       TEXT NOT NULL,
+    cluster        TEXT NOT NULL,
+    person         TEXT,
+    origin         TEXT CHECK (origin IN ('user','auto','review')),
+    review_status  TEXT NOT NULL DEFAULT 'none'
+                   CHECK (review_status IN ('none','flagged','confirmed','excluded')),
+    consistency    REAL,
+    embedding      BLOB NOT NULL,
+    seconds        REAL NOT NULL,
+    clip_segments  TEXT NOT NULL,
+    auto_assigned  INTEGER NOT NULL DEFAULT 0,
+    auto_corrected INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT NOT NULL,
+    UNIQUE (plaud_id, cluster)
+);
+
+CREATE TABLE IF NOT EXISTS speaker_review_queue (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    embedding_id INTEGER NOT NULL REFERENCES speaker_embeddings(id),
+    new_name     TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    done_at      TEXT
+);
 """
 
 
