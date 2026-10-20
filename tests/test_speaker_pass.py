@@ -472,3 +472,151 @@ def test_feature_off_pass_not_called(tmp_path, monkeypatch):
         called.assert_not_called()
     finally:
         conn.close()
+
+
+# --- Fixes: own writes never mistaken for user renames; unappliable queue entries ---
+
+
+def _new_recording_matching_a(conn, tmp_path, fakes):
+    _gallery_person_a(conn)
+    _rec(conn, "new1", _iso(timedelta(days=1)), local_path=_audio(tmp_path))
+    fakes.embeddings = [
+        ClusterEmbedding("Speaker 2", "Speaker 2", _vec(0.9, 0.43589, 0, 0), 20.0, [(0, 1000)]),
+    ]
+
+
+def _sample(conn, pid="new1", cluster="Speaker 2"):
+    return conn.execute(
+        "SELECT person, origin, auto_assigned, auto_corrected FROM speaker_embeddings "
+        "WHERE plaud_id=? AND cluster=?", (pid, cluster),
+    ).fetchone()
+
+
+def test_crash_after_write_next_pass_treats_names_as_auto(tmp_path, fakes, monkeypatch):
+    conn = open_state(tmp_path)
+    try:
+        _new_recording_matching_a(conn, tmp_path, fakes)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "Speaker 2"})
+        real_set_person = runner.set_person
+        crashed: list[bool] = []
+
+        def crash_once(*args, **kwargs):
+            if not crashed:
+                crashed.append(True)
+                raise RuntimeError("database is locked")
+            return real_set_person(*args, **kwargs)
+
+        monkeypatch.setattr(runner, "set_person", crash_once)
+        first = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+        assert first.failed == 1
+        assert fakes.apply_renames.call_count == 1
+
+        # Plaud now carries our name; the next run must recognise it as our own write.
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "A"})
+        fakes.rewrite_md.reset_mock()
+        second = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert second.failed == 0
+        assert fakes.apply_renames.call_count == 1  # names written once
+        assert _sample(conn) == ("A", "auto", 1, 0)
+        fakes.rewrite_md.assert_called_once_with(conn, client, "new1")
+        assert json.loads(conn.execute(
+            "SELECT labels FROM speaker_recordings WHERE plaud_id='new1'"
+        ).fetchone()[0]) == {"Speaker 2": "A"}
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("outcome", [RuntimeError("plaud 502"), "conflict"])
+def test_failed_write_leaves_no_intended_written_and_retries(tmp_path, fakes, outcome):
+    conn = open_state(tmp_path)
+    try:
+        _new_recording_matching_a(conn, tmp_path, fakes)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "Speaker 2"})
+        if isinstance(outcome, Exception):
+            fakes.apply_renames.side_effect = outcome
+        else:
+            fakes.apply_renames.return_value = outcome
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert json.loads(conn.execute(
+            "SELECT written FROM speaker_recordings WHERE plaud_id='new1'"
+        ).fetchone()[0]) == {}
+        assert _sample(conn)[0] is None
+
+        fakes.apply_renames.side_effect = None
+        fakes.apply_renames.return_value = "written"
+        later = NOW + timedelta(hours=7)
+        result = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=later)
+
+        assert result.named == 1
+        assert fakes.apply_renames.call_args.args[2] == {"Speaker 2": "A"}
+        assert _sample(conn) == ("A", "auto", 1, 0)
+    finally:
+        conn.close()
+
+
+def _queued_entry(conn, *, rec=True, **rec_kw):
+    if rec:
+        _rec(conn, "r1", _iso(timedelta(days=3)), **rec_kw)
+    eid = gallery.upsert_embedding(
+        conn, plaud_id="r1", cluster="Speaker 2", person="A", origin="user",
+        embedding=A_VEC, seconds=20.0, clip_segments=[(0, 1000)],
+    )
+    conn.execute(
+        "INSERT INTO speaker_review_queue (embedding_id, new_name, created_at) "
+        "VALUES (?, 'B', ?)", (eid, _iso(timedelta(hours=2))),
+    )
+    conn.commit()
+    return eid
+
+
+@pytest.mark.parametrize("case", ["missing", "skipped", "pending"])
+def test_queue_entry_out_of_scope_dropped(tmp_path, fakes, case):
+    conn = open_state(tmp_path)
+    try:
+        if case == "missing":
+            eid = _queued_entry(conn, rec=False)
+        elif case == "skipped":
+            eid = _queued_entry(conn, status="skipped")
+        else:
+            eid = _queued_entry(conn, content_status="pending")
+        client = MagicMock()
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert conn.execute(
+            "SELECT done_at FROM speaker_review_queue"
+        ).fetchone() == (NOW.isoformat(),)
+        client.fetch_trans_result.assert_not_called()
+        fakes.apply_renames.assert_not_called()
+        assert conn.execute(
+            "SELECT person, origin, review_status FROM speaker_embeddings WHERE id=?", (eid,)
+        ).fetchone() == ("A", "user", "none")
+    finally:
+        conn.close()
+
+
+def test_queue_entry_cluster_gone_dropped(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        eid = _queued_entry(conn)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 3": "X"})
+
+        result = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert result.failed == 0
+        assert conn.execute(
+            "SELECT done_at FROM speaker_review_queue"
+        ).fetchone() == (NOW.isoformat(),)
+        fakes.apply_renames.assert_not_called()
+        fakes.rewrite_md.assert_not_called()
+        assert conn.execute(
+            "SELECT person, origin, review_status FROM speaker_embeddings WHERE id=?", (eid,)
+        ).fetchone() == ("A", "user", "none")
+    finally:
+        conn.close()
