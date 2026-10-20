@@ -32,6 +32,8 @@ from plaudsync.speakers.writeback import apply_renames, fix_summary
 from plaudsync.sync import rewrite_md
 
 RECHECK_INTERVAL = timedelta(hours=6)
+# Recordings re-matched per pass after the gallery grew (each hit costs a naming step).
+MAX_RESCORE_PER_PASS = 10
 
 # checked_at for a row whose processing has not finished: always due for re-check.
 _UNCHECKED = "1970-01-01T00:00:00+00:00"
@@ -68,6 +70,8 @@ class SpeakerContext:
     via_backfill: bool = False
     live_metas: dict | None = None
     touched: set[str] = field(default_factory=set)
+    ok_ids: set[str] = field(default_factory=set)
+    failed_ids: set[str] = field(default_factory=set)
     result: SpeakerPassResult = field(default_factory=SpeakerPassResult)
 
 
@@ -125,12 +129,55 @@ def _back_off(ctx: SpeakerContext, plaud_id: str) -> None:
 def _attempt(ctx: SpeakerContext, plaud_id: str, step: Callable[[], Any]) -> bool:
     try:
         step()
-        return True
     except Exception as exc:  # noqa: BLE001 — one recording must not stop the rest
         _report(exc, plaud_id)
         ctx.result.failed += 1
+        ctx.failed_ids.add(plaud_id)
         _back_off(ctx, plaud_id)
         return False
+    ctx.ok_ids.add(plaud_id)
+    return True
+
+
+def _backing_off(
+    ctx: SpeakerContext, plaud_id: str, stored_marker: str | None, checked_at: str
+) -> bool:
+    if plaud_id in ctx.failed_ids:
+        return True
+    if plaud_id in ctx.ok_ids or stored_marker is not None or checked_at == _UNCHECKED:
+        return False
+    return ctx.now - datetime.fromisoformat(checked_at) < RECHECK_INTERVAL
+
+
+def rematch_candidates(ctx: SpeakerContext) -> list[str]:
+    """In-window recordings whose stored unnamed clusters now match the gallery (spec §5.3
+    step 2.5). Local scoring only: Plaud is called just for the hits, newest first."""
+    if not ctx.touched:  # the gallery did not change this run
+        return []
+    cents = centroids(ctx.conn, window_cutoff=ctx.window_cutoff)
+    if not cents:
+        return []
+    rows = ctx.conn.execute(
+        "SELECT e.plaud_id, e.embedding, s.edit_marker, s.checked_at "
+        "FROM speaker_embeddings e "
+        "JOIN speaker_recordings s ON s.plaud_id = e.plaud_id "
+        "JOIN recordings r ON r.plaud_id = e.plaud_id "
+        "WHERE e.person IS NULL AND e.origin IS NOT 'user' AND s.state = 'done' "
+        f"AND {_SCOPE} AND r.created_at_plaud >= ? "  # nosec B608 - constant
+        "ORDER BY r.created_at_plaud DESC, e.id",
+        (ctx.window_cutoff,),
+    ).fetchall()
+    hits: list[str] = []
+    for plaud_id, blob, marker, checked_at in rows:
+        if len(hits) >= MAX_RESCORE_PER_PASS:
+            break
+        if (plaud_id in hits or not _is_live(ctx, plaud_id)
+                or _backing_off(ctx, plaud_id, marker, checked_at)):
+            continue
+        match = best_match(cents, np.frombuffer(blob, dtype=np.float32))
+        if match is not None and match[1] >= MATCH_THRESHOLD:
+            hits.append(plaud_id)
+    return hits
 
 
 def _live_marker(ctx: SpeakerContext, plaud_id: str) -> str | None:
@@ -486,6 +533,11 @@ def run_speaker_pass(
         _attempt(ctx, plaud_id, lambda pid=plaud_id: _process_new(ctx, pid))
 
     for plaud_id in recheck_ids:
+        if _attempt(ctx, plaud_id, lambda pid=plaud_id: recheck_recording(ctx, pid)):
+            result.rechecked += 1
+
+    # The gallery may have grown: a re-check fetches current labels and names the hits.
+    for plaud_id in rematch_candidates(ctx):
         if _attempt(ctx, plaud_id, lambda pid=plaud_id: recheck_recording(ctx, pid)):
             result.rechecked += 1
 
