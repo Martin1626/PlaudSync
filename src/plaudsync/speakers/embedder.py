@@ -115,6 +115,11 @@ def embed_clusters(audio_path: Path, segments: list[dict], extractor: Any) -> li
         sr = audio.samplerate
         frames = audio.frames
 
+        def _readable_s(seg: dict) -> float:
+            a = int(seg["start_time"] * sr / 1000)
+            b = min(int(seg["end_time"] * sr / 1000), frames)
+            return max(b - a, 0) / sr
+
         def read(seg: dict, max_s: float) -> tuple[np.ndarray, int, int] | None:
             a = int(seg["start_time"] * sr / 1000)
             if a >= frames:
@@ -127,7 +132,7 @@ def embed_clusters(audio_path: Path, segments: list[dict], extractor: Any) -> li
             return wav, a * 1000 // sr, b * 1000 // sr
 
         for key, segs in clusters.items():
-            total = sum(_seg_seconds(s) for s in segs)
+            total = sum(_readable_s(s) for s in segs)
             if total < MIN_CLUSTER_S:
                 continue
             ordered = sorted(segs, key=_seg_seconds, reverse=True)
