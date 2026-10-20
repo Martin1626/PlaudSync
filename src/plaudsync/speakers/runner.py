@@ -2,6 +2,7 @@
 recent ones for user renames, drain the review queue, recompute flags."""
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import tempfile
@@ -110,13 +111,16 @@ def _row_json(ctx: SpeakerContext, plaud_id: str, column: str) -> dict[str, str]
     return json.loads(row[0]) if row else {}
 
 
-def _merge_row_json(ctx: SpeakerContext, plaud_id: str, column: str, update: dict) -> None:
-    merged = {**_row_json(ctx, plaud_id, column), **update}
+def _set_row_json(ctx: SpeakerContext, plaud_id: str, column: str, value: dict) -> None:
     ctx.conn.execute(
         f"UPDATE speaker_recordings SET {column}=? WHERE plaud_id=?",  # nosec B608 - fixed column
-        (json.dumps(merged), plaud_id),
+        (json.dumps(value), plaud_id),
     )
     ctx.conn.commit()
+
+
+def _merge_row_json(ctx: SpeakerContext, plaud_id: str, column: str, update: dict) -> None:
+    _set_row_json(ctx, plaud_id, column, {**_row_json(ctx, plaud_id, column), **update})
 
 
 def learn_recording(ctx: SpeakerContext, plaud_id: str) -> dict[str, str] | None:
@@ -175,20 +179,32 @@ def _name(ctx: SpeakerContext, plaud_id: str, labels: dict[str, str]) -> dict[st
         return {}
     cents = centroids(ctx.conn, window_cutoff=ctx.window_cutoff)
     renames: dict[str, str] = {}
+    # No per-recording dedup: Plaud splits one person into several clusters, so the same
+    # name on several clusters of one recording is normal (spec §5.1).
     for cluster in unnamed:
         match = best_match(cents, _embedding(ctx.conn, ids[cluster]))
         if match is not None and match[1] >= MATCH_THRESHOLD:
             renames[cluster] = match[0]
     if not renames:
         return {}
-    if apply_renames(ctx.client, plaud_id, renames, labels) != "written":
+    # Intent is recorded before the Plaud write: if we crash after Plaud accepted it, the
+    # next re-check sees label == written[cluster] and books it as auto, not as a user rename.
+    previous = _row_json(ctx, plaud_id, "written")
+    _merge_row_json(ctx, plaud_id, "written", renames)
+    try:
+        outcome = apply_renames(ctx.client, plaud_id, renames, labels)
+    except Exception:
+        with contextlib.suppress(Exception):  # best effort; keep the original error
+            _set_row_json(ctx, plaud_id, "written", previous)
+        raise
+    if outcome != "written":
+        _set_row_json(ctx, plaud_id, "written", previous)
         return {}
     for cluster, person in renames.items():
         set_person(ctx.conn, ids[cluster], person, "auto", auto_assigned=not ctx.via_backfill)
         ctx.touched.add(person)
-    # `written` before the .md rewrite, `labels` after: if the rewrite fails, the next
-    # re-check sees our own names as a label change and rewrites the .md then.
-    _merge_row_json(ctx, plaud_id, "written", renames)
+    # `labels` only after the .md rewrite: if anything above fails, the next re-check sees
+    # our names as a label change, books them as auto and rewrites the .md then.
     rewrite_md(ctx.conn, ctx.client, plaud_id)
     _merge_row_json(ctx, plaud_id, "labels", renames)
     return renames
@@ -199,18 +215,30 @@ def _sample_change(
     written: dict[str, str],
 ) -> None:
     row = ctx.conn.execute(
-        "SELECT id, person, auto_assigned FROM speaker_embeddings "
+        "SELECT id, person, origin, auto_assigned FROM speaker_embeddings "
         "WHERE plaud_id=? AND cluster=?",
         (plaud_id, cluster),
     ).fetchone()
     if row is None:
         return  # under 10 s of speech: no sample, only the summary fix applies
-    eid, person, auto_assigned = row
+    eid, person, origin, auto_assigned = row
     target = None if is_default_label(new) else new
+    if target is not None and new == written.get(cluster):
+        # Our own write landed but its bookkeeping did not finish: auto, never a user rename.
+        if (person, origin) != (target, "auto"):
+            set_person(ctx.conn, eid, target, "auto", auto_assigned=not ctx.via_backfill)
+            ctx.touched.add(target)
+        return
     if person == target:
-        return  # already reflected (e.g. our own write whose bookkeeping did not finish)
-    if old is not None and old == written.get(cluster) and auto_assigned:
-        ctx.conn.execute("UPDATE speaker_embeddings SET auto_corrected=1 WHERE id=?", (eid,))
+        return
+    if old is not None and old == written.get(cluster):
+        if auto_assigned:
+            ctx.conn.execute(
+                "UPDATE speaker_embeddings SET auto_corrected=1 WHERE id=?", (eid,)
+            )
+        # The user took the cluster over; a later return to our name is theirs, not ours.
+        written.pop(cluster)
+        _set_row_json(ctx, plaud_id, "written", written)
     # Moved or un-named: a flag against the old person no longer applies.
     ctx.conn.execute(
         "UPDATE speaker_embeddings SET review_status='none' "
@@ -247,23 +275,39 @@ def recheck_recording(ctx: SpeakerContext, plaud_id: str) -> None:
     ctx.conn.commit()
 
 
+def _drop_queue_entry(ctx: SpeakerContext, queue_id: int, plaud_id: str | None) -> None:
+    """Close an entry that can never be applied; the sample stays unchanged."""
+    logger.bind(recording_id=plaud_id, queue_id=queue_id).warning("review rename dropped")
+    ctx.conn.execute(
+        "UPDATE speaker_review_queue SET done_at=? WHERE id=?", (ctx.now.isoformat(), queue_id)
+    )
+    ctx.conn.commit()
+
+
 def drain_review_queue(ctx: SpeakerContext) -> int:
     rows = ctx.conn.execute(
-        "SELECT q.id, q.embedding_id, q.new_name, e.plaud_id, e.cluster, e.person "
+        "SELECT q.id, e.id, q.new_name, e.plaud_id, e.cluster, e.person, "
+        f"COALESCE(({_SCOPE}), 0) "  # nosec B608 - constant
         "FROM speaker_review_queue q "
-        "JOIN speaker_embeddings e ON e.id = q.embedding_id "
-        "JOIN recordings r ON r.plaud_id = e.plaud_id "
-        f"WHERE q.done_at IS NULL AND {_SCOPE} ORDER BY q.id"  # nosec B608 - constant
+        "LEFT JOIN speaker_embeddings e ON e.id = q.embedding_id "
+        "LEFT JOIN recordings r ON r.plaud_id = e.plaud_id "
+        "WHERE q.done_at IS NULL ORDER BY q.id"
     ).fetchall()
     done = 0
-    for qid, eid, new_name, plaud_id, cluster, old_person in rows:
-        if not _is_live(ctx, plaud_id):
+    for qid, eid, new_name, plaud_id, cluster, old_person, in_scope in rows:
+        if in_scope and not _is_live(ctx, plaud_id):
             continue
         try:
+            if not in_scope:
+                _drop_queue_entry(ctx, qid, plaud_id)
+                continue
             segments = ctx.client.fetch_trans_result(plaud_id)
             if segments is None:
                 continue
             labels = cluster_labels(segments)
+            if cluster not in labels:
+                _drop_queue_entry(ctx, qid, plaud_id)
+                continue
             if apply_renames(ctx.client, plaud_id, {cluster: new_name}, labels) != "written":
                 continue
             set_person(ctx.conn, eid, new_name, "review")
