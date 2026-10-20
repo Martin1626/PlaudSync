@@ -1102,3 +1102,28 @@ def test_gallery_growth_rematch_capped_per_pass(tmp_path, fakes, monkeypatch):
         assert [c.args[0] for c in client.fetch_trans_result.call_args_list] == ["b1", "a2"]
     finally:
         conn.close()
+
+
+# --- Final review M3: a Plaud rename voids a confirmation of the old identity ---
+
+
+@pytest.mark.parametrize(("before", "new_label", "after"), [
+    ("confirmed", "B", "none"),          # confirmed as A; now B: re-judged against B
+    ("confirmed", "Speaker 2", "none"),  # un-named: the confirmation no longer applies
+    ("excluded", "B", "excluded"),       # excluded noise stays excluded
+])
+def test_recheck_user_rename_resets_confirmation(tmp_path, fakes, before, new_label, after):
+    conn = open_state(tmp_path)
+    try:
+        eid = _rechecked_recording(conn, checked_at=_iso(timedelta(hours=7)),
+                                   review_status=before)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": new_label})
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert conn.execute(
+            "SELECT review_status FROM speaker_embeddings WHERE id=?", (eid,)
+        ).fetchone() == (after,)
+    finally:
+        conn.close()
