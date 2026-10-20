@@ -19,7 +19,7 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 **Lekce:** (1) Plný scan historie = ~1 400 API volání; spike skripty musí mít `--days` / `--limit` / `--delay` a cache od začátku (uživatel: šetřit Plaud API kvůli banu). (2) Celé dekódování 2h nahrávky = ~0,5–1 GB RAM → číst jen segmenty přes `SoundFile.seek`.
 
-**Ruční kontrola:** `spike_speaker_id.py review` vygeneruje lokální HTML (audio ukázky, mimo repo, po kontrole smazat) se spornými případy — 1× jiná osoba (0,65), 12× cizí hlas podobný osobě z galerie (0,60–0,69; podezření na varianty jmen), 9× správně pod prahem 0,75. Verdikty uživatele zatím nevyhodnoceny.
+**Ruční kontrola:** `spike_speaker_id.py review` vygeneruje lokální HTML (audio ukázky, mimo repo, po kontrole smazat) se spornými případy — 1× jiná osoba (0,65), 12× cizí hlas podobný osobě z galerie (0,60–0,69; podezření na varianty jmen), 9× správně pod prahem 0,75. **Verdikty uživatele (poslechem):** 2 clustery mají v Plaudu **chybné jméno** (hlas patří jiné osobě) — jeden z nich model přiřadil se skóre 0,72; všech 12 „cizích podobných“ jsou opravdu různí lidé (žádné varianty jmen), tj. skutečný impostor dosahuje 0,69. Po opravě ground truth (184 genuine / 27 impostorů): **práh 0,70 → FAR 3,7 % = KC4 FAIL; práh 0,75 → precision 100 %, coverage 95,1 %, FAR 0 % = PASS.** Produkční práh 0,75 potvrzen. Poučení: ruční štítky v Plaudu nejsou 100% spolehlivé — galerie potřebuje možnost vyřadit chybný vzorek a produkce režim „návrh + potvrzení“ s poslechem.
 
 **Otevřené:** GDPR čl. 9 (hlasy kolegů/klientů) → firma/DPO před produkcí (KC6); FAR jen na 25 impostorech (horní mez ~12 %) → ověřit v režimu „návrh + potvrzení“; souběh zápisů přes `file_version`; offset přepis vs. audio.
 
