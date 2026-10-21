@@ -197,9 +197,7 @@ def test_only_window_recordings_processed_on_first_enable(tmp_path, fakes, monke
         _rec(conn, "old1", _iso(timedelta(days=30)), local_path=audio)
         _rec(conn, "old2", _iso(timedelta(days=200)), local_path=audio)
         # In window but out of scope: never touched.
-        _rec(conn, "skip1", _iso(timedelta(days=1)), status="skipped")
-        _rec(conn, "pend1", _iso(timedelta(days=1)), content_status="pending")
-        _rec(conn, "nomd1", _iso(timedelta(days=1)), content_path=None)
+        _rec(conn, "trash1", _iso(timedelta(days=1)), status="trashed")
         client = MagicMock()
         client.fetch_trans_result.return_value = _segments({"Speaker 1": "Speaker 1"})
         learned: list[str] = []

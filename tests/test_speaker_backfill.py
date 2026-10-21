@@ -58,6 +58,8 @@ def env(tmp_path, monkeypatch):
     )
 
     def fake_embed(audio_path, segments, extractor):
+        if not segments:
+            return []
         key = segments[0]["content"]
         return list(ns.embeddings[key])
 
@@ -334,9 +336,10 @@ def test_backfill_recording_without_transcript_stays_unprocessed(tmp_path, env, 
         _rec(conn, "r1", "2026-10-02T10:00:00+00:00", env.audio)
         _without_md(conn, "r1")
         env.transcripts["r1"] = lambda: empty
-        backfill.run_backfill(
+        result = backfill.run_backfill(
             conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 10, 1), now=NOW
         )
+        assert result.failed == 0
         assert conn.execute("SELECT COUNT(*) FROM speaker_recordings").fetchone() == (0,)
     finally:
         conn.close()
