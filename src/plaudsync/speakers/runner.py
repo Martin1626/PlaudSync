@@ -50,9 +50,10 @@ _UNCHECKED = "1970-01-01T00:00:00+00:00"
 # speaker_recordings states: 'learned' (backfill, not yet named), 'done' (re-checked by
 # sync), 'retry' (learning failed; tried again as new once RECHECK_INTERVAL has passed).
 
-_SCOPE = (
-    "r.status = 'downloaded' AND r.content_status = 'complete' "
-    "AND r.content_path IS NOT NULL"
+# Every recording still in Plaud, classified or not: names help the user decide the project.
+_SCOPE = "r.status != 'trashed'"
+_HAS_MD = (
+    "status = 'downloaded' AND content_status = 'complete' AND content_path IS NOT NULL"
 )
 
 
@@ -199,6 +200,12 @@ def _is_live(ctx: SpeakerContext, plaud_id: str) -> bool:
     return ctx.live_metas is None or plaud_id in ctx.live_metas
 
 
+def _transcribed(ctx: SpeakerContext, plaud_id: str) -> bool:
+    # Not transcribed per the listing: learning it would only cost a Plaud call per run.
+    meta = (ctx.live_metas or {}).get(plaud_id)
+    return getattr(meta, "has_transcript", True)
+
+
 def _row_json(ctx: SpeakerContext, plaud_id: str, column: str) -> dict[str, str]:
     row = ctx.conn.execute(
         f"SELECT {column} FROM speaker_recordings WHERE plaud_id=?",  # nosec B608 - fixed column
@@ -220,6 +227,12 @@ def _merge_row_json(ctx: SpeakerContext, plaud_id: str, column: str, update: dic
 
 
 def _rewrite_md(ctx: SpeakerContext, plaud_id: str) -> None:
+    # No .md yet: the one composed later from Plaud content already carries the names.
+    if ctx.conn.execute(
+        f"SELECT 1 FROM recordings WHERE plaud_id=? AND {_HAS_MD}",  # nosec B608 - constant
+        (plaud_id,),
+    ).fetchone() is None:
+        return
     # Raising keeps the labels snapshot where it was, so the retry sees the change again.
     if not rewrite_md(ctx.conn, ctx.client, plaud_id):
         raise MdNotRewritten("md not rewritten: content not complete")
@@ -258,7 +271,9 @@ def _clip(audio: Path, segments: list[tuple[int, int]] | list[list[int]]) -> byt
 
 def learn_recording(ctx: SpeakerContext, plaud_id: str) -> dict[str, str] | None:
     segments = ctx.client.fetch_trans_result(plaud_id)
-    if segments is None:
+    # Without a listing (backfill) an empty transcript may just not exist yet: a stored
+    # empty row would never be learned again. A sync pass only gets here for `is_trans`.
+    if segments is None or (not segments and ctx.live_metas is None):
         return None
     labels = cluster_labels(segments)
     with _audio_file(ctx, plaud_id) as audio:
@@ -559,7 +574,7 @@ def run_speaker_pass(
         "AND (s.plaud_id IS NULL OR (s.state = 'retry' AND s.checked_at <= ?)) "
         "ORDER BY r.created_at_plaud DESC",
         (cutoff, retry_before),
-    ).fetchall() if _is_live(ctx, r[0])][:MAX_NEW_PER_PASS]
+    ).fetchall() if _is_live(ctx, r[0]) and _transcribed(ctx, r[0])][:MAX_NEW_PER_PASS]
     # Selected before new rows are inserted, so a just-learned recording is not re-checked.
     recheck_ids = [pid for pid, marker, checked_at in conn.execute(
         "SELECT s.plaud_id, s.edit_marker, s.checked_at FROM speaker_recordings s "

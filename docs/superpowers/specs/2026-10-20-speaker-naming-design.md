@@ -36,11 +36,21 @@ in Plaud now. PlaudSync's own writes are just a head start.
 
    Unrecognised clusters stay `Speaker N`. The `.md` is then rewritten so it
    carries the names.
-   - **Scope (user decision):** only recordings PlaudSync writes an `.md` for,
-     meaning downloaded rows whose content passes the existing gates. Never
-     use `skipped`, `skipped_unknown_project` or audio-only rows: no audio
-     fetch, no voiceprints, no writes to Plaud. This follows the existing
-     privacy policy and saves API calls.
+   - **Scope (user decision, changed 2026-10-21):** every recording still in
+     Plaud whose transcript is ready, whether downloaded, `skipped`,
+     `skipped_unknown_project` or failed, private recordings included. Only
+     trashed recordings are out. The user reads the names in Plaud within about
+     an hour of a meeting to recall who was there, *before* deciding the
+     project, so naming cannot wait for classification. This replaces the
+     original "only recordings with an `.md`" scope.
+   - **Without an `.md`:** names are written to Plaud only. The `.md` step is
+     skipped (no retry), because the `.md` composed later from Plaud content
+     already carries the names. Once an `.md` exists, renames rewrite it as
+     usual.
+   - **No wasted calls:** in a sync run a recording is learned only when the
+     listing marks it transcribed (`is_trans`). A recording without a
+     transcript costs no Plaud call; it becomes a candidate once Plaud has
+     transcribed it, while it is inside the window.
    - **Partial `.md`:** the existing early write (transcript before summary,
      Hotfix H) stays. It may briefly show `Speaker N` until naming runs after
      the readiness gate. *(My call: do not touch the existing partial-write
@@ -151,12 +161,12 @@ the cloud.
 
 ### 5.3 Per-run flow (inside the sync run, after content is complete)
 
-1. **New recordings** (content just became complete):
+1. **New recordings** (transcript just became ready, §2 goal 1 scope):
    1. Fetch `trans_result`.
    2. Embed all clusters and store samples for the named ones.
    3. Match the `Speaker N` clusters.
    4. Write the names (§5.6).
-   5. Then write the `.md`.
+   5. Then write the `.md`, if the recording has one.
 
    If the local audio is not there (`download_audio: false`), fetch it to a
    temporary location for embedding and delete it afterwards. *(My call.)*
@@ -207,7 +217,8 @@ section.
     - **No Plaud writes from the UI.** The UI only records the action in a
       queue in the state DB. The next sync run drains the queue under
       `SyncLock`: rename in Plaud, then fix the summary, then rewrite the
-      `.md`. This works even if the recording is outside the window.
+      `.md` (if there is one). This works even if the recording is outside
+      the window; only an entry whose recording is gone or trashed is dropped.
       *(My call: no Plaud writes from the UI process, so no race with a sync
       run.)*
     - The UI shows such a sample as "waiting for sync" until the queue entry
@@ -249,8 +260,10 @@ Use the spike-verified calls:
 python -m plaudsync speakers backfill --since YYYY-MM-DD [--delay SECONDS]
 ```
 
-It does the same work as §5.3 for every downloaded recording created on or
-after `--since`, ignoring the window.
+It does the same work as §5.3 for every in-scope recording (§2 goal 1)
+created on or after `--since`, ignoring the window. It has no listing, so a
+recording without a transcript costs one `trans_result` fetch and stays
+unprocessed.
 
 - **Learning and naming:** it learns from named clusters, auto-names the
   `Speaker N` clusters, and propagates the results to the summary and `.md`.

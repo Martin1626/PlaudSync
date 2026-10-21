@@ -32,6 +32,8 @@ class RecordingMeta:
     plaud_folder: str
     # Listing `version_ms`: bumps on every edit, incl. speaker renames.
     edit_marker: str | None = None
+    # Listing `is_trans`; unknown counts as transcribed (the transcript fetch then decides).
+    has_transcript: bool = True
 
     @classmethod
     def from_raw(cls, raw: dict) -> "RecordingMeta":
@@ -71,6 +73,7 @@ class RecordingMeta:
             file_size=file_size,
             plaud_folder=plaud_folder or "_unknown",
             edit_marker=str(raw["version_ms"]) if raw.get("version_ms") is not None else None,
+            has_transcript=raw.get("is_trans") is not False,
         )
 
 

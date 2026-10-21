@@ -4,6 +4,16 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-10-21 — speaker naming: všechny přepsané nahrávky, ne jen stažené
+
+**Rozhodnutí uživatele:** jména řečníků čte v Plaudu do hodiny po jednání, aby si vybavil, s kým jednal, a teprve pak rozhodne o projektu. Pojmenování proto běží u všech nahrávek s hotovým přepisem (`downloaded`, `skipped`, `skipped_unknown_project`, `failed`), **včetně soukromých** — mimo jsou jen `trashed`. Ruší původní rozsah „jen nahrávky s `.md`“ (spec §2 cíl 1) i jeho privacy zdůvodnění; galerie tak obsahuje i hlasy ze soukromých nahrávek (rozšíření GDPR rozsahu z 2026-10-20, rozhodl uživatel).
+
+**Jak:** `_SCOPE = r.status != 'trashed'`; bez `.md` se zapisuje jen do Plaudu a krok `.md` se přeskočí (žádný retry — `.md` složené později z Plaudu jména už nese). Sync se učí jen nahrávky, které listing označí `is_trans` (`RecordingMeta.has_transcript`), takže nepřepsaná nahrávka nestojí žádné volání. Prázdný `trans_result` = „bez přepisu“ (dřív by vznikl řádek s prázdnými labels, který by se už nikdy nedoučil). Fronta revizí u nahrávky bez `.md` přejmenuje v Plaudu místo zahození. Historie od 2026-10-01 jednorázově: `python -m plaudsync speakers backfill --since 2026-10-01` (~49 kandidátů; bez listingu stojí nepřepsaná 1 volání).
+
+**Review (`/code-review medium`):** opraveno — `is_trans: null` (Plaud ho posílá) se počítá jako přepsáno; prázdný `trans_result` u přepsané nahrávky se ve sync uloží jako zpracovaný (jinak by se stahoval každý běh a mohl blokovat limit 10/běh). Zamítnuto — „renames přeskočí `.md` ve stavu `pending`/`not_applicable`“: `pending` přepíše retry pass z Plaudu i se jmény, u `not_applicable` by `rewrite_md` vracel False a vznikla by věčná retry smyčka se Sentry. Jen zaznamenáno: řádky `failed` se pro učení stahují znovu (selže-li, 6h backoff); audio přeskočených nahrávek se stahuje do temp a po zařazení znovu (přijatá cena funkce); opakovaný backfill znovu volá Plaud pro nepřepsané; `_HAS_MD` vs. kontrola v `rewrite_md` jsou záměrně různé podmínky.
+
+**Známý flaky test:** `tests/integration/test_tray_scheduler_loop.py::test_request_sync_now_overrides_paused` (pevné `time.sleep(0.5)`) padá zhruba v každém třetím běhu i bez této změny.
+
 ## 2026-10-20 — speaker naming: probes
 
 **Edit marker:** pending live probe ([scripts/probe_speaker_marker.py](scripts/probe_speaker_marker.py), zatím nespuštěno; `--save` na testovací nahrávce, ruční přejmenování speakera ve web app, `--compare`). Do té doby platí fallback: re-check nejvýš každých 6 h na nahrávku.
