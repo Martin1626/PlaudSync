@@ -14,6 +14,14 @@ interface Props {
   persons: string[];
 }
 
+const STATUS: Partial<
+  Record<SpeakerSample["review_status"], { label: string; className: string }>
+> = {
+  flagged: { label: "Ke kontrole", className: "bg-amber-50 text-amber-800" },
+  confirmed: { label: "Potvrzeno", className: "bg-green-50 text-green-800" },
+  excluded: { label: "Vyřazeno", className: "bg-gray-100 text-gray-700" },
+};
+
 const BTN =
   "px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed";
 
@@ -29,6 +37,7 @@ export default function SampleRow({ sample, persons }: Props) {
     queued || confirm.isPending || exclude.isPending || rename.isPending;
   const trimmed = name.trim();
   const listId = `persons-${sample.id}`;
+  const status = STATUS[sample.review_status];
 
   const onError = () => pushToast("error", "Akci se nepodařilo provést.");
 
@@ -62,6 +71,13 @@ export default function SampleRow({ sample, persons }: Props) {
             {sample.consistency.toFixed(2).replace(".", ",")}
           </span>
         )}
+        {status && (
+          <span
+            className={`text-xs font-medium px-2 py-0.5 rounded ${status.className}`}
+          >
+            {status.label}
+          </span>
+        )}
       </div>
 
       {sample.has_clip ? (
@@ -85,16 +101,26 @@ export default function SampleRow({ sample, persons }: Props) {
         <button
           type="button"
           className={BTN}
-          disabled={busy}
-          onClick={() => confirm.mutate(sample.id, { onError })}
+          disabled={busy || sample.review_status === "confirmed"}
+          onClick={() =>
+            confirm.mutate(sample.id, {
+              onSuccess: () => pushToast("success", "Vzorek potvrzen."),
+              onError,
+            })
+          }
         >
           Potvrdit
         </button>
         <button
           type="button"
           className={BTN}
-          disabled={busy}
-          onClick={() => exclude.mutate(sample.id, { onError })}
+          disabled={busy || sample.review_status === "excluded"}
+          onClick={() =>
+            exclude.mutate(sample.id, {
+              onSuccess: () => pushToast("success", "Vzorek vyřazen."),
+              onError,
+            })
+          }
         >
           Vyřadit
         </button>
