@@ -8,6 +8,7 @@ import { ToastsProvider } from "./context/ToastsContext";
 import MockProvider from "./dev/MockProvider";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
+import Speakers from "./pages/Speakers";
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource/jetbrains-mono/600.css";
@@ -41,6 +42,7 @@ const router = createHashRouter([
     element: <AppShell />,
     children: [
       { path: "/", element: <Dashboard /> },
+      { path: "/speakers", element: <Speakers /> },
       { path: "/settings", element: <Settings /> },
     ],
   },
