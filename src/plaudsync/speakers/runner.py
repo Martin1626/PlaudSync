@@ -9,14 +9,20 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import numpy as np
 import sentry_sdk
+import soundfile as sf
 from loguru import logger
 
 from plaudsync.config import Config
-from plaudsync.speakers.embedder import embed_clusters, ensure_model, load_extractor
+from plaudsync.speakers.embedder import (
+    cut_clip,
+    embed_clusters,
+    ensure_model,
+    load_extractor,
+)
 from plaudsync.speakers.gallery import (
     MATCH_THRESHOLD,
     best_match,
@@ -219,29 +225,44 @@ def _rewrite_md(ctx: SpeakerContext, plaud_id: str) -> None:
         raise MdNotRewritten("md not rewritten: content not complete")
 
 
+@contextlib.contextmanager
+def _audio_file(ctx: SpeakerContext, plaud_id: str) -> Iterator[Path]:
+    """Local recording if present, else a temp download deleted on exit."""
+    row = ctx.conn.execute(
+        "SELECT local_path FROM recordings WHERE plaud_id=?", (plaud_id,)
+    ).fetchone()
+    local = Path(row[0]) if row and row[0] else None
+    if local is not None and local.is_file():
+        yield local
+        return
+    temp: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as fh:
+            temp = Path(fh.name)
+            for chunk in ctx.client.download_audio(plaud_id):
+                fh.write(chunk)
+        yield temp  # closed before reading: Windows locks open files
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+
+
+def _clip(audio: Path, segments: list[tuple[int, int]] | list[list[int]]) -> bytes | None:
+    # A missing clip only hides playback in the UI; it must not fail learning.
+    try:
+        return cut_clip(audio, segments)
+    except (sf.LibsndfileError, RuntimeError, ValueError, TypeError):
+        return None
+
+
 def learn_recording(ctx: SpeakerContext, plaud_id: str) -> dict[str, str] | None:
     segments = ctx.client.fetch_trans_result(plaud_id)
     if segments is None:
         return None
     labels = cluster_labels(segments)
-    row = ctx.conn.execute(
-        "SELECT local_path FROM recordings WHERE plaud_id=?", (plaud_id,)
-    ).fetchone()
-    local = Path(row[0]) if row and row[0] else None
-    temp: Path | None = None
-    try:
-        if local is not None and local.is_file():
-            audio = local
-        else:
-            with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as fh:
-                temp = Path(fh.name)
-                for chunk in ctx.client.download_audio(plaud_id):
-                    fh.write(chunk)
-            audio = temp  # closed before embedding: Windows locks open files
+    with _audio_file(ctx, plaud_id) as audio:
         embeddings = embed_clusters(audio, segments, ctx.extractor_factory())
-    finally:
-        if temp is not None:
-            temp.unlink(missing_ok=True)
+        clips = {ce.cluster: _clip(audio, ce.clip_segments) for ce in embeddings}
 
     for ce in embeddings:
         label = labels.get(ce.cluster, ce.label)
@@ -250,10 +271,32 @@ def learn_recording(ctx: SpeakerContext, plaud_id: str) -> dict[str, str] | None
             ctx.conn, plaud_id=plaud_id, cluster=ce.cluster,
             person=label if named else None, origin="user" if named else None,
             embedding=ce.embedding, seconds=ce.seconds, clip_segments=ce.clip_segments,
+            clip=clips[ce.cluster],
         )
         if named:
             ctx.touched.add(label)
     return labels
+
+
+def fill_clips(ctx: SpeakerContext, plaud_id: str) -> int:
+    """Cut the missing clips of an already learned recording; returns how many were stored."""
+    missing = ctx.conn.execute(
+        "SELECT id, clip_segments FROM speaker_embeddings WHERE plaud_id=? AND clip IS NULL",
+        (plaud_id,),
+    ).fetchall()
+    if not missing:
+        return 0
+    stored = 0
+    with _audio_file(ctx, plaud_id) as audio:
+        for embedding_id, segments_json in missing:
+            clip = _clip(audio, json.loads(segments_json))
+            if clip is not None:
+                ctx.conn.execute(
+                    "UPDATE speaker_embeddings SET clip=? WHERE id=?", (clip, embedding_id)
+                )
+                stored += 1
+    ctx.conn.commit()
+    return stored
 
 
 def _embedding(conn: sqlite3.Connection, embedding_id: int) -> np.ndarray:

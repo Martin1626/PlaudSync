@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS speaker_embeddings (
     embedding      BLOB NOT NULL,
     seconds        REAL NOT NULL,
     clip_segments  TEXT NOT NULL,
+    clip           BLOB,
     auto_assigned  INTEGER NOT NULL DEFAULT 0,
     auto_corrected INTEGER NOT NULL DEFAULT 0,
     created_at     TEXT NOT NULL,
@@ -358,6 +359,14 @@ def _migrate_add_content_columns(conn: sqlite3.Connection) -> None:
             pass
 
 
+def _migrate_add_speaker_clip_column(conn: sqlite3.Connection) -> None:
+    """Add nullable clip (OGG voice sample) to speaker_embeddings for existing DBs."""
+    try:
+        conn.execute("ALTER TABLE speaker_embeddings ADD COLUMN clip BLOB")
+    except sqlite3.OperationalError:
+        pass
+
+
 def open_state(state_root: Path) -> sqlite3.Connection:
     db_dir = state_root / ".plaudsync"
     db_dir.mkdir(parents=True, exist_ok=True)
@@ -369,5 +378,6 @@ def open_state(state_root: Path) -> sqlite3.Connection:
     _migrate_add_content_columns(conn)
     _migrate_add_plaud_folder_id_column(conn)
     _migrate_status_add_trashed(conn)
+    _migrate_add_speaker_clip_column(conn)
     conn.commit()
     return conn

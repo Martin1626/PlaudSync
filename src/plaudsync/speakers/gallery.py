@@ -34,17 +34,18 @@ def upsert_embedding(
     embedding: np.ndarray,
     seconds: float,
     clip_segments: list[tuple[int, int]],
+    clip: bytes | None = None,
 ) -> int:
     conn.execute(
         "INSERT INTO speaker_embeddings (plaud_id, cluster, person, origin, embedding, "
-        "seconds, clip_segments, created_at) VALUES (?,?,?,?,?,?,?,?) "
+        "seconds, clip_segments, clip, created_at) VALUES (?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(plaud_id, cluster) DO UPDATE SET person=excluded.person, "
         "origin=excluded.origin, embedding=excluded.embedding, seconds=excluded.seconds, "
-        "clip_segments=excluded.clip_segments",
+        "clip_segments=excluded.clip_segments, clip=excluded.clip",
         (
             plaud_id, cluster, person, origin,
             embedding.astype(np.float32).tobytes(), seconds,
-            json.dumps([list(s) for s in clip_segments]),
+            json.dumps([list(s) for s in clip_segments]), clip,
             datetime.now(timezone.utc).isoformat(),
         ),
     )

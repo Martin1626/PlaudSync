@@ -2,19 +2,18 @@
 speaker_review_queue and applied by the sync run."""
 from __future__ import annotations
 
-import io
 import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-import numpy as np
 import soundfile as sf
 from fastapi import APIRouter, HTTPException, Request, Response
 from loguru import logger
 from pydantic import BaseModel
 
+from plaudsync.speakers.embedder import cut_clip
 from plaudsync.speakers.gallery import pending_review_count
 from plaudsync.speakers.transcript import DEFAULT_LABEL
 
@@ -66,7 +65,7 @@ def list_speakers(
     conn = _db(request)
     rows = conn.execute(
         "SELECT e.id, e.person, e.plaud_id, r.title, r.created_at_plaud, e.consistency, "
-        "e.review_status, e.origin, r.local_path, "
+        "e.review_status, e.origin, r.local_path, e.clip IS NOT NULL, "
         "(SELECT q.new_name FROM speaker_review_queue q "
         " WHERE q.embedding_id = e.id AND q.done_at IS NULL ORDER BY q.id DESC LIMIT 1) "
         "FROM speaker_embeddings e LEFT JOIN recordings r ON r.plaud_id = e.plaud_id "
@@ -84,11 +83,11 @@ def list_speakers(
             consistency=consistency,
             review_status=status,
             origin=origin,
-            has_clip=bool(local_path) and Path(local_path).is_file(),
+            has_clip=bool(stored_clip) or (bool(local_path) and Path(local_path).is_file()),
             queued_name=queued,
         )
         for (sid, person, plaud_id, title, created, consistency, status, origin,
-             local_path, queued) in rows
+             local_path, stored_clip, queued) in rows
     ]
     persons = [
         p for (p,) in conn.execute(
@@ -144,43 +143,26 @@ def rename(sample_id: int, body: RenameRequest, request: Request) -> Response:
     return Response(status_code=202)
 
 
-def _build_clip(path: Path, segments: list[list[int]]) -> bytes | None:
-    parts: list[np.ndarray] = []
-    with sf.SoundFile(str(path)) as f:
-        sr = f.samplerate
-        total = f.frames
-        for start_ms, end_ms in segments:
-            start = max(0, int(start_ms * sr / 1000))
-            end = min(total, int(end_ms * sr / 1000))
-            if end <= start:
-                continue
-            f.seek(start)
-            data = f.read(end - start, dtype="float32", always_2d=True)
-            if data.shape[0]:
-                parts.append(data.mean(axis=1))
-    if not parts:
-        return None
-    buf = io.BytesIO()
-    sf.write(buf, np.concatenate(parts), sr, format="WAV")
-    return buf.getvalue()
-
-
 @router.get("/{sample_id}/clip")
 def clip(sample_id: int, request: Request) -> Response:
     conn = _db(request)
     row = conn.execute(
-        "SELECT e.clip_segments, r.local_path FROM speaker_embeddings e "
+        "SELECT e.clip, e.clip_segments, r.local_path FROM speaker_embeddings e "
         "LEFT JOIN recordings r ON r.plaud_id = e.plaud_id "
         "WHERE e.id=? AND e.person IS NOT NULL",
         (sample_id,),
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="sample_not_found")
-    segments_json, local_path = row
+    stored, segments_json, local_path = row
+    if stored is not None:
+        return Response(content=stored, media_type="audio/ogg")
     if not local_path or not Path(local_path).is_file():
         raise HTTPException(status_code=404, detail="no_audio")
     try:
-        content = _build_clip(Path(local_path), json.loads(segments_json))
+        content = cut_clip(
+            Path(local_path), json.loads(segments_json), format="WAV", subtype=None
+        )
     except (sf.LibsndfileError, RuntimeError, ValueError, TypeError):
         logger.bind(sample_id=sample_id).warning("speaker clip unreadable")
         content = None

@@ -16,6 +16,7 @@ from plaudsync.speakers.runner import (
     _SCOPE,
     SpeakerPassResult,
     _report,
+    fill_clips,
     learn_recording,
     make_context,
     name_recording,
@@ -57,6 +58,23 @@ def run_backfill(
     )
     result = ctx.result
     since_iso = datetime(since.year, since.month, since.day, tzinfo=timezone.utc).isoformat()
+
+    # Phase 0: clips for samples learned before clips were stored (one audio fetch each).
+    clip_ids = [r[0] for r in conn.execute(
+        "SELECT DISTINCT e.plaud_id FROM speaker_embeddings e "
+        "JOIN recordings r ON r.plaud_id = e.plaud_id "
+        "JOIN speaker_recordings s ON s.plaud_id = e.plaud_id "
+        f"WHERE e.clip IS NULL AND s.state IN ('learned', 'done') AND {_SCOPE} "  # nosec B608
+        "AND r.created_at_plaud >= ? ORDER BY r.created_at_plaud",
+        (since_iso,),
+    )]
+    clips = 0
+    for plaud_id in clip_ids:
+        try:
+            clips += fill_clips(ctx, plaud_id)
+        except Exception as exc:  # noqa: BLE001 — one recording must not stop the rest
+            _report(exc, plaud_id)
+            result.failed += 1
 
     new_ids = [r[0] for r in conn.execute(
         "SELECT r.plaud_id FROM recordings r "
@@ -117,5 +135,7 @@ def run_backfill(
 
     if ctx.touched:
         recompute_flags(conn, ctx.touched, window_cutoff=ctx.window_cutoff)
-    logger.bind(named=result.named, failed=result.failed).info("speaker backfill finished")
+    logger.bind(named=result.named, failed=result.failed, clips=clips).info(
+        "speaker backfill finished"
+    )
     return result

@@ -2,6 +2,7 @@
 except the one-time pinned model download."""
 
 import hashlib
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,32 @@ def load_extractor(model_path: Path) -> Any:
         model=str(model_path), num_threads=1, provider="cpu"
     )
     return sherpa_onnx.SpeakerEmbeddingExtractor(config)
+
+
+def cut_clip(
+    path: Path, segments: list[list[int]] | list[tuple[int, int]], *,
+    format: str = "OGG", subtype: str | None = "VORBIS",
+) -> bytes | None:
+    """Concatenate the [start_ms, end_ms] segments as mono audio. Vorbis by default: unlike
+    Opus it takes any sample rate (local recordings may be 44.1 kHz MP3)."""
+    parts: list[np.ndarray] = []
+    with sf.SoundFile(str(path)) as f:
+        sr = f.samplerate
+        total = f.frames
+        for start_ms, end_ms in segments:
+            start = max(0, int(start_ms * sr / 1000))
+            end = min(total, int(end_ms * sr / 1000))
+            if end <= start:
+                continue
+            f.seek(start)
+            data = f.read(end - start, dtype="float32", always_2d=True)
+            if data.shape[0]:
+                parts.append(data.mean(axis=1))
+    if not parts:
+        return None
+    buf = io.BytesIO()
+    sf.write(buf, np.concatenate(parts), sr, format=format, subtype=subtype)
+    return buf.getvalue()
 
 
 def _seg_seconds(seg: dict) -> float:
