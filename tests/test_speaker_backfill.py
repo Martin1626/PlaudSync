@@ -255,3 +255,47 @@ def test_backfill_md_not_rewritten_retry_rewrites_without_plaud_rewrite(tmp_path
         ).fetchone() == ("A", "auto", 0)
     finally:
         conn.close()
+
+
+def test_backfill_fills_missing_clips_without_relearning(tmp_path, env):
+    import io
+
+    import soundfile as sf
+
+    from plaudsync.speakers import gallery
+
+    conn = open_state(tmp_path)
+    try:
+        _rec(conn, "r1", "2026-09-01T10:00:00+00:00", "")
+        conn.execute(
+            "INSERT INTO speaker_recordings (plaud_id, labels, written, checked_at, state) "
+            "VALUES ('r1', '{}', '{}', ?, 'done')", (NOW.isoformat(),),
+        )
+        conn.commit()
+        gallery.upsert_embedding(
+            conn, plaud_id="r1", cluster="Speaker 1", person="A", origin="user",
+            embedding=_vec(1, 0, 0, 0), seconds=20.0, clip_segments=[(1000, 2000)],
+        )
+        data = np.random.default_rng(0).standard_normal(16000 * 4).astype("float32") * 0.1
+        buf = io.BytesIO()
+        sf.write(buf, data, 16000, format="OGG", subtype="OPUS")
+        env.client.download_audio.return_value = iter([buf.getvalue()])
+
+        result = backfill.run_backfill(
+            conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 8, 1), now=NOW
+        )
+
+        assert result.failed == 0
+        env.client.fetch_trans_result.assert_not_called()
+        env.client.download_audio.assert_called_once_with("r1")
+        clip = conn.execute("SELECT clip FROM speaker_embeddings").fetchone()[0]
+        decoded, sr = sf.read(io.BytesIO(clip))
+        assert abs(len(decoded) - sr) <= sr // 100
+
+        env.client.download_audio.reset_mock()
+        backfill.run_backfill(
+            conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 8, 1), now=NOW
+        )
+        env.client.download_audio.assert_not_called()
+    finally:
+        conn.close()

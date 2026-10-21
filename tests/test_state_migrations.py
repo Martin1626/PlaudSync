@@ -346,3 +346,19 @@ def test_record_recording_does_not_overwrite_downloaded(tmp_path: Path) -> None:
     assert row[1] == "/data/Y/z.mp3"
 
     conn.close()
+
+
+def test_speaker_embeddings_gains_clip_column(tmp_path: Path) -> None:
+    db_dir = tmp_path / ".plaudsync"
+    db_dir.mkdir()
+    old = sqlite3.connect(db_dir / "state.db")
+    old.executescript(
+        "CREATE TABLE speaker_embeddings (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "plaud_id TEXT NOT NULL, cluster TEXT NOT NULL, embedding BLOB NOT NULL);"
+    )
+    old.close()
+
+    conn = open_state(tmp_path)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(speaker_embeddings)")}
+    conn.close()
+    assert "clip" in cols

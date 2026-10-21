@@ -223,3 +223,17 @@ def test_clip_404_when_all_segments_past_end(client, db, tmp_path):
     add_recording(db, local_path=audio)
     sid = add_sample(db, segments="[[50000, 60000]]")
     assert client.get(f"/api/speakers/{sid}/clip").status_code == 404
+
+
+def test_stored_clip_served_without_local_audio(client, db):
+    add_recording(db, local_path="/nonexistent.ogg")
+    sid = add_sample(db)
+    db.execute("UPDATE speaker_embeddings SET clip=? WHERE id=?", (b"OggS-stored", sid))
+    db.commit()
+
+    sample = client.get("/api/speakers").json()["samples"][0]
+    assert sample["has_clip"] is True
+    r = client.get(f"/api/speakers/{sid}/clip")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/ogg"
+    assert r.content == b"OggS-stored"

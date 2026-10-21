@@ -1160,3 +1160,64 @@ def test_new_recordings_capped_per_pass_newest_first(tmp_path, fakes, monkeypatc
         assert learned == ["n01", "n00"]
     finally:
         conn.close()
+
+
+def _ogg_bytes(seconds: int = 6, sr: int = 16000) -> bytes:
+    import io
+
+    import soundfile as sf
+
+    data = np.random.default_rng(0).standard_normal(sr * seconds).astype("float32") * 0.1
+    buf = io.BytesIO()
+    sf.write(buf, data, sr, format="OGG", subtype="OPUS")
+    return buf.getvalue()
+
+
+def _stored_clip(conn, pid="new1"):
+    return conn.execute(
+        "SELECT clip FROM speaker_embeddings WHERE plaud_id=?", (pid,)
+    ).fetchone()[0]
+
+
+def test_learn_stores_clip_cut_from_downloaded_audio(tmp_path, fakes):
+    import io
+
+    import soundfile as sf
+
+    conn = open_state(tmp_path)
+    try:
+        _rec(conn, "new1", _iso(timedelta(days=1)), local_path="")
+        fakes.embeddings = [
+            ClusterEmbedding("Speaker 1", "Speaker 1", A_VEC, 20.0, [(1000, 2000), (3000, 3500)])
+        ]
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 1": "Speaker 1"})
+        client.download_audio.return_value = iter([_ogg_bytes()])
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        data, sr = sf.read(io.BytesIO(_stored_clip(conn)))
+        assert sr == 16000
+        assert abs(len(data) - int(1.5 * sr)) <= sr // 100
+        temp_path, _ = fakes.embed_calls[0]
+        assert not temp_path.exists()
+    finally:
+        conn.close()
+
+
+def test_unreadable_audio_learns_without_clip(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _rec(conn, "new1", _iso(timedelta(days=1)), local_path=_audio(tmp_path))
+        fakes.embeddings = [ClusterEmbedding("Speaker 1", "Speaker 1", A_VEC, 20.0, [(0, 1000)])]
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 1": "Speaker 1"})
+
+        result = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        assert result.failed == 0
+        assert _stored_clip(conn) is None
+        state = conn.execute("SELECT state FROM speaker_recordings WHERE plaud_id='new1'")
+        assert state.fetchone()[0] == "done"
+    finally:
+        conn.close()
