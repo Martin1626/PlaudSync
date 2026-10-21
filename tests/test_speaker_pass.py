@@ -1221,3 +1221,16 @@ def test_unreadable_audio_learns_without_clip(tmp_path, fakes):
         assert state.fetchone()[0] == "done"
     finally:
         conn.close()
+
+
+def test_relearn_without_clip_keeps_stored_clip(tmp_path):
+    conn = open_state(tmp_path)
+    try:
+        for clip in (b"OggS-old", None):
+            gallery.upsert_embedding(
+                conn, plaud_id="g1", cluster="Speaker 1", person="A", origin="user",
+                embedding=A_VEC, seconds=30.0, clip_segments=[(0, 5000)], clip=clip,
+            )
+        assert _stored_clip(conn, "g1") == b"OggS-old"
+    finally:
+        conn.close()
