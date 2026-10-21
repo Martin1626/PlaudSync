@@ -212,4 +212,4 @@ export interface SpeakersResponse {
   persons: string[];
 }
 
-export type SpeakersFilter = "flagged" | "all";
+export type SpeakersFilter = "flagged" | "unconfirmed" | "all";

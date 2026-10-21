@@ -8,6 +8,7 @@ import SampleRow from "./SampleRow";
 
 const OPTIONS: Array<{ value: SpeakersFilter; label: string }> = [
   { value: "flagged", label: "Ke kontrole" },
+  { value: "unconfirmed", label: "Nepotvrzené" },
   { value: "all", label: "Všechny vzorky" },
 ];
 

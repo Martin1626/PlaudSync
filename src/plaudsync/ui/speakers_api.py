@@ -60,7 +60,7 @@ def _require_named(conn: sqlite3.Connection, sample_id: int) -> None:
 
 @router.get("", response_model=SpeakersResponse)
 def list_speakers(
-    request: Request, filter: Literal["flagged", "all"] = "flagged",
+    request: Request, filter: Literal["flagged", "unconfirmed", "all"] = "flagged",
 ) -> SpeakersResponse:
     conn = _db(request)
     rows = conn.execute(
@@ -69,9 +69,10 @@ def list_speakers(
         "(SELECT q.new_name FROM speaker_review_queue q "
         " WHERE q.embedding_id = e.id AND q.done_at IS NULL ORDER BY q.id DESC LIMIT 1) "
         "FROM speaker_embeddings e LEFT JOIN recordings r ON r.plaud_id = e.plaud_id "
-        "WHERE e.person IS NOT NULL AND (? = 'all' OR e.review_status = 'flagged') "
+        "WHERE e.person IS NOT NULL AND (:f = 'all' OR e.review_status = 'flagged' "
+        "OR (:f = 'unconfirmed' AND e.review_status = 'none')) "
         "ORDER BY e.consistency IS NULL, e.consistency ASC, r.created_at_plaud DESC, e.id",
-        (filter,),
+        {"f": filter},
     ).fetchall()
     samples = [
         SpeakerSample(
