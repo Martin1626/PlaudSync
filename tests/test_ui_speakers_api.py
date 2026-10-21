@@ -237,3 +237,13 @@ def test_stored_clip_served_without_local_audio(client, db):
     assert r.status_code == 200
     assert r.headers["content-type"] == "audio/ogg"
     assert r.content == b"OggS-stored"
+
+
+def test_list_unconfirmed_hides_decided_samples(client, db):
+    add_recording(db)
+    add_sample(db, "r1", "S1", "Alice", status="confirmed")
+    add_sample(db, "r1", "S2", "Bob", status="excluded")
+    add_sample(db, "r1", "S3", "Carol", status="none")
+    add_sample(db, "r1", "S4", "Dan", status="flagged")
+    samples = client.get("/api/speakers?filter=unconfirmed").json()["samples"]
+    assert sorted(s["person"] for s in samples) == ["Carol", "Dan"]
