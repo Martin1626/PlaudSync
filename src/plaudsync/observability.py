@@ -69,6 +69,9 @@ _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE)
 # query-string signature is a capability token; redact wholesale. Added for
 # BL-4 (content download via /file/detail/{id} content_list[*].data_link).
 _S3_URL_RE = re.compile(r"https?://[^\s\"'<>]*amazonaws\.com[^\s\"'<>]*", re.IGNORECASE)
+# urllib3 connection errors (e.g. timeouts) print the host apart from the signed path
+# ("host='...amazonaws.com' ... url: /key?X-Amz-Signature=..."), so the URL pattern misses it.
+_S3_SIGNED_QUERY_RE = re.compile(r"\?[^\s\"'<>]*X-Amz-[^\s\"'<>]*", re.IGNORECASE)
 
 # Maximum length for arbitrary string fields in Sentry events. Defends
 # against accidental f-string leak of transcript / outline / summary text
@@ -79,6 +82,7 @@ _MAX_STRING_LEN = 500
 
 def _scrub_string(value: str) -> str:
     value = _S3_URL_RE.sub("<S3_URL_REDACTED>", value)
+    value = _S3_SIGNED_QUERY_RE.sub("?<S3_QUERY_REDACTED>", value)
     value = _WIN_PATH_RE.sub("<path>", value)
     value = _POSIX_PATH_RE.sub("<path>", value)
     value = _RECORDING_FILE_RE.sub("<recording>", value)

@@ -19,7 +19,7 @@ import pytest
 from dotenv import load_dotenv
 
 from plaudsync.auth import PlaudTokenExpired, load_token
-from plaudsync.plaud_client import PlaudClient, PlaudWriteRejected
+from plaudsync.plaud_client import HTTP_TIMEOUT, PlaudClient, PlaudWriteRejected
 
 FILE_ID = "dcab87413de199472cdd0524b151f601"
 VCR = pytest.mark.vcr(
@@ -130,7 +130,7 @@ def test_every_write_rejected_raises(name: str) -> None:
         _WRITES[name](client)
     assert "Speaker" not in str(exc.value)
     kwargs = client._session.request.call_args.kwargs
-    assert kwargs["timeout"] == 60
+    assert kwargs["timeout"] == HTTP_TIMEOUT
 
 
 @pytest.mark.parametrize("name", sorted({**_WRITES, **_READS}))

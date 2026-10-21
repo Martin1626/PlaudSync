@@ -17,6 +17,17 @@ import requests
 from plaudsync.auth import PlaudTokenExpired
 
 BASE_URL = "https://api.plaud.ai"
+# (connect, read) seconds for every Plaud and S3 call; read = longest silence on the socket,
+# not the whole download. Without it a stalled connection hangs the sync and its lock.
+HTTP_TIMEOUT = (10, 60)
+
+
+class _TimeoutSession(requests.Session):
+    def request(  # type: ignore[override]
+        self, method: str | bytes, url: str | bytes, *args: Any, **kwargs: Any
+    ) -> requests.Response:
+        kwargs.setdefault("timeout", HTTP_TIMEOUT)
+        return super().request(method, url, *args, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -183,7 +194,7 @@ class DetailMeta:
 class PlaudClient:
     def __init__(self, token: str) -> None:
         self._token = token
-        self._session = requests.Session()
+        self._session = _TimeoutSession()
         self._session.headers["Authorization"] = f"Bearer {token}"
         # Plaud API expects app-platform + edit-from headers — without them
         # /filetag/ returns 404 (and likely other endpoints will start to
@@ -324,7 +335,7 @@ class PlaudClient:
             raise PlaudDownloadCorrupted("presigned URL must use https")
 
         # Step 2: stream from S3 (no auth header)
-        s3_session = requests.Session()  # fresh session — no Authorization header
+        s3_session = _TimeoutSession()  # fresh session — no Authorization header
         with s3_session.get(presigned, stream=True, allow_redirects=False) as audio_resp:
             audio_resp.raise_for_status()
             for chunk in audio_resp.iter_content(chunk_size=64 * 1024):
@@ -366,7 +377,7 @@ class PlaudClient:
         """
         if urlparse(item.data_link).scheme != "https":
             raise PlaudDownloadCorrupted("content URL must use https")
-        s3_session = requests.Session()  # fresh — no Authorization header
+        s3_session = _TimeoutSession()  # fresh — no Authorization header
         with s3_session.get(item.data_link, stream=True, allow_redirects=False) as resp:
             resp.raise_for_status()
             return resp.content.decode("utf-8")
@@ -375,7 +386,9 @@ class PlaudClient:
     # Undocumented web-app endpoints (see scripts/spike_speaker_writeback.py).
 
     def _call(self, method: str, path: str, **kwargs: Any) -> Any:
-        resp = self._session.request(method, f"{self._base_url}{path}", timeout=60, **kwargs)
+        resp = self._session.request(
+            method, f"{self._base_url}{path}", timeout=HTTP_TIMEOUT, **kwargs
+        )
         if resp.status_code == 401:
             raise PlaudTokenExpired("token rejected by speaker endpoint")
         resp.raise_for_status()

@@ -4,6 +4,18 @@ Ruční journal pro tracking kill criteria a non-obvious rozhodnutí. Přidávej
 
 ---
 
+## 2026-10-21 — incident: sync visel 2 h ve fázi listing (chybí HTTP timeout)
+
+**Symptom:** běh 6051 (09:28 UTC) zůstal ve fázi `listing`, držel `sync.lock` a tray do 11:12 UTC nesynchronizoval (backfill hlásil „sync still active“). Vyřešeno ručním ukončením traye; řádek 6051 zůstal bez `finished_at` (UI ho správně nebere jako běžící, `state_reader.py:71`).
+
+**Vrstva:** 2 (síť) + kód. `PlaudClient` volá `requests` bez `timeout` všude kromě `_call` (`_region_probe`, `list_recordings`, detail, S3 stahování audia/obsahu) — zaseklé TCP čtení visí navždy. Druhý síťový problém téhož dne: 11:10 UTC `SSLEOFError` na `/file/simple/web` → exit 1, další běh o 2 min později OK (bez retry, jen ERROR v logu).
+
+**Oprava:** `_TimeoutSession` dává všem voláním Plaudu i S3 výchozí `HTTP_TIMEOUT = (10, 60)` (connect, read; read = nejdelší ticho na socketu, ne celé stahování). Ověřeno `tests/integration/test_plaud_client_timeouts.py` proti lokálnímu „tarpit“ serveru (všech 8 volání dřív viselo). Kill criterion se nespustil.
+
+**Review:** opraveno — chyba timeoutu u S3 nese podepsaný dotaz odděleně od hostu (`url: /key?X-Amz-Signature=…`), takže `_S3_URL_RE` ho nechytil → nový `_S3_SIGNED_QUERY_RE` v `observability.py`. Jen zaznamenáno (kandidáti na další kolo): server, který posílá data po kapkách, timeout čtení neobejde → chybí celkový limit běhu / hlídání stáří zámku; při výpadku Plaudu po úspěšném listingu platí každá nahrávka plný timeout zvlášť (chybí přerušení běhu po prvním timeoutu); žádný retry na přechodné chyby (`SSLEOFError`); nová `Session` pro každé S3 stahování (beze změny oproti dřívějšku).
+
+**Souvislost:** testy zapisují do ostrého `C:\PlaudSync\.plaudsync\plaudsync.log` (v 11:20 vyvolaly jeho rotaci); vliv na zaseknutí neověřen.
+
 ## 2026-10-21 — speaker naming: všechny přepsané nahrávky, ne jen stažené
 
 **Rozhodnutí uživatele:** jména řečníků čte v Plaudu do hodiny po jednání, aby si vybavil, s kým jednal, a teprve pak rozhodne o projektu. Pojmenování proto běží u všech nahrávek s hotovým přepisem (`downloaded`, `skipped`, `skipped_unknown_project`, `failed`), **včetně soukromých** — mimo jsou jen `trashed`. Ruší původní rozsah „jen nahrávky s `.md`“ (spec §2 cíl 1) i jeho privacy zdůvodnění; galerie tak obsahuje i hlasy ze soukromých nahrávek (rozšíření GDPR rozsahu z 2026-10-20, rozhodl uživatel).
