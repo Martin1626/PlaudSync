@@ -28,3 +28,7 @@ def test_has_transcript_from_is_trans(is_trans: bool) -> None:
 def test_has_transcript_assumed_when_listing_omits_it() -> None:
     # Unknown = try: the transcript fetch itself tells whether one exists.
     assert RecordingMeta.from_raw(_base_raw()).has_transcript is True
+
+
+def test_has_transcript_assumed_when_listing_sends_null() -> None:
+    assert RecordingMeta.from_raw({**_base_raw(), "is_trans": None}).has_transcript is True

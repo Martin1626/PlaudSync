@@ -684,6 +684,27 @@ def test_only_recordings_transcribed_in_plaud_are_learned(tmp_path, fakes):
         conn.close()
 
 
+def test_transcribed_recording_with_empty_transcript_not_fetched_again(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _rec(conn, "silent", _iso(timedelta(days=1)), local_path=_audio(tmp_path),
+             status="skipped", content_status=None, content_path=None)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = []
+        live = {"silent": SimpleNamespace(edit_marker="v1", has_transcript=True)}
+
+        for hours in (0, 1):
+            runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                    now=NOW + timedelta(hours=hours), live_metas=live)
+
+        client.fetch_trans_result.assert_called_once_with("silent")
+        assert conn.execute(
+            "SELECT labels, state FROM speaker_recordings WHERE plaud_id='silent'"
+        ).fetchone() == ("{}", "done")
+    finally:
+        conn.close()
+
+
 def test_trashed_recording_not_learned(tmp_path, fakes):
     conn = open_state(tmp_path)
     try:
