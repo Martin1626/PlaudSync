@@ -60,6 +60,8 @@ def _run_backfill_cli(monkeypatch, *extra):
     from plaudsync import __main__ as cli
 
     monkeypatch.setattr(sys, "argv", ["plaudsync", "speakers", "backfill", *extra])
+    # The repo .env would re-set PLAUDSYNC_STATE_ROOT and point the CLI at the live state.
+    monkeypatch.setattr(cli, "load_dotenv", lambda *a, **k: False)
     with pytest.raises(SystemExit) as exc:
         cli.main()
     return exc.value.code
