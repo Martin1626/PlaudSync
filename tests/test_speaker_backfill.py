@@ -299,3 +299,44 @@ def test_backfill_fills_missing_clips_without_relearning(tmp_path, env):
         env.client.download_audio.assert_not_called()
     finally:
         conn.close()
+
+
+def _without_md(conn, pid):
+    conn.execute(
+        "UPDATE recordings SET status='skipped', content_status=NULL, content_path=NULL "
+        "WHERE plaud_id=?", (pid,),
+    )
+    conn.commit()
+
+
+def test_backfill_names_recording_without_md_in_plaud_only(tmp_path, env):
+    conn = open_state(tmp_path)
+    try:
+        _setup_two(conn, env)
+        _without_md(conn, "r1")
+        result = backfill.run_backfill(
+            conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 8, 1), now=NOW
+        )
+        assert (result.named, result.failed) == (1, 0)
+        assert env.apply_renames.call_args.args[1] == "r1"
+        runner.rewrite_md.assert_not_called()
+        assert dict(conn.execute("SELECT plaud_id, state FROM speaker_recordings")) == {
+            "r1": "done", "r2": "done",
+        }
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("empty", [[], None])
+def test_backfill_recording_without_transcript_stays_unprocessed(tmp_path, env, empty):
+    conn = open_state(tmp_path)
+    try:
+        _rec(conn, "r1", "2026-10-02T10:00:00+00:00", env.audio)
+        _without_md(conn, "r1")
+        env.transcripts["r1"] = lambda: empty
+        backfill.run_backfill(
+            conn, env.client, _config(tmp_path), tmp_path, since=date(2026, 10, 1), now=NOW
+        )
+        assert conn.execute("SELECT COUNT(*) FROM speaker_recordings").fetchone() == (0,)
+    finally:
+        conn.close()

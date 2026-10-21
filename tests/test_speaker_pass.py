@@ -578,16 +578,14 @@ def _queued_entry(conn, *, rec=True, **rec_kw):
     return eid
 
 
-@pytest.mark.parametrize("case", ["missing", "skipped", "pending"])
+@pytest.mark.parametrize("case", ["missing", "trashed"])
 def test_queue_entry_out_of_scope_dropped(tmp_path, fakes, case):
     conn = open_state(tmp_path)
     try:
         if case == "missing":
             eid = _queued_entry(conn, rec=False)
-        elif case == "skipped":
-            eid = _queued_entry(conn, status="skipped")
         else:
-            eid = _queued_entry(conn, content_status="pending")
+            eid = _queued_entry(conn, status="trashed")
         client = MagicMock()
 
         runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
@@ -600,6 +598,104 @@ def test_queue_entry_out_of_scope_dropped(tmp_path, fakes, case):
         assert conn.execute(
             "SELECT person, origin, review_status FROM speaker_embeddings WHERE id=?", (eid,)
         ).fetchone() == ("A", "user", "none")
+    finally:
+        conn.close()
+
+
+_NO_MD = [
+    {"status": "skipped", "content_status": None, "content_path": None},
+    {"status": "skipped_unknown_project", "content_status": None, "content_path": None},
+    {"status": "downloaded", "content_status": "pending"},
+]
+
+
+@pytest.mark.parametrize("rec_kw", _NO_MD)
+def test_queue_entry_without_md_applied_in_plaud_only(tmp_path, fakes, rec_kw):
+    conn = open_state(tmp_path)
+    try:
+        eid = _queued_entry(conn, **rec_kw)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 2": "A"})
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        fakes.apply_renames.assert_called_once_with(
+            client, "r1", {"Speaker 2": "B"}, {"Speaker 2": "A"},
+        )
+        fakes.rewrite_md.assert_not_called()
+        assert conn.execute(
+            "SELECT person, origin, review_status FROM speaker_embeddings WHERE id=?", (eid,)
+        ).fetchone() == ("B", "review", "confirmed")
+        assert conn.execute(
+            "SELECT done_at FROM speaker_review_queue"
+        ).fetchone() == (NOW.isoformat(),)
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("rec_kw", _NO_MD)
+def test_recording_without_md_named_in_plaud_only(tmp_path, fakes, rec_kw):
+    conn = open_state(tmp_path)
+    try:
+        _gallery_person_a(conn)
+        _rec(conn, "new1", _iso(timedelta(days=1)), local_path=_audio(tmp_path), **rec_kw)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 1": "Speaker 1"})
+        fakes.embeddings = [
+            ClusterEmbedding("Speaker 1", "Speaker 1", A_VEC, 20.0, [(0, 1000)]),
+        ]
+        live = {"new1": SimpleNamespace(edit_marker="v1", has_transcript=True)}
+
+        result = runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                         now=NOW, live_metas=live)
+
+        assert (result.named, result.failed) == (1, 0)
+        assert fakes.apply_renames.call_args.args[2] == {"Speaker 1": "A"}
+        fakes.rewrite_md.assert_not_called()
+        labels, checked_at, marker = conn.execute(
+            "SELECT labels, checked_at, edit_marker FROM speaker_recordings "
+            "WHERE plaud_id='new1'"
+        ).fetchone()
+        assert json.loads(labels) == {"Speaker 1": "A"}
+        assert (checked_at, marker) == (NOW.isoformat(), "v1")
+    finally:
+        conn.close()
+
+
+def test_only_recordings_transcribed_in_plaud_are_learned(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        for pid in ("ready", "untranscribed"):
+            _rec(conn, pid, _iso(timedelta(days=1)), local_path=_audio(tmp_path),
+                 status="skipped", content_status=None, content_path=None)
+        client = MagicMock()
+        client.fetch_trans_result.return_value = _segments({"Speaker 1": "Speaker 1"})
+        live = {
+            "ready": SimpleNamespace(edit_marker="v1", has_transcript=True),
+            "untranscribed": SimpleNamespace(edit_marker="v1", has_transcript=False),
+        }
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path,
+                                now=NOW, live_metas=live)
+
+        client.fetch_trans_result.assert_called_once_with("ready")
+        assert [r[0] for r in conn.execute("SELECT plaud_id FROM speaker_recordings")] == [
+            "ready"
+        ]
+    finally:
+        conn.close()
+
+
+def test_trashed_recording_not_learned(tmp_path, fakes):
+    conn = open_state(tmp_path)
+    try:
+        _rec(conn, "gone", _iso(timedelta(days=1)), status="trashed",
+             content_status=None, content_path=None)
+        client = MagicMock()
+
+        runner.run_speaker_pass(conn, client, _config(tmp_path), tmp_path, now=NOW)
+
+        client.fetch_trans_result.assert_not_called()
     finally:
         conn.close()
 
