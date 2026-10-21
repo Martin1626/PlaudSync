@@ -251,7 +251,8 @@ def _clip(audio: Path, segments: list[tuple[int, int]] | list[list[int]]) -> byt
     # A missing clip only hides playback in the UI; it must not fail learning.
     try:
         return cut_clip(audio, segments)
-    except (sf.LibsndfileError, RuntimeError, ValueError, TypeError):
+    except (sf.LibsndfileError, RuntimeError, ValueError, TypeError) as exc:
+        logger.bind(error=type(exc).__name__).warning("speaker clip not stored")
         return None
 
 

@@ -41,7 +41,7 @@ def upsert_embedding(
         "seconds, clip_segments, clip, created_at) VALUES (?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(plaud_id, cluster) DO UPDATE SET person=excluded.person, "
         "origin=excluded.origin, embedding=excluded.embedding, seconds=excluded.seconds, "
-        "clip_segments=excluded.clip_segments, clip=excluded.clip",
+        "clip_segments=excluded.clip_segments, clip=COALESCE(excluded.clip, clip)",
         (
             plaud_id, cluster, person, origin,
             embedding.astype(np.float32).tobytes(), seconds,
