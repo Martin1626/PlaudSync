@@ -64,3 +64,16 @@ def test_scrub_s3_url_runs_before_truncation() -> None:
     out = _scrub_string(long_url)
     assert "amazonaws.com" not in out
     assert "<S3_URL_REDACTED>" in out
+
+
+def test_scrub_signed_query_in_timeout_message() -> None:
+    """urllib3 puts the host and the signed path in separate parts of the message."""
+    text = (
+        "HTTPSConnectionPool(host='euc1-prod.s3.amazonaws.com', port=443): Max retries "
+        "exceeded with url: /audiofiles/abc?X-Amz-Algorithm=AWS4-HMAC-SHA256"
+        "&X-Amz-Credential=AKIAEXAMPLE%2F20261021&X-Amz-Signature=deadbeef "
+        "(Caused by ConnectTimeoutError(...))"
+    )
+    out = _scrub_string(text)
+    assert "AKIAEXAMPLE" not in out
+    assert "deadbeef" not in out
